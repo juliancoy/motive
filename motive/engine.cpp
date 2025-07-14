@@ -772,22 +772,24 @@ void Engine::updateUniformBuffer(uint32_t currentImage)
 
     // === Calculate up & right from front ===
     glm::vec3 worldUp = glm::vec3(0, 1, 0);
-    glm::vec3 right = glm::normalize(glm::cross(worldUp, front));
+    // Apply full camera rotation to movement vectors
+    glm::vec3 forward = glm::vec3(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw));
+    glm::vec3 right = glm::normalize(glm::cross(glm::vec3(0, 1, 0), forward));
+    
     glm::vec3 up = glm::normalize(glm::cross(front, right));
 
     // === Movement Handling (flattened) ===
-    float moveSpeed = 0.005f * time;
+    float moveSpeed = 0.003f * time;
     glm::vec3 moveDir(0.0f);
 
-    // Apply yaw-only rotation to canonical forward/right
-    glm::mat4 yawMatrix = glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0, 1, 0));
-    glm::vec3 flatForward = glm::vec3(yawMatrix * glm::vec4(0, 0, -1, 0));
-    glm::vec3 flatRight   = glm::vec3(yawMatrix * glm::vec4(1, 0, 0, 0));
+    // Flatten forward vector for movement (optional - remove to allow flying)
+    forward.y = 0;
+    forward = glm::normalize(forward);
 
-    if (keysPressed[0]) moveDir += flatForward;   // W
-    if (keysPressed[1]) moveDir += flatRight;     // A
-    if (keysPressed[2]) moveDir -= flatForward;   // S
-    if (keysPressed[3]) moveDir -= flatRight;     // D
+    if (keysPressed[0]) moveDir += forward;   // W
+    if (keysPressed[1]) moveDir -= right;     // A
+    if (keysPressed[2]) moveDir -= forward;   // S
+    if (keysPressed[3]) moveDir += right;     // D
 
     if (glm::length(moveDir) > 0.0f) {
         cameraPos += glm::normalize(moveDir) * moveSpeed;
