@@ -76,6 +76,7 @@ public:
     void loadFromFile(const std::string &gltfPath);
     void render();
     void createVertexBuffer(const std::vector<Vertex>& vertices);
+    
 
     GLFWwindow *window;
 
@@ -90,6 +91,12 @@ private:
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
     VkCommandBuffer commandBuffer;
+
+    VkCommandPool swapchainCmdPool;
+    VkCommandBuffer swapchainCmdBuffer;
+    VkCommandBuffer swapchainRecreationCmdBuffer;  // Separate command buffer for swapchain ops
+    VkFence swapchainRecreationFence;             // Fence for synchronization
+
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
     std::vector<VkImageView> swapchainImageViews;
@@ -122,6 +129,9 @@ private:
     bool firstFrame = true;
     std::string vertShaderPath;
     std::string fragShaderPath;
+    VkImage depthImage;
+    VkDeviceMemory depthImageMemory;
+    VkImageView depthImageView;
 
     void createInstance();
     void createSurface(GLFWwindow *window);
