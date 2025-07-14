@@ -797,7 +797,7 @@ void Engine::updateUniformBuffer(uint32_t currentImage)
     glm::vec3 moveDir(0.0f);
 
     // Flatten forward vector for movement (optional - remove to allow flying)
-    forward.y = 0;
+    //forward.y = 0;
     forward = glm::normalize(forward);
 
     if (keysPressed[0]) moveDir += forward;   // W
