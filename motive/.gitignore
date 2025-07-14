@@ -1,0 +1,5 @@
+*.o
+*.so
+*.rdc
+.vscode
+result.txt
