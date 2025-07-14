@@ -56,6 +56,18 @@ struct Vertex {
 class Engine
 {
 public:
+    // Camera state
+    glm::vec3 initialCameraPos = glm::vec3(0.0f, 0.0f, -3.0f);
+    glm::vec2 initialCameraRotation = glm::vec2(glm::radians(-180.0f), 0.0f);
+    glm::vec3 cameraPos = initialCameraPos;
+    glm::vec2 cameraRotation = initialCameraRotation;
+    float moveSpeed = 0.1f;
+
+    // Input tracking
+    bool rightMouseDown = false;
+    glm::vec2 lastMousePos = glm::vec2(0.0f);
+    bool keysPressed[5] = {false}; // W,A,S,D
+
     Engine();
     ~Engine();
 

@@ -11,23 +11,22 @@ def run_command(cmd, cwd=None):
         print(f"Command failed: {cmd}", file=sys.stderr)
         sys.exit(1)
 
+def ensure_exists_or_exit(directory):
+    if not Path(directory).exists():
+        print(f"Missing required folder: {directory}")
+        print("Please fetch all submodules with:")
+        print("    git submodule update --init --recursive")
+        sys.exit(1)
+
 def setup_vulkan_headers():
-    vulkan_headers_dir = Path("Vulkan-Headers")
-    if not vulkan_headers_dir.exists():
-        print("Cloning Vulkan-Headers...")
-        run_command("git clone https://github.com/KhronosGroup/Vulkan-Headers.git")
-    else:
-        print("Vulkan-Headers already exists, pulling latest changes...")
-        run_command("git pull", cwd=str(vulkan_headers_dir))
+    ensure_exists_or_exit("Vulkan-Headers")
+    print("Vulkan-Headers exists, pulling latest changes...")
+    run_command("git pull", cwd="Vulkan-Headers")
 
 def setup_glfw():
-    glfw_dir = Path("glfw")
+    ensure_exists_or_exit("glfw")
 
-    if not glfw_dir.exists():
-        print("Cloning GLFW...")
-        run_command("git clone https://github.com/glfw/glfw.git")
-
-    build_dir = glfw_dir / "build"
+    build_dir = Path("glfw/build")
     build_dir.mkdir(exist_ok=True)
 
     print("Building GLFW...")
@@ -37,25 +36,21 @@ def setup_glfw():
     print("GLFW built locally in glfw/build")
 
 def setup_tinygltf():
-    tinygltf_dir = Path("tinygltf")
-    if not tinygltf_dir.exists():
-        print("Cloning tinygltf...")
-        run_command("git clone https://github.com/syoyo/tinygltf.git")
+    ensure_exists_or_exit("tinygltf")
 
+    obj_file = Path("tinygltf/tiny_gltf.o")
+    if not obj_file.exists():
         print("Building tinygltf...")
         run_command("g++ -c -std=c++11 -fPIC tinygltf/tiny_gltf.cc -o tinygltf/tiny_gltf.o")
         run_command("ar rcs libtinygltf.a tinygltf/tiny_gltf.o")
         print("tinygltf built as static library")
 
 def setup_glm():
-    glm_dir = Path("glm")
-    if not glm_dir.exists():
-        print("Cloning GLM...")
-        run_command("git clone https://github.com/g-truc/glm.git")
-        print("GLM downloaded (header-only library, no build required)")
+    ensure_exists_or_exit("glm")
+    print("GLM found (header-only library, no build required)")
 
 def main():
-    print("=== Setting up development dependencies ===")
+    print("=== Checking and setting up development dependencies ===")
     setup_vulkan_headers()
     setup_glfw()
     setup_tinygltf()

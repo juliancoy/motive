@@ -11,6 +11,58 @@
 #include <fstream>
 #include <vector>
 #include <../tinygltf/tiny_gltf.h>
+#include <chrono>
+
+// Static mouse callback functions
+static void mouseButtonCallback(GLFWwindow *window, int button, int action, int mods)
+{
+    Engine *engine = static_cast<Engine *>(glfwGetWindowUserPointer(window));
+    if (button == GLFW_MOUSE_BUTTON_RIGHT)
+    {
+        engine->rightMouseDown = (action == GLFW_PRESS);
+        if (engine->rightMouseDown)
+        {
+            double x, y;
+            glfwGetCursorPos(window, &x, &y);
+            engine->lastMousePos = glm::vec2(x, y);
+        }
+    }
+}
+
+static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos)
+{
+    Engine *engine = static_cast<Engine *>(glfwGetWindowUserPointer(window));
+    if (engine->rightMouseDown)
+    {
+        glm::vec2 currentPos(xpos, ypos);
+        glm::vec2 delta = currentPos - engine->lastMousePos;
+        engine->lastMousePos = currentPos;
+
+        // Adjust rotation based on mouse movement
+        engine->cameraRotation.x += delta.x * 0.005f; //pitch
+        engine->cameraRotation.y += delta.y * 0.005f; //yaw
+
+    }
+}
+
+static void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
+{
+    Engine *engine = static_cast<Engine *>(glfwGetWindowUserPointer(window));
+
+    if (key == GLFW_KEY_W)
+        engine->keysPressed[0] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_A)
+        engine->keysPressed[1] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_S)
+        engine->keysPressed[2] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_D)
+        engine->keysPressed[3] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+        engine->cameraPos = engine->initialCameraPos;
+        engine->cameraRotation = engine->initialCameraRotation;
+        std::cout << "Camera reset to initial position\n";
+    }
+}
 
 Engine::Engine()
 {
@@ -697,44 +749,76 @@ void Engine::createTextureImageView()
     }
 }
 
-#include <chrono>
 
 void Engine::updateUniformBuffer(uint32_t currentImage)
 {
     static auto startTime = std::chrono::high_resolution_clock::now();
-
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
     UniformBufferObject ubo{};
-
-    // Model matrix (identity unless you want transformations)
     ubo.model = glm::mat4(1.0f);
 
-    // View matrix (camera)
-    ubo.view = glm::lookAt(
-        glm::vec3(0.0f, 0.0f, 2.0f), // Camera position (eye)
-        glm::vec3(0.0f, 0.0f, 0.0f), // Look-at point (center)
-        glm::vec3(0.0f, 1.0f, 0.0f)  // Up vector
-    );
+    // === Camera Rotation Angles ===
+    float yaw = cameraRotation.x;    // Y-axis rotation (left/right)
+    float pitch = cameraRotation.y;  // X-axis rotation (up/down)
 
-    // Projection matrix
-    ubo.proj = glm::perspective(
-        glm::radians(45.0f), // Field of view
-        800.0f / 600.0f,     // Aspect ratio (hardcoded to window size)
-        0.1f,                // Near plane
-        10.0f                // Far plane
-    );
+    // === Forward vector from pitch & yaw ===
+    glm::vec3 front;
+    front.x = cos(pitch) * sin(yaw);      // note: swapped from your original
+    front.y = sin(pitch);
+    front.z = -cos(pitch) * cos(yaw);
+    front = glm::normalize(front);
 
-    // Fix for Vulkan's Y-axis inversion
-    ubo.proj[1][1] *= -1;
+    // === Calculate up & right from front ===
+    glm::vec3 worldUp = glm::vec3(0, 1, 0);
+    glm::vec3 right = glm::normalize(glm::cross(worldUp, front));
+    glm::vec3 up = glm::normalize(glm::cross(front, right));
 
-    // Copy the UBO to the current uniform buffer
-    void *data;
+    // === Movement Handling (flattened) ===
+    float moveSpeed = 0.005f * time;
+    glm::vec3 moveDir(0.0f);
+
+    // Apply yaw-only rotation to canonical forward/right
+    glm::mat4 yawMatrix = glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0, 1, 0));
+    glm::vec3 flatForward = glm::vec3(yawMatrix * glm::vec4(0, 0, -1, 0));
+    glm::vec3 flatRight   = glm::vec3(yawMatrix * glm::vec4(1, 0, 0, 0));
+
+    if (keysPressed[0]) moveDir += flatForward;   // W
+    if (keysPressed[1]) moveDir += flatRight;     // A
+    if (keysPressed[2]) moveDir -= flatForward;   // S
+    if (keysPressed[3]) moveDir -= flatRight;     // D
+
+    if (glm::length(moveDir) > 0.0f) {
+        cameraPos += glm::normalize(moveDir) * moveSpeed;
+        std::cout << "Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
+    }
+
+    // === Construct View Matrix ===
+    // Basis matrix from right, up, front
+    glm::mat4 rotation = glm::mat4(1.0f);
+    rotation[0] = glm::vec4(right, 0.0f);
+    rotation[1] = glm::vec4(up, 0.0f);
+    rotation[2] = glm::vec4(-front, 0.0f);  // invert forward
+
+    // Translation matrix
+    glm::mat4 translation = glm::translate(glm::mat4(1.0f), -cameraPos);
+
+    // Combine rotation and translation
+    ubo.view = rotation * translation;
+
+    // === Projection Matrix (Vulkan fix) ===
+    ubo.proj = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 10.0f);
+    ubo.proj[1][1] *= -1; // Vulkan Y-flip
+
+    // === Upload to GPU ===
+    void* data;
     vkMapMemory(logicalDevice, uniformBufferMemory, 0, sizeof(ubo), 0, &data);
     memcpy(data, &ubo, sizeof(ubo));
     vkUnmapMemory(logicalDevice, uniformBufferMemory);
 }
+
+
 
 void Engine::createDefaultTexture()
 {
@@ -1605,6 +1689,14 @@ void Engine::createWindow(int width, int height, const char *title)
     {
         throw std::runtime_error("Failed to create GLFW window");
     }
+
+    // Set window user pointer and callbacks
+    glfwSetWindowUserPointer(window, this);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetCursorPosCallback(window, cursorPosCallback);
+    glfwSetKeyCallback(window, keyCallback);
+    std::cout << "Registered key callback for WASD movement\n";
+
     createSurface(window);
     if (!surface)
     {
@@ -1835,20 +1927,27 @@ void Engine::loadFromFile(const std::string &gltfPath)
         v.pos[2] = (v.pos[2] - center.z) / maxExtent;
     }
 
-    // rotate for visibility
-    glm::mat4 rotX = glm::rotate(glm::mat4(1.0f), glm::radians(270.0f), glm::vec3(1, 0, 0));
+    // Rotate 90° around Z axis (existing)
+    glm::mat4 rotZ = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
+
+    // Rotate 90° around Y axis (new)
+    glm::mat4 rotY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 1, 0));
+
+    // Rotate 90° around X axis (new)
+    glm::mat4 rotX = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(-1, 0, 0));
+    glm::mat4 combinedRotation = rotX;// identity glm::mat4(1.0f);
 
     for (auto &v : vertices)
     {
         glm::vec4 pos(v.pos[0], v.pos[1], v.pos[2], 1.0f);
-        glm::vec4 rotated = rotX * pos;
+        glm::vec4 rotated = combinedRotation * pos;
         v.pos[0] = rotated.x;
         v.pos[1] = rotated.y;
         v.pos[2] = rotated.z;
 
         // Optional: rotate normals too (use w = 0 for direction vectors)
         glm::vec4 normal(v.normal[0], v.normal[1], v.normal[2], 0.0f);
-        normal = rotX * normal;
+        normal = combinedRotation * normal;
         v.normal[0] = normal.x;
         v.normal[1] = normal.y;
         v.normal[2] = normal.z;
@@ -2083,10 +2182,9 @@ void Engine::loadFromFile(const std::string &gltfPath)
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {
-            static_cast<uint32_t>(image.width), 
-            static_cast<uint32_t>(image.height), 
-            1u
-        };
+            static_cast<uint32_t>(image.width),
+            static_cast<uint32_t>(image.height),
+            1u};
 
         vkCmdCopyBufferToImage(
             commandBuffer,
@@ -2143,7 +2241,8 @@ void Engine::loadFromFile(const std::string &gltfPath)
         viewInfo.subresourceRange.baseArrayLayer = 0u;
         viewInfo.subresourceRange.layerCount = 1u;
 
-        if (vkCreateImageView(logicalDevice, &viewInfo, nullptr, &gltfTextureImageView) != VK_SUCCESS) {
+        if (vkCreateImageView(logicalDevice, &viewInfo, nullptr, &gltfTextureImageView) != VK_SUCCESS)
+        {
             throw std::runtime_error("Failed to create GLTF texture image view!");
         }
 
