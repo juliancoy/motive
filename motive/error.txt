@@ -1,0 +1,813 @@
+Triangle vertex count: 3
+pos: (-0.5, -0.5, 0), normal: (0, 0, 1), texCoord: (0, 0)
+pos: (0.5, -0.5, 0), normal: (0, 0, 1), texCoord: (1, 0)
+pos: (0, 0.5, 0), normal: (0, 0, 1), texCoord: (0.5, 1)
+
+Available Physical Devices:
+-------------------------
+Device: NVIDIA GeForce RTX 3060
+Device: llvmpipe (LLVM 15.0.7, 256 bits)
+
+Selected Device Properties:
+-------------------------
+Using graphics queue family: 0
+
+Device: NVIDIA GeForce RTX 3060
+  API Version: 1.3.280
+  Driver Version: 2349384000
+  Vendor ID: 4318
+  Device ID: 9476
+  Device Type: Discrete GPU
+
+  Important Limits:
+    maxImageDimension2D: 32768
+    maxPushConstantsSize: 256 bytes
+    maxMemoryAllocationCount: 4294967295
+    maxSamplerAllocationCount: 4000
+    bufferImageGranularity: 1024 bytes
+
+  Important Features:
+    geometryShader: Yes
+    tessellationShader: Yes
+    samplerAnisotropy: Yes
+    textureCompressionBC: Yes
+
+  Memory Heaps (3):
+    Heap 0: 12288 MB (Device Local)
+    Heap 1: 48134 MB
+    Heap 2: 246 MB (Device Local)
+Creating Logical Device with Features:
+  samplerAnisotropy: Enabled
+  geometryShader: Disabled
+  tessellationShader: Disabled
+
+Enabled Device Extensions:
+  VK_KHR_swapchain
+
+Enabled Validation Layers:
+  VK_LAYER_KHRONOS_validation
+
+Logical Device Created Successfully
+Obtained Graphics Queue from Family: 0
+Registered key callback for WASD movement
+About to map uniform buffer
+About to create swapchain
+Surface Capabilities:
+  minImageCount: 2
+  maxImageCount: 8
+  currentExtent: 800x600
+Processing model Added Vertices
+VUID-vkMapMemory-memory-00678(ERROR / SPEC): msgNum: -1146731671 - Validation Error: [ VUID-vkMapMemory-memory-00678 ] Object 0: handle = 0x230000000023, type = VK_OBJECT_TYPE_DEVICE_MEMORY; | MessageID = 0xbba64369 | VkMapMemory: Attempting to map memory on an already-mapped VkDeviceMemory 0x230000000023[]. The Vulkan spec states: memory must not be currently host mapped (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkMapMemory-memory-00678)
+    Objects: 1
+        [0] 0x230000000023, type: 8, name: NULL
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+Processing model Added Vertices
+VUID-vkCmdDraw-None-02699(ERROR / SPEC): msgNum: 369680064 - Validation Error: [ VUID-vkCmdDraw-None-02699 ] Object 0: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x1608dec0 | Descriptor set VkDescriptorSet 0x1b000000001b[] encountered the following validation error at vkCmdDraw time: Descriptor in binding #1 index 0 is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar call. The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are statically used by the VkPipeline bound to the pipeline bind point used by this command (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkCmdDraw-None-02699)
+    Objects: 1
+        [0] 0x1b000000001b, type: 23, name: NULL
+Finished processing object Added Vertices
+Presenting the image
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x640a717a0fa0, type = VK_OBJECT_TYPE_COMMAND_BUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkCommandBuffer 0x640a717a0fa0[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x640a717a0fa0, type: 6, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x40000000004, type = VK_OBJECT_TYPE_BUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkBuffer 0x40000000004[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x40000000004, type: 9, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x200000000020, type = VK_OBJECT_TYPE_BUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkBuffer 0x200000000020[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x200000000020, type: 9, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x220000000022, type = VK_OBJECT_TYPE_BUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkBuffer 0x220000000022[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x220000000022, type: 9, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x100000000010, type = VK_OBJECT_TYPE_IMAGE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkImage 0x100000000010[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x100000000010, type: 10, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x280000000028, type = VK_OBJECT_TYPE_SEMAPHORE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkSemaphore 0x280000000028[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x280000000028, type: 5, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x250000000025, type = VK_OBJECT_TYPE_SEMAPHORE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkSemaphore 0x250000000025[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x250000000025, type: 5, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x240000000024, type = VK_OBJECT_TYPE_SEMAPHORE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkSemaphore 0x240000000024[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x240000000024, type: 5, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x270000000027, type = VK_OBJECT_TYPE_SEMAPHORE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkSemaphore 0x270000000027[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x270000000027, type: 5, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x290000000029, type = VK_OBJECT_TYPE_FENCE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFence 0x290000000029[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x290000000029, type: 7, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x70000000007, type = VK_OBJECT_TYPE_FENCE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFence 0x70000000007[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x70000000007, type: 7, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x260000000026, type = VK_OBJECT_TYPE_FENCE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFence 0x260000000026[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x260000000026, type: 7, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x50000000005, type = VK_OBJECT_TYPE_DEVICE_MEMORY; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDeviceMemory 0x50000000005[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x50000000005, type: 8, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x110000000011, type = VK_OBJECT_TYPE_DEVICE_MEMORY; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDeviceMemory 0x110000000011[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x110000000011, type: 8, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x210000000021, type = VK_OBJECT_TYPE_DEVICE_MEMORY; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDeviceMemory 0x210000000021[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x210000000021, type: 8, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x230000000023, type = VK_OBJECT_TYPE_DEVICE_MEMORY; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDeviceMemory 0x230000000023[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x230000000023, type: 8, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x120000000012, type = VK_OBJECT_TYPE_IMAGE_VIEW; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkImageView 0x120000000012[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x120000000012, type: 14, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0xe000000000e, type = VK_OBJECT_TYPE_IMAGE_VIEW; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkImageView 0xe000000000e[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0xe000000000e, type: 14, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0xd000000000d, type = VK_OBJECT_TYPE_IMAGE_VIEW; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkImageView 0xd000000000d[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0xd000000000d, type: 14, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0xc000000000c, type = VK_OBJECT_TYPE_IMAGE_VIEW; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkImageView 0xc000000000c[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0xc000000000c, type: 14, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x170000000017, type = VK_OBJECT_TYPE_SHADER_MODULE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkShaderModule 0x170000000017[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x170000000017, type: 15, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x160000000016, type = VK_OBJECT_TYPE_SHADER_MODULE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkShaderModule 0x160000000016[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x160000000016, type: 15, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x190000000019, type = VK_OBJECT_TYPE_PIPELINE_LAYOUT; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkPipelineLayout 0x190000000019[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x190000000019, type: 17, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x1a000000001a, type = VK_OBJECT_TYPE_PIPELINE; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkPipeline 0x1a000000001a[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x1a000000001a, type: 19, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0xf000000000f, type = VK_OBJECT_TYPE_RENDER_PASS; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkRenderPass 0xf000000000f[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0xf000000000f, type: 18, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x180000000018, type = VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDescriptorSetLayout 0x180000000018[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x180000000018, type: 20, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x1d000000001d, type = VK_OBJECT_TYPE_SAMPLER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkSampler 0x1d000000001d[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x1d000000001d, type: 21, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x1c000000001c, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDescriptorSet 0x1c000000001c[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x1c000000001c, type: 23, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x1b000000001b, type = VK_OBJECT_TYPE_DESCRIPTOR_SET; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDescriptorSet 0x1b000000001b[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x1b000000001b, type: 23, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x20000000002, type = VK_OBJECT_TYPE_DESCRIPTOR_POOL; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkDescriptorPool 0x20000000002[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x20000000002, type: 22, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x150000000015, type = VK_OBJECT_TYPE_FRAMEBUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFramebuffer 0x150000000015[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x150000000015, type: 24, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x140000000014, type = VK_OBJECT_TYPE_FRAMEBUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFramebuffer 0x140000000014[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x140000000014, type: 24, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x130000000013, type = VK_OBJECT_TYPE_FRAMEBUFFER; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkFramebuffer 0x130000000013[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x130000000013, type: 24, name: NULL
+VUID-vkDestroyDevice-device-00378(ERROR / SPEC): msgNum: 1901072314 - Validation Error: [ VUID-vkDestroyDevice-device-00378 ] Object 0: handle = 0x640a7187e0f0, type = VK_OBJECT_TYPE_DEVICE; Object 1: handle = 0x60000000006, type = VK_OBJECT_TYPE_COMMAND_POOL; | MessageID = 0x71500fba | OBJ ERROR : For VkDevice 0x640a7187e0f0[], VkCommandPool 0x60000000006[] has not been destroyed. The Vulkan spec states: All child objects created on device must have been destroyed prior to destroying device (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyDevice-device-00378)
+    Objects: 2
+        [0] 0x640a7187e0f0, type: 3, name: NULL
+        [1] 0x60000000006, type: 25, name: NULL
+VUID-vkDestroyInstance-instance-00629(ERROR / SPEC): msgNum: -1958900200 - Validation Error: [ VUID-vkDestroyInstance-instance-00629 ] Object 0: handle = 0x640a711aa770, type = VK_OBJECT_TYPE_INSTANCE; Object 1: handle = 0x30000000003, type = VK_OBJECT_TYPE_SURFACE_KHR; | MessageID = 0x8b3d8e18 | OBJ ERROR : For VkInstance 0x640a711aa770[], VkSurfaceKHR 0x30000000003[] has not been destroyed. The Vulkan spec states: All child objects created using instance must have been destroyed prior to destroying instance (https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-vkDestroyInstance-instance-00629)
+    Objects: 2
+        [0] 0x640a711aa770, type: 1, name: NULL
+        [1] 0x30000000003, type: 1000000000, name: NULL

@@ -344,18 +344,19 @@ void Engine::createLogicalDevice()
         throw std::runtime_error("Failed to create command pool!");
     }
 
-    // Create descriptor pool for UBO and sampler
+    // Create descriptor pool for UBO and sampler (allow for 100 meshes)
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 1;
+    poolSizes[0].descriptorCount = 100;  // Allow 100 UBO descriptors
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = 1;
+    poolSizes[1].descriptorCount = 100;  // Allow 100 sampler descriptors
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = 1;
+    descriptorPoolInfo.maxSets = 100;  // Allow 100 descriptor sets
+    descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
     if (vkCreateDescriptorPool(logicalDevice, &descriptorPoolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
     {
@@ -365,49 +366,48 @@ void Engine::createLogicalDevice()
 
 Engine::~Engine()
 {
-    // Wait for device to be idle before cleanup
-    if (logicalDevice != VK_NULL_HANDLE)
-    {
+    // Wait for all operations to complete
+    if (logicalDevice != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(logicalDevice);
     }
 
-    // Wait for all fences to complete before cleanup
-    vkDeviceWaitIdle(logicalDevice);
+    // Clean up models first (destroys meshes and their Vulkan resources)
+    models.clear();
 
-    // Wait for all device operations to complete
-    if (logicalDevice != VK_NULL_HANDLE)
-    {
-        vkDeviceWaitIdle(logicalDevice);
-    }
-
-    // Destroy command pool (this will free command buffers)
-    if (commandPool != VK_NULL_HANDLE)
-    {
-        vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
-    }
-
-    // Destroy device
-    if (logicalDevice != VK_NULL_HANDLE)
-    {
-        vkDestroyDevice(logicalDevice, nullptr);
-    }
-
-    // Destroy instance
-    if (instance != VK_NULL_HANDLE)
-    {
-        vkDestroyInstance(instance, nullptr);
+    // Clean up display (may contain swapchain resources)
+    if (display != nullptr) {
+        delete display;
+        display = nullptr;
     }
 
     // Destroy descriptor set layout
-    if (descriptorSetLayout != VK_NULL_HANDLE)
-    {
+    if (descriptorSetLayout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
+        descriptorSetLayout = VK_NULL_HANDLE;
     }
 
     // Destroy descriptor pool
-    if (descriptorPool != VK_NULL_HANDLE)
-    {
+    if (descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
+        descriptorPool = VK_NULL_HANDLE;
+    }
+
+    // Destroy command pool
+    if (commandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
+        commandPool = VK_NULL_HANDLE;
+    }
+
+    // Destroy logical device
+    if (logicalDevice != VK_NULL_HANDLE) {
+        vkDestroyDevice(logicalDevice, nullptr);
+        logicalDevice = VK_NULL_HANDLE;
+    }
+
+    // Destroy instance
+    if (instance != VK_NULL_HANDLE) {
+        vkDestroyInstance(instance, nullptr);
+        instance = VK_NULL_HANDLE;
     }
 }
 
