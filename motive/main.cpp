@@ -2,6 +2,7 @@
 #include <vector>
 #include <unistd.h> // for sleep
 #include "engine.h"
+#include "model.h"
 
 int main(int argc, char* argv[]) {
     // Triangle vertices with position, normal, and texCoord
@@ -41,15 +42,12 @@ int main(int argc, char* argv[]) {
 
     // Load geometry based on flags
     if (loadTriangle) {
-        engine->createVertexBuffer(triangleVerts);
+        engine->addModel(new Model(triangleVerts, engine));
     } else if (loadGLTF) {
-        engine->loadFromFile("the_utah_teapot.glb");
+        engine->addModel(new Model("the_utah_teapot.glb", engine));
     }
 
-    // Main render loop
-    while (!glfwWindowShouldClose(engine->window)) {
-        engine->render();
-    }
+    engine->renderLoop();
 
     // Cleanup
     delete engine;

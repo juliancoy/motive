@@ -3,11 +3,20 @@
 #include <vector>
 #include <string>
 #include <array>
-#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
 
+class Model;  // Forward declaration
+
+#include <stdexcept>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <set>
+#include <fstream>
+#include <vector>
+#include <chrono>
+#include "display.h"
 
 struct UniformBufferObject {
     glm::mat4 model;
@@ -15,138 +24,47 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 normal;
-    glm::vec2 texCoord;
-
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-        // Position
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-        // Normal
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, normal);
-
-        // Texture Coordinate
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
-        return attributeDescriptions;
-    }
-};
+std::vector<char> readSPIRVFile(const std::string &filename);
 
 class Engine
 {
 public:
-    // Camera state
-    glm::vec3 initialCameraPos = glm::vec3(0.0f, 0.0f, -3.0f);
-    glm::vec2 initialCameraRotation = glm::vec2(glm::radians(-180.0f), 0.0f);
-    glm::vec3 cameraPos = initialCameraPos;
-    glm::vec2 cameraRotation = initialCameraRotation;
-    float moveSpeed = 0.1f;
-
-    // Input tracking
-    bool rightMouseDown = false;
-    glm::vec2 lastMousePos = glm::vec2(0.0f);
-    bool keysPressed[5] = {false}; // W,A,S,D
-
     Engine();
     ~Engine();
 
-    void createWindow(int width, int height, const char *title);
-    void cleanup();
-    void loadFromFile(const std::string &gltfPath);
-    void render();
-    void createVertexBuffer(const std::vector<Vertex>& vertices);
-    
+    std::vector<Model> models;
 
-    GLFWwindow *window;
-
-private:
     VkInstance instance;
     VkDevice logicalDevice;
     VkPhysicalDevice physicalDevice;
-    VkQueue graphicsQueue;
-    VkCommandPool commandPool;
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapchain;
-    VkCommandBuffer commandBuffer;
+    Display * display;
 
-    VkCommandPool swapchainCmdPool;
-    VkCommandBuffer swapchainCmdBuffer;
-    VkCommandBuffer swapchainRecreationCmdBuffer;  // Separate command buffer for swapchain ops
-    VkFence swapchainRecreationFence;             // Fence for synchronization
-
-    VkRenderPass renderPass;
-    VkPipeline graphicsPipeline;
-    std::vector<VkImageView> swapchainImageViews;
-    std::vector<VkFramebuffer> swapchainFramebuffers;
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    std::vector<VkSemaphore> renderFinishedSemaphores;
-    std::vector<VkFence> inFlightFences;
-
-    int graphicsQueueFamilyIndex;
     VkPhysicalDeviceProperties props;
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceMemoryProperties memProperties;
-    VkShaderModule vertShaderModule;
-    VkShaderModule fragShaderModule;
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;
-    VkPipelineLayout pipelineLayout;
-    VkSampler textureSampler;
-    VkImage textureImage;
-    VkDeviceMemory textureImageMemory;
-    VkImageView textureImageView;
-    VkImage gltfTextureImage;
-    VkDeviceMemory gltfTextureImageMemory;
-    VkImageView gltfTextureImageView;
-    VkImageCreateInfo imgCreateInfo{};
-    VkBuffer uniformBuffer;
-    VkDeviceMemory uniformBufferMemory;
-    uint32_t vertexCount;
-    bool firstFrame = true;
-    std::string vertShaderPath;
-    std::string fragShaderPath;
-    VkImage depthImage;
-    VkDeviceMemory depthImageMemory;
-    VkImageView depthImageView;
 
     void createInstance();
-    void createSurface(GLFWwindow *window);
     void pickPhysicalDevice();
     void createLogicalDevice();
-    void createCommandPool();
-    void createSwapchain();
-    void createGraphicsPipeline();
-    void createTextureSampler();
-    void createTextureImageView();
-    void createDefaultTexture();
     void verifyDeviceSuitability();
-    void updateUniformBuffer(uint32_t currentImage);
-    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+    void renderLoop();
+    void addModel(Model* model);
+    void createWindow(int width, int height, const char* title);
+    VkCommandBuffer beginSingleTimeCommands();
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+
+
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, 
+                    VkCommandPool commandPool, VkQueue graphicsQueue);
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
-                          VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+                    VkBuffer &buffer, VkDeviceMemory &bufferMemory);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    VkShaderModule createShaderModule(const std::vector<char> &code);
+    
+    VkCommandPool commandPool;
+    uint32_t graphicsQueueFamilyIndex;
+    VkQueue graphicsQueue;
 };
