@@ -8,6 +8,8 @@
 #include <vulkan/vulkan.h>
 
 class Engine;  // Forward declaration
+class Model;  // Forward declaration
+class Mesh;  // Forward declaration
 
 struct Vertex {
     glm::vec3 pos;
@@ -18,53 +20,67 @@ struct Vertex {
     static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
 };
 
-class Mesh {
+class Primitive {
 public:
-    Mesh(Engine* engine, const std::vector<Vertex>& vertices);
-    ~Mesh();
-    void updateDescriptorSet(VkDescriptorSet descriptorSet);
+    Primitive(Engine* engine, Mesh* mesh, const std::vector<Vertex>& vertices);
+    Primitive(Engine* engine, Mesh* mesh, tinygltf::Primitive tprimitive);
+    ~Primitive();
+
+    void updateDescriptorSet();
     void updateUniformBuffer(const glm::mat4& model, const glm::mat4& view, const glm::mat4& proj);
-    void draw(VkCommandBuffer commandBuffer);
+    void createTextureResources();
+    void createDefaultTexture();
     void createTextureSampler();
     void createTextureImageView();
-    void createDefaultTexture();
+    Mesh* mesh;
 
+    // Vertex data
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     uint32_t vertexCount;
+
+    // Transformation data
     glm::mat4 transform;
     glm::vec3 rotation;
     
-    VkImage gltfTextureImage;
-    VkDeviceMemory gltfTextureImageMemory;
-    VkImageView gltfTextureImageView;
-    VkSampler textureSampler;
+    // Texture resources
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
+    VkSampler textureSampler;
     
-    Engine* engine;
+    // Uniform buffer
     VkBuffer uniformBuffer;
     VkDeviceMemory uniformBufferMemory;
     void* uniformBufferMapped;
+    
+    // Descriptor set for rendering
+    VkDescriptorSet descriptorSet;
+    
+    Engine* engine;
 };
 
-class Model
-{
+class Mesh {
 public:
-    Model(const std::string &gltfPath, Engine* engine);
-    Model(const std::vector<Vertex> &vertices, Engine* engine);
+    Mesh(Engine* engine, Model* model, const std::vector<Vertex>& vertices);
+    Mesh(Engine* engine, Model* model, tinygltf::Mesh);
+    ~Mesh();
+    Model* model;
+
+    std::vector<Primitive> primitives;
+    Engine* engine;
+};
+
+class Model {
+public:
+    Model(const std::string& gltfPath, Engine* engine);
+    Model(const std::vector<Vertex>& vertices, Engine* engine);
+    ~Model();
+
+    tinygltf::Model* tgltfModel;
 
     std::string name = "Added Vertices";
     std::vector<Mesh> meshes;
-
-
-    VkImageCreateInfo imgCreateInfo{};
     Engine* engine;
     GLFWwindow* window;
-
-
-private:
-    void loadModelFromGltf(const std::string& gltfPath);
-    void createFromVertices(const std::vector<Vertex>& vertices);
 };

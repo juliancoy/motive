@@ -741,30 +741,26 @@ void Display::render()
 
     for (const auto& model : engine->models)
     {
-        std::cout << "Processing model " << model.name << std::endl;
         for (const auto& mesh : model.meshes)
         {
-            // Update UBO with object's transform
-            UniformBufferObject ubo{};
-            ubo.model = glm::mat4(1.0f); // Use identity matrix as default
-            ubo.view = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
-            ubo.proj = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
-            
-            void* data;
-            if (mesh.uniformBufferMemory == VK_NULL_HANDLE) {
-                throw std::runtime_error("Invalid obj.uniformBufferMemory for object: " + model.name);
+            for (const auto& primitive : mesh.primitives) {
+                // Update UBO with object's transform
+                UniformBufferObject ubo{};
+                ubo.model = glm::mat4(1.0f); // Use identity matrix as default
+                ubo.view = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
+                ubo.proj = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
+                
+                if (primitive.uniformBufferMemory == VK_NULL_HANDLE) {
+                    throw std::runtime_error("Invalid primitive.uniformBufferMemory for object: " + model.name);
+                }
+                memcpy(primitive.uniformBufferMapped, &ubo, sizeof(ubo));
+
+                VkBuffer vertexBuffers[] = {primitive.vertexBuffer};
+                VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+                vkCmdDraw(commandBuffer, primitive.vertexCount, 1, 0, 0);
             }
-
-            vkMapMemory(engine->logicalDevice, mesh.uniformBufferMemory, 0, sizeof(ubo), 0, &data);
-            memcpy(data, &ubo, sizeof(ubo));
-            vkUnmapMemory(engine->logicalDevice, mesh.uniformBufferMemory);
-
-            VkBuffer vertexBuffers[] = {mesh.vertexBuffer};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdDraw(commandBuffer, mesh.vertexCount, 1, 0, 0);
         }
-        std::cout << "Finished processing object " << model.name << std::endl;
     }
 
     vkCmdEndRenderPass(commandBuffer);
@@ -802,7 +798,6 @@ void Display::render()
 
     result = vkQueuePresentKHR(graphicsQueue, &presentInfo);
     
-    std::cout << "Presenting the image" << std::endl;
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to present swapchain image");
@@ -1020,155 +1015,147 @@ void Display::createGraphicsPipeline()
     vkUpdateDescriptorSets(engine->logicalDevice, 1, &UBOdescriptorWrite, 0, nullptr);
 }
 
-Display::~Display(){
+Display::~Display() {
+    // Wait for device to be idle before cleanup
+    if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(engine->logicalDevice);
+    }
 
     // Cleanup swapchain resources
-    if (swapchain != VK_NULL_HANDLE)
-    {
+    if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
         // Destroy framebuffers
-        for (auto framebuffer : swapchainFramebuffers)
-        {
-            if (framebuffer != VK_NULL_HANDLE)
-            {
+        for (auto framebuffer : swapchainFramebuffers) {
+            if (framebuffer != VK_NULL_HANDLE) {
                 vkDestroyFramebuffer(engine->logicalDevice, framebuffer, nullptr);
+                framebuffer = VK_NULL_HANDLE;
             }
         }
 
         // Destroy image views
-        for (auto imageView : swapchainImageViews)
-        {
-            if (imageView != VK_NULL_HANDLE)
-            {
+        for (auto imageView : swapchainImageViews) {
+            if (imageView != VK_NULL_HANDLE) {
                 vkDestroyImageView(engine->logicalDevice, imageView, nullptr);
+                imageView = VK_NULL_HANDLE;
             }
         }
 
-        vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
-    }
+        // Destroy swapchain
+        if (swapchain != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
+            swapchain = VK_NULL_HANDLE;
+        }
 
-    // Destroy render pass
-    if (renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(engine->logicalDevice, renderPass, nullptr);
+        // Destroy depth resources
+        if (depthImageView != VK_NULL_HANDLE) {
+            vkDestroyImageView(engine->logicalDevice, depthImageView, nullptr);
+            depthImageView = VK_NULL_HANDLE;
+        }
+        if (depthImage != VK_NULL_HANDLE) {
+            vkDestroyImage(engine->logicalDevice, depthImage, nullptr);
+            depthImage = VK_NULL_HANDLE;
+        }
+        if (depthImageMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(engine->logicalDevice, depthImageMemory, nullptr);
+            depthImageMemory = VK_NULL_HANDLE;
+        }
+
+        // Destroy pipeline
+        if (graphicsPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(engine->logicalDevice, graphicsPipeline, nullptr);
+            graphicsPipeline = VK_NULL_HANDLE;
+        }
+
+        // Destroy shader modules
+        if (vertShaderModule != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(engine->logicalDevice, vertShaderModule, nullptr);
+            vertShaderModule = VK_NULL_HANDLE;
+        }
+        if (fragShaderModule != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(engine->logicalDevice, fragShaderModule, nullptr);
+            fragShaderModule = VK_NULL_HANDLE;
+        }
+
+        // Destroy render pass
+        if (renderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(engine->logicalDevice, renderPass, nullptr);
+            renderPass = VK_NULL_HANDLE;
+        }
+
+        // Destroy pipeline layout
+        if (pipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(engine->logicalDevice, pipelineLayout, nullptr);
+            pipelineLayout = VK_NULL_HANDLE;
+        }
+
+        // Destroy uniform buffer
+        if (uniformBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
+            uniformBuffer = VK_NULL_HANDLE;
+        }
+        if (uniformBufferMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
+            uniformBufferMemory = VK_NULL_HANDLE;
+        }
+
+        // Free command buffers
+        if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(engine->logicalDevice, swapchainCmdPool, 1, &swapchainRecreationCmdBuffer);
+            swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
+        }
+        if (commandBuffer != VK_NULL_HANDLE && commandPool != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(engine->logicalDevice, commandPool, 1, &commandBuffer);
+            commandBuffer = VK_NULL_HANDLE;
+        }
+
+        // Destroy command pools
+        if (swapchainCmdPool != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(engine->logicalDevice, swapchainCmdPool, nullptr);
+            swapchainCmdPool = VK_NULL_HANDLE;
+        }
+        if (commandPool != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(engine->logicalDevice, commandPool, nullptr);
+            commandPool = VK_NULL_HANDLE;
+        }
+
+        // Destroy semaphores
+        for (auto &sem : imageAvailableSemaphores) {
+            if (sem != VK_NULL_HANDLE) {
+                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
+                sem = VK_NULL_HANDLE;
+            }
+        }
+        for (auto &sem : renderFinishedSemaphores) {
+            if (sem != VK_NULL_HANDLE) {
+                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
+                sem = VK_NULL_HANDLE;
+            }
+        }
+
+        // Destroy fences
+        for (auto &fence : inFlightFences) {
+            if (fence != VK_NULL_HANDLE) {
+                vkDestroyFence(engine->logicalDevice, fence, nullptr);
+                fence = VK_NULL_HANDLE;
+            }
+        }
+        if (swapchainRecreationFence != VK_NULL_HANDLE) {
+            vkDestroyFence(engine->logicalDevice, swapchainRecreationFence, nullptr);
+            swapchainRecreationFence = VK_NULL_HANDLE;
+        }
     }
 
     // Destroy surface
-    if (surface != VK_NULL_HANDLE)
-    {
+    if (engine && engine->instance != VK_NULL_HANDLE && surface != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(engine->instance, surface, nullptr);
+        surface = VK_NULL_HANDLE;
     }
-
-    // Destroy pipeline
-    if (graphicsPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(engine->logicalDevice, graphicsPipeline, nullptr);
-    }
-
-    // Destroy shader modules
-    if (vertShaderModule != VK_NULL_HANDLE)
-    {
-        vkDestroyShaderModule(engine->logicalDevice, vertShaderModule, nullptr);
-    }
-    if (fragShaderModule != VK_NULL_HANDLE)
-    {
-        vkDestroyShaderModule(engine->logicalDevice, fragShaderModule, nullptr);
-    }
-
-    for (auto &sem : imageAvailableSemaphores)
-        if (sem != VK_NULL_HANDLE)
-            vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
-
-    for (auto &sem : renderFinishedSemaphores)
-        if (sem != VK_NULL_HANDLE)
-            vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
-
-    // Destroy uniform buffer
-    if (uniformBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
-    }
-    if (uniformBufferMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
-    }
-
-    // Destroy pipeline layout
-    if (pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(engine->logicalDevice, pipelineLayout, nullptr);
-    }
-
-
-    // Destroy depth resources
-    if (depthImageView != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(engine->logicalDevice, depthImageView, nullptr);
-    }
-    if (depthImage != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(engine->logicalDevice, depthImage, nullptr);
-    }
-    if (depthImageMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(engine->logicalDevice, depthImageMemory, nullptr);
-    }
-
-
-    // Free all command buffers first
-    if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE) {
-        if (engine->logicalDevice != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(engine->logicalDevice, swapchainCmdPool, 1, &swapchainRecreationCmdBuffer);
-        }
-        swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
-    }
-
-    if (commandBuffer != VK_NULL_HANDLE) {
-        if (engine->logicalDevice != VK_NULL_HANDLE && commandPool != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(engine->logicalDevice, commandPool, 1, &commandBuffer);
-        }
-        commandBuffer = VK_NULL_HANDLE;
-    }
-
-    // Destroy command pools
-    if (swapchainCmdPool != VK_NULL_HANDLE) {
-        if (engine->logicalDevice != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(engine->logicalDevice, swapchainCmdPool, nullptr);
-        }
-        swapchainCmdPool = VK_NULL_HANDLE;
-    }
-
-    if (commandPool != VK_NULL_HANDLE) {
-        if (engine->logicalDevice != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(engine->logicalDevice, commandPool, nullptr);
-        }
-        commandPool = VK_NULL_HANDLE;
-    }
-
-    // Destroy fences after command buffers are freed
-    for (auto &fence : inFlightFences) {
-        if (fence != VK_NULL_HANDLE) {
-            if (engine->logicalDevice != VK_NULL_HANDLE) {
-                vkDestroyFence(engine->logicalDevice, fence, nullptr);
-            }
-            fence = VK_NULL_HANDLE;
-        }
-    }
-
-    if (swapchainRecreationFence != VK_NULL_HANDLE) {
-        if (engine->logicalDevice != VK_NULL_HANDLE) {
-            vkDestroyFence(engine->logicalDevice, swapchainRecreationFence, nullptr);
-        }
-        swapchainRecreationFence = VK_NULL_HANDLE;
-    }
-
 
     // Destroy GLFW window
-    if (window != nullptr)
-    {
+    if (window != nullptr) {
         glfwDestroyWindow(window);
+        window = nullptr;
     }
 
-    // Terminate GLFW to clean up all resources
+    // Terminate GLFW
     glfwTerminate();
-    
 }

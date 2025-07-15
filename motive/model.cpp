@@ -1,9 +1,11 @@
 #include "model.h"
 #include "engine.h"
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
 
-VkVertexInputBindingDescription Vertex::getBindingDescription() {
+VkVertexInputBindingDescription Vertex::getBindingDescription()
+{
     VkVertexInputBindingDescription bindingDescription{};
     bindingDescription.binding = 0;
     bindingDescription.stride = sizeof(Vertex);
@@ -11,7 +13,8 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
     return bindingDescription;
 }
 
-std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions() {
+std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions()
+{
     std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
     attributeDescriptions[0].binding = 0;
@@ -32,20 +35,29 @@ std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescription
     return attributeDescriptions;
 }
 
-Mesh::Mesh(Engine* engine, const std::vector<Vertex>& vertices) : engine(engine) {
-    vertexCount = static_cast<uint32_t>(vertices.size());
-    transform = glm::mat4(1.0f);
-    rotation = glm::vec3(0.0f);
-    
+Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vertices)
+    : engine(engine),
+      mesh(mesh),
+      vertexBuffer(VK_NULL_HANDLE),
+      vertexBufferMemory(VK_NULL_HANDLE),
+      vertexCount(static_cast<uint32_t>(vertices.size())),
+      transform(glm::mat4(1.0f)),
+      rotation(glm::vec3(0.0f)),
+      textureImage(VK_NULL_HANDLE),
+      textureImageMemory(VK_NULL_HANDLE),
+      textureImageView(VK_NULL_HANDLE),
+      textureSampler(VK_NULL_HANDLE),
+      uniformBuffer(VK_NULL_HANDLE),
+      uniformBufferMemory(VK_NULL_HANDLE),
+      uniformBufferMapped(nullptr),
+      descriptorSet(VK_NULL_HANDLE)
+{
     // Create vertex buffer
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-    
+
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
 
-    // Create texture sampler if it doesn't exist
-    createTextureSampler();
-    
     engine->createBuffer(
         bufferSize,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -53,7 +65,7 @@ Mesh::Mesh(Engine* engine, const std::vector<Vertex>& vertices) : engine(engine)
         stagingBuffer,
         stagingBufferMemory);
 
-    void* data;
+    void *data;
     vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
     memcpy(data, vertices.data(), (size_t)bufferSize);
     vkUnmapMemory(engine->logicalDevice, stagingBufferMemory);
@@ -84,52 +96,173 @@ Mesh::Mesh(Engine* engine, const std::vector<Vertex>& vertices) : engine(engine)
         uniformBufferMemory);
 
     vkMapMemory(engine->logicalDevice, uniformBufferMemory, 0, uboSize, 0, &uniformBufferMapped);
+
+    createTextureResources();
 }
 
-Mesh::~Mesh() {
-    if (vertexBuffer != VK_NULL_HANDLE) {
+Primitive::Primitive(Engine* engine, Mesh* mesh, tinygltf::Primitive tprimitive)
+    : engine(engine),
+      mesh(mesh),
+      vertexBuffer(VK_NULL_HANDLE),
+      vertexBufferMemory(VK_NULL_HANDLE),
+      vertexCount(0),
+      transform(glm::mat4(1.0f)),
+      rotation(glm::vec3(0.0f)),
+      textureImage(VK_NULL_HANDLE),
+      textureImageMemory(VK_NULL_HANDLE),
+      textureImageView(VK_NULL_HANDLE),
+      textureSampler(VK_NULL_HANDLE),
+      uniformBuffer(VK_NULL_HANDLE),
+      uniformBufferMemory(VK_NULL_HANDLE),
+      uniformBufferMapped(nullptr),
+      descriptorSet(VK_NULL_HANDLE)
+{
+    // Initialize variables from tinygltf primitive
+    if (tprimitive.attributes.count("POSITION") == 0 ||
+        tprimitive.attributes.count("NORMAL") == 0 ||
+        tprimitive.attributes.count("TEXCOORD_0") == 0)
+    {
+        std::cerr << "Skipping primitive due to missing attributes.\n";
+        return;
+    }
+
+    // Load POSITION, NORMAL, TEXCOORD_0
+    tinygltf::Model* tgltfModel = mesh->model->tgltfModel;
+    const auto &posAccessor = tgltfModel->accessors[tprimitive.attributes.at("POSITION")];
+    const auto &normAccessor = tgltfModel->accessors[tprimitive.attributes.at("NORMAL")];
+    const auto &texAccessor = tgltfModel->accessors[tprimitive.attributes.at("TEXCOORD_0")];
+
+    const auto &posView = tgltfModel->bufferViews[posAccessor.bufferView];
+    const auto &normView = tgltfModel->bufferViews[normAccessor.bufferView];
+    const auto &texView = tgltfModel->bufferViews[texAccessor.bufferView];
+
+    const float *positions = reinterpret_cast<const float *>(&tgltfModel->buffers[posView.buffer].data[posView.byteOffset + posAccessor.byteOffset]);
+    const float *normals = reinterpret_cast<const float *>(&tgltfModel->buffers[normView.buffer].data[normView.byteOffset + normAccessor.byteOffset]);
+    const float *texCoords = reinterpret_cast<const float *>(&tgltfModel->buffers[texView.buffer].data[texView.byteOffset + texAccessor.byteOffset]);
+
+    if (posAccessor.count != normAccessor.count || posAccessor.count != texAccessor.count)
+        throw std::runtime_error("GLTF attribute counts mismatch.");
+
+    std::vector<Vertex> vertices(posAccessor.count);
+    for (size_t i = 0; i < posAccessor.count; ++i)
+    {
+        vertices[i].pos = glm::vec3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+        vertices[i].normal = glm::vec3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+        vertices[i].texCoord = glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]);
+    }
+
+    vertexCount = static_cast<uint32_t>(vertices.size());
+
+    // Create vertex buffer
+    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+
+    engine->createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer,
+        stagingBufferMemory);
+
+    void *data;
+    vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, vertices.data(), (size_t)bufferSize);
+    vkUnmapMemory(engine->logicalDevice, stagingBufferMemory);
+
+    engine->createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        vertexBuffer,
+        vertexBufferMemory);
+
+    VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(cmdBuffer, stagingBuffer, vertexBuffer, 1, &copyRegion);
+    engine->endSingleTimeCommands(cmdBuffer);
+
+    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
+    vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+
+    // Create uniform buffer
+    VkDeviceSize uboSize = sizeof(UniformBufferObject);
+    engine->createBuffer(
+        uboSize,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        uniformBuffer,
+        uniformBufferMemory);
+
+    vkMapMemory(engine->logicalDevice, uniformBufferMemory, 0, uboSize, 0, &uniformBufferMapped);
+
+    // Create texture resources
+    createTextureSampler();
+    createDefaultTexture();
+    createTextureImageView();
+    updateDescriptorSet();
+}
+
+Primitive::~Primitive()
+{
+
+    if (vertexBuffer != VK_NULL_HANDLE)
+    {
         vkDestroyBuffer(engine->logicalDevice, vertexBuffer, nullptr);
     }
-    if (vertexBufferMemory != VK_NULL_HANDLE) {
+    if (vertexBufferMemory != VK_NULL_HANDLE)
+    {
         vkFreeMemory(engine->logicalDevice, vertexBufferMemory, nullptr);
     }
-    if (uniformBuffer != VK_NULL_HANDLE) {
+    if (uniformBuffer != VK_NULL_HANDLE)
+    {
         vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
     }
-    if (uniformBufferMemory != VK_NULL_HANDLE) {
-        vkUnmapMemory(engine->logicalDevice, uniformBufferMemory);
+    if (uniformBufferMemory != VK_NULL_HANDLE)
+    {
+        if (uniformBufferMapped)
+        {
+            vkUnmapMemory(engine->logicalDevice, uniformBufferMemory);
+        }
         vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
     }
 
+    // Free descriptor set if allocated
+    if (descriptorSet != VK_NULL_HANDLE)
+    {
+        vkFreeDescriptorSets(engine->logicalDevice, engine->descriptorPool, 1, &descriptorSet);
+    }
+
     // Destroy texture resources
-    if (textureImageView != VK_NULL_HANDLE) {
+    if (textureImageView != VK_NULL_HANDLE)
+    {
         vkDestroyImageView(engine->logicalDevice, textureImageView, nullptr);
     }
-    if (textureImage != VK_NULL_HANDLE) {
+    if (textureImage != VK_NULL_HANDLE)
+    {
         vkDestroyImage(engine->logicalDevice, textureImage, nullptr);
     }
-    if (textureImageMemory != VK_NULL_HANDLE) {
+    if (textureImageMemory != VK_NULL_HANDLE)
+    {
         vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
     }
 
-    // Destroy GLTF texture resources
-    if (gltfTextureImageView != VK_NULL_HANDLE) {
-        vkDestroyImageView(engine->logicalDevice, gltfTextureImageView, nullptr);
-    }
-    if (gltfTextureImage != VK_NULL_HANDLE) {
-        vkDestroyImage(engine->logicalDevice, gltfTextureImage, nullptr);
-    }
-    if (gltfTextureImageMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(engine->logicalDevice, gltfTextureImageMemory, nullptr);
-    }
-
     // Destroy sampler
-    if (textureSampler != VK_NULL_HANDLE) {
+    if (textureSampler != VK_NULL_HANDLE)
+    {
         vkDestroySampler(engine->logicalDevice, textureSampler, nullptr);
     }
 }
 
-void Mesh::updateDescriptorSet(VkDescriptorSet descriptorSet) {
+void Primitive::updateDescriptorSet()
+{
+    if (descriptorSet == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("Cannot update null descriptor set");
+    }
+
     // Update UBO descriptor
     VkDescriptorBufferInfo bufferInfo{};
     bufferInfo.buffer = uniformBuffer;
@@ -138,7 +271,8 @@ void Mesh::updateDescriptorSet(VkDescriptorSet descriptorSet) {
 
     // Update texture descriptor if available
     VkDescriptorImageInfo imageInfo{};
-    if (textureImageView != VK_NULL_HANDLE && textureSampler != VK_NULL_HANDLE) {
+    if (textureImageView != VK_NULL_HANDLE && textureSampler != VK_NULL_HANDLE)
+    {
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         imageInfo.imageView = textureImageView;
         imageInfo.sampler = textureSampler;
@@ -156,7 +290,8 @@ void Mesh::updateDescriptorSet(VkDescriptorSet descriptorSet) {
     descriptorWrites[0].pBufferInfo = &bufferInfo;
 
     // Sampler at binding 1 (only if we have a texture)
-    if (textureImageView != VK_NULL_HANDLE && textureSampler != VK_NULL_HANDLE) {
+    if (textureImageView != VK_NULL_HANDLE && textureSampler != VK_NULL_HANDLE)
+    {
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[1].dstSet = descriptorSet;
         descriptorWrites[1].dstBinding = 1;
@@ -171,7 +306,8 @@ void Mesh::updateDescriptorSet(VkDescriptorSet descriptorSet) {
     vkUpdateDescriptorSets(engine->logicalDevice, writeCount, descriptorWrites.data(), 0, nullptr);
 }
 
-void Mesh::updateUniformBuffer(const glm::mat4& model, const glm::mat4& view, const glm::mat4& proj) {
+void Primitive::updateUniformBuffer(const glm::mat4 &model, const glm::mat4 &view, const glm::mat4 &proj)
+{
     UniformBufferObject ubo{};
     ubo.model = model * transform;
     ubo.view = view;
@@ -179,326 +315,7 @@ void Mesh::updateUniformBuffer(const glm::mat4& model, const glm::mat4& view, co
     memcpy(uniformBufferMapped, &ubo, sizeof(ubo));
 }
 
-void Mesh::draw(VkCommandBuffer commandBuffer) {
-    VkBuffer vertexBuffers[] = {vertexBuffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-    vkCmdDraw(commandBuffer, vertexCount, 1, 0, 0);
-}
-
-Model::Model(const std::vector<Vertex>& vertices, Engine* engine) : engine(engine) {
-    createFromVertices(vertices);
-}
-
-Model::Model(const std::string& gltfPath, Engine* engine) : engine(engine) {
-    name = gltfPath;
-    loadModelFromGltf(gltfPath);
-}
-
-void Model::loadModelFromGltf(const std::string& gltfPath) {
-    tinygltf::Model tgltfmodel;
-    tinygltf::TinyGLTF loader;
-    std::string err;
-    std::string warn;
-
-    bool ret = false;
-    size_t extPos = gltfPath.find_last_of('.');
-    if (extPos != std::string::npos) {
-        std::string ext = gltfPath.substr(extPos);
-        if (ext == ".glb") {
-            ret = loader.LoadBinaryFromFile(&tgltfmodel, &err, &warn, gltfPath);
-        }
-        else if (ext == ".gltf") {
-            ret = loader.LoadASCIIFromFile(&tgltfmodel, &err, &warn, gltfPath);
-        }
-        else {
-            throw std::runtime_error("Unsupported file extension: " + ext);
-        }
-    }
-    else {
-        throw std::runtime_error("File has no extension: " + gltfPath);
-    }
-
-    if (!warn.empty()) {
-        std::cout << "GLTF warning: " << warn << std::endl;
-    }
-    if (!err.empty()) {
-        throw std::runtime_error("GLTF error: " + err);
-    }
-    if (!ret) {
-        throw std::runtime_error("Failed to load GLTF file: " + gltfPath);
-    }
-    if (tgltfmodel.meshes.empty()) {
-        throw std::runtime_error("GLTF file contains no meshes: " + gltfPath);
-    }
-
-    // Process each mesh in the GLTF file
-    for (size_t meshIdx = 0; meshIdx < tgltfmodel.meshes.size(); ++meshIdx) {
-        const auto& mesh = tgltfmodel.meshes[meshIdx];
-        
-        for (const auto& primitive : mesh.primitives) {
-            if (primitive.attributes.find("POSITION") == primitive.attributes.end() ||
-                primitive.attributes.find("NORMAL") == primitive.attributes.end() ||
-                primitive.attributes.find("TEXCOORD_0") == primitive.attributes.end()) {
-                std::cerr << "Skipping primitive in mesh " << meshIdx << " due to missing attributes.\n";
-                continue;
-            }
-
-            // Extract vertex data from GLTF
-            const auto& posAccessor = tgltfmodel.accessors[primitive.attributes.at("POSITION")];
-            const auto& posView = tgltfmodel.bufferViews[posAccessor.bufferView];
-            const auto& posBuffer = tgltfmodel.buffers[posView.buffer];
-            const float* positions = reinterpret_cast<const float*>(&posBuffer.data[posView.byteOffset + posAccessor.byteOffset]);
-
-            const auto& normalAccessor = tgltfmodel.accessors[primitive.attributes.at("NORMAL")];
-            const auto& normalView = tgltfmodel.bufferViews[normalAccessor.bufferView];
-            const auto& normalBuffer = tgltfmodel.buffers[normalView.buffer];
-            const float* normals = reinterpret_cast<const float*>(&normalBuffer.data[normalView.byteOffset + normalAccessor.byteOffset]);
-
-            const auto& texAccessor = tgltfmodel.accessors[primitive.attributes.at("TEXCOORD_0")];
-            const auto& texView = tgltfmodel.bufferViews[texAccessor.bufferView];
-            const auto& texBuffer = tgltfmodel.buffers[texView.buffer];
-            const float* texCoords = reinterpret_cast<const float*>(&texBuffer.data[texView.byteOffset + texAccessor.byteOffset]);
-
-            if (posAccessor.count != normalAccessor.count || posAccessor.count != texAccessor.count) {
-                throw std::runtime_error("GLTF attribute counts don't match in mesh " + std::to_string(meshIdx));
-            }
-
-            std::vector<Vertex> localVertices(posAccessor.count);
-            for (size_t i = 0; i < posAccessor.count; ++i) {
-                Vertex vertex{};
-                vertex.pos = glm::vec3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-                vertex.normal = glm::vec3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
-                vertex.texCoord = glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]);
-                localVertices[i] = vertex;
-            }
-
-            // Process indices if available
-            if (primitive.indices >= 0) {
-                const auto& indexAccessor = tgltfmodel.accessors[primitive.indices];
-                const auto& indexView = tgltfmodel.bufferViews[indexAccessor.bufferView];
-                const auto& indexBuffer = tgltfmodel.buffers[indexView.buffer];
-                const void* indexData = &indexBuffer.data[indexView.byteOffset + indexAccessor.byteOffset];
-                
-                std::vector<uint32_t> indices;
-                for (size_t i = 0; i < indexAccessor.count; ++i) {
-                    switch (indexAccessor.componentType) {
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                        indices.push_back(((const uint16_t*)indexData)[i]);
-                        break;
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                        indices.push_back(((const uint32_t*)indexData)[i]);
-                        break;
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                        indices.push_back(((const uint8_t*)indexData)[i]);
-                        break;
-                    default:
-                        throw std::runtime_error("Unsupported index component type");
-                    }
-                }
-
-                // Create indexed vertices
-                std::vector<Vertex> indexedVertices;
-                for (uint32_t idx : indices) {
-                    indexedVertices.push_back(localVertices[idx]);
-                }
-                localVertices = std::move(indexedVertices);
-            }
-
-            // Normalize and center vertices
-            glm::vec3 minPos(FLT_MAX);
-            glm::vec3 maxPos(-FLT_MAX);
-            for (const auto& v : localVertices) {
-                minPos = glm::min(minPos, v.pos);
-                maxPos = glm::max(maxPos, v.pos);
-            }
-
-            glm::vec3 center = (minPos + maxPos) * 0.5f;
-            glm::vec3 size = maxPos - minPos;
-            float maxExtent = glm::compMax(size);
-
-            for (auto& v : localVertices) {
-                v.pos = (v.pos - center) / maxExtent;
-            }
-
-            // Create mesh object
-            meshes.emplace_back(engine, localVertices);
-            Mesh& currentMesh = meshes.back();
-
-
-            // Check if this primitive has a material with a texture
-            if (primitive.material >= 0 && primitive.material < tgltfmodel.materials.size()) {
-                const auto& material = tgltfmodel.materials[primitive.material];
-                if (material.pbrMetallicRoughness.baseColorTexture.index >= 0) {
-                    const auto& texture = tgltfmodel.textures[material.pbrMetallicRoughness.baseColorTexture.index];
-                    if (texture.source >= 0 && texture.source < tgltfmodel.images.size()) {
-                        const auto& image = tgltfmodel.images[texture.source];
-
-                        // Create texture image
-                        VkBuffer stagingBuffer;
-                        VkDeviceMemory stagingBufferMemory;
-
-                        VkDeviceSize imageSize = image.width * image.height * 4;
-
-                        // Create staging buffer
-                        engine->createBuffer(
-                            imageSize,
-                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            stagingBuffer,
-                            stagingBufferMemory);
-
-                        // Copy texture data to staging buffer
-                        void* data;
-                        vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, imageSize, 0, &data);
-                        memcpy(data, image.image.data(), imageSize);
-                        vkUnmapMemory(engine->logicalDevice, stagingBufferMemory);
-
-                        // Create texture image
-                        VkImageCreateInfo imageInfo{};
-                        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-                        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-                        imageInfo.extent.width = image.width;
-                        imageInfo.extent.height = image.height;
-                        imageInfo.extent.depth = 1;
-                        imageInfo.mipLevels = 1;
-                        imageInfo.arrayLayers = 1;
-                        imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-                        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-                        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-                        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-
-                        if (vkCreateImage(engine->logicalDevice, &imageInfo, nullptr, &currentMesh.textureImage) != VK_SUCCESS) {
-                            throw std::runtime_error("Failed to create texture image!");
-                        }
-
-                        // Allocate texture image memory
-                        VkMemoryRequirements memRequirements;
-                        vkGetImageMemoryRequirements(engine->logicalDevice, currentMesh.textureImage, &memRequirements);
-
-                        VkMemoryAllocateInfo allocInfo{};
-                        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                        allocInfo.allocationSize = memRequirements.size;
-                        allocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
-                                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-                        if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &currentMesh.textureImageMemory) != VK_SUCCESS) {
-                            throw std::runtime_error("Failed to allocate texture image memory!");
-                        }
-
-                        vkBindImageMemory(engine->logicalDevice, currentMesh.textureImage, currentMesh.textureImageMemory, 0);
-
-                        // Transition image layout for copying
-                        VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
-
-                        VkImageMemoryBarrier barrier{};
-                        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.image = currentMesh.textureImage;
-                        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        barrier.subresourceRange.baseMipLevel = 0;
-                        barrier.subresourceRange.levelCount = 1;
-                        barrier.subresourceRange.baseArrayLayer = 0;
-                        barrier.subresourceRange.layerCount = 1;
-                        barrier.srcAccessMask = 0;
-                        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-                        vkCmdPipelineBarrier(
-                            cmdBuffer,
-                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                            0,
-                            0, nullptr,
-                            0, nullptr,
-                            1, &barrier);
-
-                        // Copy buffer to image
-                        VkBufferImageCopy region{};
-                        region.bufferOffset = 0;
-                        region.bufferRowLength = 0;
-                        region.bufferImageHeight = 0;
-                        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        region.imageSubresource.mipLevel = 0;
-                        region.imageSubresource.baseArrayLayer = 0;
-                        region.imageSubresource.layerCount = 1;
-                        region.imageOffset = {0, 0, 0};
-                        region.imageExtent = {
-                            static_cast<uint32_t>(image.width),
-                            static_cast<uint32_t>(image.height),
-                            1u};
-
-                        vkCmdCopyBufferToImage(
-                            cmdBuffer,
-                            stagingBuffer,
-                            currentMesh.textureImage,
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                            1,
-                            &region);
-
-                        // Transition image layout to shader read
-                        VkImageMemoryBarrier shaderBarrier{};
-                        shaderBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        shaderBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                        shaderBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        shaderBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        shaderBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        shaderBarrier.image = currentMesh.textureImage;
-                        shaderBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        shaderBarrier.subresourceRange.baseMipLevel = 0;
-                        shaderBarrier.subresourceRange.levelCount = 1;
-                        shaderBarrier.subresourceRange.baseArrayLayer = 0;
-                        shaderBarrier.subresourceRange.layerCount = 1;
-                        shaderBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                        shaderBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                        vkCmdPipelineBarrier(
-                            cmdBuffer,
-                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                            0,
-                            0, nullptr,
-                            0, nullptr,
-                            1, &shaderBarrier);
-
-                        engine->endSingleTimeCommands(cmdBuffer);
-
-                        // Create texture image view
-                        VkImageViewCreateInfo viewInfo{};
-                        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                        viewInfo.image = currentMesh.textureImage;
-                        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                        viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-                        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        viewInfo.subresourceRange.baseMipLevel = 0;
-                        viewInfo.subresourceRange.levelCount = 1;
-                        viewInfo.subresourceRange.baseArrayLayer = 0;
-                        viewInfo.subresourceRange.layerCount = 1;
-
-                        if (vkCreateImageView(engine->logicalDevice, &viewInfo, nullptr, &currentMesh.textureImageView) != VK_SUCCESS) {
-                            throw std::runtime_error("Failed to create texture image view!");
-                        }
-
-                        // Cleanup staging resources
-                        vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-                        vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
-                    }
-                }
-            }
-        }
-    }
-}
-
-void Model::createFromVertices(const std::vector<Vertex>& vertices) {
-    // Create a single mesh from the provided vertices
-    meshes.emplace_back(engine, vertices);
-}
-
-void Mesh::createTextureSampler()
+void Primitive::createTextureSampler()
 {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -527,8 +344,15 @@ void Mesh::createTextureSampler()
     }
 }
 
+void Primitive::createTextureResources()
+{
+    createTextureSampler();
+    createDefaultTexture();
+    createTextureImageView();
+    updateDescriptorSet();
+}
 
-void Mesh::createTextureImageView()
+void Primitive::createTextureImageView()
 {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -547,8 +371,7 @@ void Mesh::createTextureImageView()
     }
 }
 
-
-void Mesh::createDefaultTexture()
+void Primitive::createDefaultTexture()
 {
     // Create a 1x1 white texture
     const uint32_t width = 1;
@@ -578,7 +401,7 @@ void Mesh::createDefaultTexture()
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS)
     {
@@ -619,7 +442,7 @@ void Mesh::createDefaultTexture()
 
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &textureImageMemory) != VK_SUCCESS)
     {
@@ -706,9 +529,6 @@ void Mesh::createDefaultTexture()
     vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
     vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
 
-    // Create image view
-    createTextureImageView();
-
     // Update descriptor set with sampler
     VkDescriptorImageInfo descImageInfo{};
     descImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -725,4 +545,88 @@ void Mesh::createDefaultTexture()
     descriptorWrite.pImageInfo = &descImageInfo;
 
     vkUpdateDescriptorSets(engine->logicalDevice, 1, &descriptorWrite, 0, nullptr);
+}
+
+Mesh::Mesh(Engine *engine, Model *model, tinygltf::Mesh gltfmesh)
+    : engine(engine)
+{
+    // Process all primitives in the mesh
+    for (const auto &tprimitive : gltfmesh.primitives)
+    {
+        // Let the Primitive class handle the loading
+        primitives.emplace_back(Primitive(engine, this, tprimitive));
+    }
+}
+
+Mesh::Mesh(Engine *engine, Model *model, const std::vector<Vertex> &vertices)
+    : engine(engine)
+{
+}
+
+Mesh::~Mesh()
+{
+}
+
+Model::Model(const std::vector<Vertex> &vertices, Engine *engine) : engine(engine)
+{
+    // Create a single mesh from the provided vertices
+    meshes.emplace_back(Mesh(engine, this, vertices));
+}
+
+Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
+{
+    name = gltfPath;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    tgltfModel = new tinygltf::Model();
+    bool success = false;
+    const std::string ext = gltfPath.substr(gltfPath.find_last_of('.'));
+
+    if (ext == ".glb")
+    {
+        success = loader.LoadBinaryFromFile(tgltfModel, &err, &warn, gltfPath);
+    }
+    else if (ext == ".gltf")
+    {
+        success = loader.LoadASCIIFromFile(tgltfModel, &err, &warn, gltfPath);
+    }
+    else
+    {
+        throw std::runtime_error("Unsupported file extension: " + ext);
+    }
+
+    if (!warn.empty())
+        std::cout << "GLTF warning: " << warn << std::endl;
+    if (!err.empty())
+        throw std::runtime_error("GLTF error: " + err);
+    if (!success)
+        throw std::runtime_error("Failed to load GLTF file: " + gltfPath);
+    if (tgltfModel->meshes.empty())
+        throw std::runtime_error("GLTF contains no meshes.");
+
+    // Process all meshes in the GLTF file
+    for (const auto &gltfmesh : tgltfModel->meshes)
+    {
+        // Create a new Mesh for each GLTF mesh
+        meshes.emplace_back(Mesh(engine, this, gltfmesh));
+    }
+}
+
+Model::~Model()
+{
+    // Wait for device to be idle before cleanup
+    if (engine && engine->logicalDevice != VK_NULL_HANDLE)
+    {
+        vkDeviceWaitIdle(engine->logicalDevice);
+    }
+
+    // Clear meshes vector - each Mesh's destructor will clean up its resources
+    meshes.clear();
+
+    // Clean up GLTF model
+    if (tgltfModel) {
+        delete tgltfModel;
+        tgltfModel = nullptr;
+    }
 }
