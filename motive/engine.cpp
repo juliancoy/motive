@@ -380,10 +380,14 @@ Engine::~Engine()
         display = nullptr;
     }
 
-    // Destroy descriptor set layout
+    // Destroy descriptor set layouts
     if (descriptorSetLayout != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
         descriptorSetLayout = VK_NULL_HANDLE;
+    }
+    if (textureDescriptorSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(logicalDevice, textureDescriptorSetLayout, nullptr);
+        textureDescriptorSetLayout = VK_NULL_HANDLE;
     }
 
     // Destroy descriptor pool
