@@ -736,8 +736,10 @@ void Display::render()
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    
+    // Bind global UBO descriptor set (set 0)
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            pipelineLayout, 0, 1, &engine->descriptorSet, 0, nullptr);
+                          pipelineLayout, 0, 1, &engine->descriptorSet, 0, nullptr);
 
     for (const auto& model : engine->models)
     {
@@ -754,6 +756,14 @@ void Display::render()
                     throw std::runtime_error("Invalid primitive.uniformBufferMemory for object: " + model.name);
                 }
                 memcpy(primitive.uniformBufferMapped, &ubo, sizeof(ubo));
+
+                // Bind primitive's texture descriptor set (set 1)
+                if (primitive.primitiveDescriptorSet != VK_NULL_HANDLE) {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          pipelineLayout, 1, 1, &primitive.primitiveDescriptorSet, 0, nullptr);
+                } else {
+                    throw std::runtime_error("Primitive descriptor set is null");
+                }
 
                 VkBuffer vertexBuffers[] = {primitive.vertexBuffer};
                 VkDeviceSize offsets[] = {0};
@@ -921,38 +931,52 @@ void Display::createGraphicsPipeline()
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
-    // Create descriptor set layout for UBO and sampler
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    // Create descriptor set layout for UBO (set 0)
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.pImmutableSamplers = nullptr;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-    // UBO at binding 0 (vertex stage)
-    bindings[0].binding = 0;
-    bindings[0].descriptorCount = 1;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[0].pImmutableSamplers = nullptr;
-    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo uboLayoutInfo{};
+    uboLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    uboLayoutInfo.bindingCount = 1;
+    uboLayoutInfo.pBindings = &uboLayoutBinding;
 
-    // Sampler at binding 1 (fragment stage)
-    bindings[1].binding = 1;
-    bindings[1].descriptorCount = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[1].pImmutableSamplers = nullptr;
-    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-
-    if (vkCreateDescriptorSetLayout(engine->logicalDevice, &layoutInfo, nullptr, &engine->descriptorSetLayout) != VK_SUCCESS)
+    if (vkCreateDescriptorSetLayout(engine->logicalDevice, &uboLayoutInfo, nullptr, &engine->descriptorSetLayout) != VK_SUCCESS)
     {
-        throw std::runtime_error("Failed to create descriptor set layout!");
+        throw std::runtime_error("Failed to create UBO descriptor set layout!");
     }
 
-    // Pipeline layout
+    // Create descriptor set layout for texture sampler (set 1)
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 0;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo samplerLayoutInfo{};
+    samplerLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    samplerLayoutInfo.bindingCount = 1;
+    samplerLayoutInfo.pBindings = &samplerLayoutBinding;
+
+    if (vkCreateDescriptorSetLayout(engine->logicalDevice, &samplerLayoutInfo, nullptr, &engine->textureDescriptorSetLayout) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create texture descriptor set layout!");
+    }
+
+    // Pipeline layout with both descriptor sets
+    std::array<VkDescriptorSetLayout, 2> descriptorSetLayouts = {
+        engine->descriptorSetLayout,       // Set 0: UBO
+        engine->textureDescriptorSetLayout // Set 1: Texture sampler
+    };
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &engine->descriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(descriptorSetLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
 

@@ -48,6 +48,21 @@ public:
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
+    VkDescriptorSetLayoutCreateInfo textureLayoutInfo{};
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+
+    // various info
+    VkSamplerCreateInfo samplerInfo{};
+    VkDescriptorBufferInfo bufferInfo{};
+    VkDescriptorImageInfo imageInfo{};
+    VkImageViewCreateInfo viewInfo{};
+    VkDescriptorSetAllocateInfo allocInfo{};
+    VkBufferCreateInfo stagingBufferInfo{};
+    VkMemoryAllocateInfo stagingAllocInfo{};
+    VkImageCreateInfo textureImageInfo{};
+    VkImageMemoryBarrier imageBarrier{};
+    VkBufferImageCopy imageCopyRegion{};
+    VkImageMemoryBarrier shaderBarrier{};
     
     // Uniform buffer
     VkBuffer uniformBuffer;
@@ -55,7 +70,7 @@ public:
     void* uniformBufferMapped;
     
     // Descriptor set for rendering
-    VkDescriptorSet descriptorSet;
+    VkDescriptorSet primitiveDescriptorSet;
     
     Engine* engine;
 };
@@ -77,7 +92,7 @@ public:
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
 
-    tinygltf::Model* tgltfModel;
+    tinygltf::Model* tgltfModel = nullptr;
 
     std::string name = "Added Vertices";
     std::vector<Mesh> meshes;

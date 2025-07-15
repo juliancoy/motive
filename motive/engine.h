@@ -43,6 +43,7 @@ public:
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceMemoryProperties memProperties;
     VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorSetLayout textureDescriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;
 
