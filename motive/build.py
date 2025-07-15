@@ -13,7 +13,10 @@ original_dir = os.getcwd()
 shader_dir = os.path.abspath(os.path.join(this_dir, "shaders"))
 
 # Source and object files
-so_sources = ["engine.cpp"]
+so_sources =[]
+for file in os.listdir(this_dir):
+    if file.endswith(".cpp") and "main" not in file:
+        so_sources += [file]
 main_sources = ["main.cpp"]
 so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
