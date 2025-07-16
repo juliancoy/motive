@@ -6,6 +6,7 @@
 
 VkDebugUtilsMessengerEXT debugMessenger;
 
+
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
                                       const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
                                       const VkAllocationCallbacks *pAllocator,
@@ -107,6 +108,18 @@ Engine::Engine()
     createLogicalDevice();
 
     display = new Display(this);
+}
+
+void Engine::nameVulkanObject(uint64_t handle, VkObjectType type, const char* name) {
+    auto func = (PFN_vkSetDebugUtilsObjectNameEXT)vkGetDeviceProcAddr(logicalDevice, "vkSetDebugUtilsObjectNameEXT");
+    if (func) {
+        VkDebugUtilsObjectNameInfoEXT info{};
+        info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+        info.objectType = type;
+        info.objectHandle = handle;
+        info.pObjectName = name;
+        func(logicalDevice, &info);
+    }
 }
 
 VkCommandBuffer Engine::beginSingleTimeCommands()
@@ -488,12 +501,7 @@ Engine::~Engine()
         vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
         descriptorSetLayout = VK_NULL_HANDLE;
     }
-    if (textureDescriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(logicalDevice, textureDescriptorSetLayout, nullptr);
-        textureDescriptorSetLayout = VK_NULL_HANDLE;
-    }
-
+    
     // Destroy descriptor pool
     if (descriptorPool != VK_NULL_HANDLE)
     {

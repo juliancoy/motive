@@ -970,6 +970,8 @@ void Display::createGraphicsPipeline()
     {
         throw std::runtime_error("Failed to create pipeline layout!");
     }
+    engine->nameVulkanObject((uint64_t)pipelineLayout, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "displayPipelineLayout");
+
 
     // Graphics pipeline creation
     VkGraphicsPipelineCreateInfo pipelineInfo{};

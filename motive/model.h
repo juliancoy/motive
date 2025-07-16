@@ -71,6 +71,7 @@ public:
     
     // Descriptor set for rendering
     VkDescriptorSet primitiveDescriptorSet;
+    VkDescriptorSetLayout textureDescriptorSetLayout;
     
     Engine* engine;
 };
@@ -98,4 +99,5 @@ public:
     std::vector<Mesh> meshes;
     Engine* engine;
     GLFWwindow* window;
+    std::vector<Texture*> textures;
 };
