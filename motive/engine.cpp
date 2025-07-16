@@ -4,6 +4,80 @@
 #include <array>
 #include <fstream>
 
+VkDebugUtilsMessengerEXT debugMessenger;
+
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
+                                      const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+                                      const VkAllocationCallbacks *pAllocator,
+                                      VkDebugUtilsMessengerEXT *pDebugMessenger)
+{
+
+    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)
+        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+
+    if (func != nullptr)
+    {
+        return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+    }
+    else
+    {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT *callbackData,
+    void *userData)
+{
+
+    std::cerr << "Validation Layer: " << callbackData->pMessage << std::endl;
+
+    // Fail fast on errors
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    {
+        std::cerr << "Vulkan error encountered, aborting." << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    return VK_FALSE; // Returning false means don't suppress the message
+}
+void setupDebugMessenger(VkInstance instance)
+{
+    VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    createInfo.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+
+    createInfo.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+
+    createInfo.pfnUserCallback = debugCallback;
+    createInfo.pUserData = nullptr;
+    createInfo.pNext = nullptr; // ← correct
+
+    if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to set up debug messenger!");
+    }
+}
+
+void destroyDebugMessenger(VkInstance instance)
+{
+    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)
+        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+
+    if (func != nullptr)
+    {
+        func(instance, debugMessenger, nullptr);
+    }
+}
+
 Engine::Engine()
 {
     instance = VK_NULL_HANDLE;
@@ -69,6 +143,7 @@ void Engine::endSingleTimeCommands(VkCommandBuffer commandBuffer)
 
     vkFreeCommandBuffers(logicalDevice, commandPool, 1, &commandBuffer);
 }
+
 void Engine::createInstance()
 {
     VkApplicationInfo appInfo{};
@@ -89,16 +164,18 @@ void Engine::createInstance()
     {
         throw std::runtime_error("Failed to get required GLFW extensions");
     }
+    std::vector<const char *> requiredExtensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    requiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); // Adds "VK_EXT_debug_utils"
 
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
+    VkInstanceCreateInfo instanceCreateInfo{};
+    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instanceCreateInfo.pApplicationInfo = &appInfo;
 
-    createInfo.enabledExtensionCount = glfwExtensionCount;
-    createInfo.ppEnabledExtensionNames = glfwExtensions;
+    instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
+    instanceCreateInfo.ppEnabledExtensionNames = requiredExtensions.data();
 
-    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-    createInfo.ppEnabledLayerNames = validationLayers.data();
+    instanceCreateInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+    instanceCreateInfo.ppEnabledLayerNames = validationLayers.data();
 
     uint32_t extensionCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
@@ -122,10 +199,33 @@ void Engine::createInstance()
         }
     }
 
-    if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS)
+    if (vkCreateInstance(&instanceCreateInfo, nullptr, &instance) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to create Vulkan instance");
     }
+
+    setupDebugMessenger(instance);
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
+    debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debugCreateInfo.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debugCreateInfo.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debugCreateInfo.pfnUserCallback = debugCallback;
+    debugCreateInfo.pUserData = nullptr;
+
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
+    createInfo.ppEnabledExtensionNames = requiredExtensions.data();
+    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+    createInfo.ppEnabledLayerNames = validationLayers.data();
+    createInfo.pNext = &debugCreateInfo; // ✅ Add this line
 }
 
 void Engine::pickPhysicalDevice()
@@ -347,15 +447,15 @@ void Engine::createLogicalDevice()
     // Create descriptor pool for UBO and sampler (allow for 100 meshes)
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 100;  // Allow 100 UBO descriptors
+    poolSizes[0].descriptorCount = 100; // Allow 100 UBO descriptors
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = 100;  // Allow 100 sampler descriptors
+    poolSizes[1].descriptorCount = 100; // Allow 100 sampler descriptors
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = 100;  // Allow 100 descriptor sets
+    descriptorPoolInfo.maxSets = 100; // Allow 100 descriptor sets
     descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
     if (vkCreateDescriptorPool(logicalDevice, &descriptorPoolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
@@ -367,7 +467,8 @@ void Engine::createLogicalDevice()
 Engine::~Engine()
 {
     // Wait for all operations to complete
-    if (logicalDevice != VK_NULL_HANDLE) {
+    if (logicalDevice != VK_NULL_HANDLE)
+    {
         vkDeviceWaitIdle(logicalDevice);
     }
 
@@ -375,41 +476,50 @@ Engine::~Engine()
     models.clear();
 
     // Clean up display (may contain swapchain resources)
-    if (display != nullptr) {
+    if (display != nullptr)
+    {
         delete display;
         display = nullptr;
     }
 
     // Destroy descriptor set layouts
-    if (descriptorSetLayout != VK_NULL_HANDLE) {
+    if (descriptorSetLayout != VK_NULL_HANDLE)
+    {
         vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
         descriptorSetLayout = VK_NULL_HANDLE;
     }
-    if (textureDescriptorSetLayout != VK_NULL_HANDLE) {
+    if (textureDescriptorSetLayout != VK_NULL_HANDLE)
+    {
         vkDestroyDescriptorSetLayout(logicalDevice, textureDescriptorSetLayout, nullptr);
         textureDescriptorSetLayout = VK_NULL_HANDLE;
     }
 
     // Destroy descriptor pool
-    if (descriptorPool != VK_NULL_HANDLE) {
+    if (descriptorPool != VK_NULL_HANDLE)
+    {
         vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
         descriptorPool = VK_NULL_HANDLE;
     }
 
     // Destroy command pool
-    if (commandPool != VK_NULL_HANDLE) {
+    if (commandPool != VK_NULL_HANDLE)
+    {
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
         commandPool = VK_NULL_HANDLE;
     }
 
     // Destroy logical device
-    if (logicalDevice != VK_NULL_HANDLE) {
+    if (logicalDevice != VK_NULL_HANDLE)
+    {
         vkDestroyDevice(logicalDevice, nullptr);
         logicalDevice = VK_NULL_HANDLE;
     }
 
+    destroyDebugMessenger(instance);
+
     // Destroy instance
-    if (instance != VK_NULL_HANDLE) {
+    if (instance != VK_NULL_HANDLE)
+    {
         vkDestroyInstance(instance, nullptr);
         instance = VK_NULL_HANDLE;
     }
