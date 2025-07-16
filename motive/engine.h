@@ -43,7 +43,6 @@ public:
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceMemoryProperties memProperties;
     VkDescriptorSetLayout descriptorSetLayout;
-    VkDescriptorSetLayout textureDescriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;
 
@@ -56,6 +55,7 @@ public:
     void createWindow(int width, int height, const char* title);
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+    void nameVulkanObject(uint64_t handle, VkObjectType type, const char* name);
 
 
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, 
