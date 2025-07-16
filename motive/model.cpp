@@ -256,36 +256,49 @@ Primitive::~Primitive()
 
 void Primitive::updateDescriptorSet()
 {
-    if (primitiveDescriptorSet == VK_NULL_HANDLE)
-    {
-        throw std::runtime_error("Cannot update null descriptor set");
+    if (primitiveDescriptorSet == VK_NULL_HANDLE) {
+        throw std::runtime_error("Cannot update descriptor set: descriptor set is null.");
     }
 
-    // Update UBO descriptor
+    // Setup descriptor buffer info for UBO (binding 0)
+    VkDescriptorBufferInfo bufferInfo{};
     bufferInfo.buffer = uniformBuffer;
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(UniformBufferObject);
 
-    // Always update texture descriptor - createTextureResources() ensures we have valid defaults
+    // Setup descriptor image info for texture sampler (binding 1)
+    VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     imageInfo.imageView = textureImageView;
     imageInfo.sampler = textureSampler;
 
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
+    // Fill descriptor writes for UBO and sampler
+    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
-    // Only update sampler binding (since this is a texture-only descriptor set)
+    // Binding 0: Uniform Buffer Object
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = primitiveDescriptorSet;
     descriptorWrites[0].dstBinding = 0;
     descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pImageInfo = &imageInfo;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-    // Always update both descriptors
-    uint32_t writeCount = 2;
-    vkUpdateDescriptorSets(engine->logicalDevice, writeCount, descriptorWrites.data(), 0, nullptr);
+    // Binding 1: Combined Image Sampler
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = primitiveDescriptorSet;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(engine->logicalDevice,
+                           static_cast<uint32_t>(descriptorWrites.size()),
+                           descriptorWrites.data(),
+                           0, nullptr);
 }
+
 
 void Primitive::updateUniformBuffer(const glm::mat4 &model, const glm::mat4 &view, const glm::mat4 &proj)
 {
@@ -337,8 +350,8 @@ void Primitive::createTextureResources()
         throw std::runtime_error("Failed to create texture resources!");
     }
 
-    // Create descriptor set layout for texture sampler
-    samplerLayoutBinding.binding = 0;
+    // Create descriptor set layout for texture sampler at binding 1
+    samplerLayoutBinding.binding = 1;
     samplerLayoutBinding.descriptorCount = 1;
     samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     samplerLayoutBinding.pImmutableSamplers = nullptr;
@@ -347,7 +360,6 @@ void Primitive::createTextureResources()
     textureLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     textureLayoutInfo.bindingCount = 1;
     textureLayoutInfo.pBindings = &samplerLayoutBinding;
-
 
     if (vkCreateDescriptorSetLayout(engine->logicalDevice, &textureLayoutInfo, nullptr, &engine->textureDescriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create texture descriptor set layout!");
