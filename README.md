@@ -4,7 +4,7 @@
 This simple game engine was vibe coded by me to make it easier to develop games using my comfortable coding setups. There is already a decent render pipeline with z-culling etc. and you can fly about the scene using WASD and right-click (like familiar Game Engines). 
 
 ## Getting started
-1) Clone this repository with submodules ```git clone && cd motive && git submodule update --init --recursive```
+1) Clone this repository with submodules ```git clone https://github.com/juliancoy/motive && cd motive && git submodule update --init --recursive```
 2) run ```python build_deps.py``` to build the dependencies
 3) ```cd motive && python build.py```
 4) ```./main --gltf```
