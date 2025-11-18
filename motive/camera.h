@@ -17,7 +17,10 @@ struct CameraTransform {
 class Camera
 {
 public:
-    Camera(Engine* engine, Display *display);
+    Camera(Engine* engine,
+           Display* display,
+           const glm::vec3& initialPos = glm::vec3(0.0f, 0.0f, -3.0f),
+           const glm::vec2& initialRot = glm::vec2(glm::radians(-180.0f), 0.0f));
     ~Camera();
 
     // Camera state management
@@ -31,16 +34,16 @@ public:
     void setWindow(GLFWwindow* window);
 
     // Camera state
-    glm::vec3 initialCameraPos = glm::vec3(0.0f, 0.0f, -3.0f);
-    glm::vec2 initialCameraRotation = glm::vec2(glm::radians(-180.0f), 0.0f);
-    glm::vec3 cameraPos = initialCameraPos;
-    glm::vec2 cameraRotation = initialCameraRotation;
+    glm::vec3 initialCameraPos;
+    glm::vec2 initialCameraRotation;
+    glm::vec3 cameraPos;
+    glm::vec2 cameraRotation;
     float moveSpeed = 0.01f;
 
     // Input tracking
     bool rightMouseDown = false;
     glm::vec2 lastMousePos = glm::vec2(0.0f);
-    bool keysPressed[5] = {false}; // W,A,S,D
+    bool keysPressed[6] = {false}; // W,A,S,D,Q,E
 
     // Vulkan resources
     VkBuffer cameraTransformUBO;

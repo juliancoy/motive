@@ -2,6 +2,8 @@
 #include <vector>
 #include <memory>
 #include <unistd.h> // for sleep
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include "engine.h"
 #include "display.h"
 #include "camera.h"
@@ -34,7 +36,9 @@ int main(int argc, char *argv[])
     Display* display = engine->createWindow(800, 600, "Motive");
 
     // Create a default camera tied to this display
-    auto* primaryCamera = new Camera(engine, display);
+    glm::vec3 defaultCameraPos(0.0f, 0.0f, -3.0f);
+    glm::vec2 defaultCameraRotation(glm::radians(-180.0f), 0.0f);
+    auto* primaryCamera = new Camera(engine, display, defaultCameraPos, defaultCameraRotation);
     display->addCamera(primaryCamera);
 
     // Load geometry based on flags
@@ -60,7 +64,9 @@ int main(int argc, char *argv[])
     else if (loadGLTF)
     {
         auto model = std::make_unique<Model>("the_utah_teapot.glb", engine);
-        model->scaleModelToUnitBox();
+        model->scaleToUnitBox();
+        model->rotate(-90.0f, 0.0f, 0.0f);
+        model->translate(glm::vec3(0.0f, -0.5f, 0.0f));
         engine->addModel(std::move(model));
     }
 

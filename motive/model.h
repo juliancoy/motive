@@ -98,7 +98,10 @@ public:
     Model(const std::string& gltfPath, Engine* engine);
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
-    void scaleModelToUnitBox();
+    void scaleToUnitBox();
+    void translate(const glm::vec3& offset);
+    void rotate(float angleRadians, const glm::vec3& axis);
+    void rotate(float xDegrees, float yDegrees, float zDegrees);
 
     tinygltf::Model* tgltfModel = nullptr;
 
@@ -107,4 +110,6 @@ public:
     Engine* engine;
     GLFWwindow* window;
     std::vector<Texture*> textures;
+private:
+    void applyTransformToPrimitives(const glm::mat4& transform);
 };

@@ -537,11 +537,11 @@ Model::~Model()
     }
 }
 
-void Model::scaleModelToUnitBox()
+void Model::scaleToUnitBox()
 {
     if (!tgltfModel)
     {
-        std::cerr << "[Warning] scaleModelToUnitBox is only supported for GLTF-backed models." << std::endl;
+        std::cerr << "[Warning] scaleToUnitBox is only supported for GLTF-backed models." << std::endl;
         return;
     }
 
@@ -583,7 +583,7 @@ void Model::scaleModelToUnitBox()
 
     if (!foundPositions)
     {
-        std::cerr << "[Warning] scaleModelToUnitBox: No position data found on model " << name << std::endl;
+        std::cerr << "[Warning] scaleToUnitBox: No position data found on model " << name << std::endl;
         return;
     }
 
@@ -591,7 +591,7 @@ void Model::scaleModelToUnitBox()
     float maxExtent = glm::compMax(extent);
     if (maxExtent <= 0.0f || !std::isfinite(maxExtent))
     {
-        std::cerr << "[Warning] scaleModelToUnitBox: Invalid extent for model " << name << std::endl;
+        std::cerr << "[Warning] scaleToUnitBox: Invalid extent for model " << name << std::endl;
         return;
     }
 
@@ -609,9 +609,69 @@ void Model::scaleModelToUnitBox()
             if (primitive)
             {
                 primitive->transform = transform;
+                if (primitive->ObjectTransformUBOMapped)
+                {
+                    ObjectTransform updated{};
+                    updated.model = primitive->transform;
+                    memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+                }
             }
         }
     }
 
     std::cout << "[Debug] Model " << name << " scaled to unit box (scale=" << scale << ")" << std::endl;
+}
+
+void Model::translate(const glm::vec3 &offset)
+{
+    applyTransformToPrimitives(glm::translate(glm::mat4(1.0f), offset));
+}
+
+void Model::rotate(float angleRadians, const glm::vec3 &axis)
+{
+    glm::vec3 normAxis = glm::length(axis) == 0.0f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::normalize(axis);
+    applyTransformToPrimitives(glm::rotate(glm::mat4(1.0f), angleRadians, normAxis));
+}
+
+void Model::rotate(float xDegrees, float yDegrees, float zDegrees)
+{
+    glm::mat4 rotationMat(1.0f);
+
+    if (xDegrees != 0.0f)
+    {
+        rotationMat = glm::rotate(rotationMat, glm::radians(xDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+    if (yDegrees != 0.0f)
+    {
+        rotationMat = glm::rotate(rotationMat, glm::radians(yDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+    if (zDegrees != 0.0f)
+    {
+        rotationMat = glm::rotate(rotationMat, glm::radians(zDegrees), glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    applyTransformToPrimitives(rotationMat);
+}
+
+void Model::applyTransformToPrimitives(const glm::mat4 &transform)
+{
+    for (auto &mesh : meshes)
+    {
+        for (auto &primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+
+            primitive->transform = transform * primitive->transform;
+
+            if (primitive->ObjectTransformUBOMapped)
+            {
+                ObjectTransform updated{};
+                updated.model = primitive->transform;
+                memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+            }
+        }
+    }
 }
