@@ -84,6 +84,11 @@ Engine::Engine()
     instance = VK_NULL_HANDLE;
     logicalDevice = VK_NULL_HANDLE;
     physicalDevice = VK_NULL_HANDLE;
+    descriptorSetLayout = VK_NULL_HANDLE;
+    primitiveDescriptorSetLayout = VK_NULL_HANDLE;
+    descriptorPool = VK_NULL_HANDLE;
+    commandPool = VK_NULL_HANDLE;
+    display = nullptr;
 
     if (!glfwInit())
     {
@@ -500,6 +505,11 @@ Engine::~Engine()
     {
         vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
         descriptorSetLayout = VK_NULL_HANDLE;
+    }
+    if (primitiveDescriptorSetLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(logicalDevice, primitiveDescriptorSetLayout, nullptr);
+        primitiveDescriptorSetLayout = VK_NULL_HANDLE;
     }
     
     // Destroy descriptor pool

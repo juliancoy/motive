@@ -931,38 +931,63 @@ void Display::createGraphicsPipeline()
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
-    // Create single descriptor set layout with both UBO and texture sampler
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {};
-    
-    // UBO at binding 0
-    bindings[0].binding = 0;
-    bindings[0].descriptorCount = 1;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[0].pImmutableSamplers = nullptr;
-    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    // Texture sampler at binding 1
-    bindings[1].binding = 1;
-    bindings[1].descriptorCount = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[1].pImmutableSamplers = nullptr;
-    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-
-    if (vkCreateDescriptorSetLayout(engine->logicalDevice, &layoutInfo, nullptr, &engine->descriptorSetLayout) != VK_SUCCESS)
+    // Global descriptor set layout (set 0) for camera UBO
+    if (engine->descriptorSetLayout == VK_NULL_HANDLE)
     {
-        throw std::runtime_error("Failed to create descriptor set layout!");
+        VkDescriptorSetLayoutBinding globalUboBinding{};
+        globalUboBinding.binding = 0;
+        globalUboBinding.descriptorCount = 1;
+        globalUboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        globalUboBinding.pImmutableSamplers = nullptr;
+        globalUboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo globalLayoutInfo{};
+        globalLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        globalLayoutInfo.bindingCount = 1;
+        globalLayoutInfo.pBindings = &globalUboBinding;
+
+        if (vkCreateDescriptorSetLayout(engine->logicalDevice, &globalLayoutInfo, nullptr, &engine->descriptorSetLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create global descriptor set layout!");
+        }
+        engine->nameVulkanObject((uint64_t)engine->descriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "globalDescriptorSetLayout");
+    }
+
+    // Primitive descriptor set layout (set 1) for per-primitive UBO + sampler
+    if (engine->primitiveDescriptorSetLayout == VK_NULL_HANDLE)
+    {
+        std::array<VkDescriptorSetLayoutBinding, 2> primitiveBindings{};
+
+        primitiveBindings[0].binding = 0;
+        primitiveBindings[0].descriptorCount = 1;
+        primitiveBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        primitiveBindings[0].pImmutableSamplers = nullptr;
+        primitiveBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        primitiveBindings[1].binding = 1;
+        primitiveBindings[1].descriptorCount = 1;
+        primitiveBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        primitiveBindings[1].pImmutableSamplers = nullptr;
+        primitiveBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo primitiveLayoutInfo{};
+        primitiveLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        primitiveLayoutInfo.bindingCount = static_cast<uint32_t>(primitiveBindings.size());
+        primitiveLayoutInfo.pBindings = primitiveBindings.data();
+
+        if (vkCreateDescriptorSetLayout(engine->logicalDevice, &primitiveLayoutInfo, nullptr, &engine->primitiveDescriptorSetLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create primitive descriptor set layout!");
+        }
+        engine->nameVulkanObject((uint64_t)engine->primitiveDescriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "primitiveDescriptorSetLayout");
     }
 
     // Pipeline layout with single descriptor set
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &engine->descriptorSetLayout;
+    std::array<VkDescriptorSetLayout, 2> setLayouts = {engine->descriptorSetLayout, engine->primitiveDescriptorSetLayout};
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
