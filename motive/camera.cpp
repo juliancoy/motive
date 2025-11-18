@@ -53,7 +53,16 @@ void ForwardKey(GLFWwindow *window, int key, int scancode, int action, int mods)
 }
 } // namespace
 
-Camera::Camera(Engine* engine, Display* display) : engine(engine), display(display)
+Camera::Camera(Engine* engine,
+               Display* display,
+               const glm::vec3& initialPos,
+               const glm::vec2& initialRot)
+    : engine(engine),
+      display(display),
+      initialCameraPos(initialPos),
+      initialCameraRotation(initialRot),
+      cameraPos(initialPos),
+      cameraRotation(initialRot)
 {
     // Initialize camera state
     cameraPos = initialCameraPos;
@@ -235,6 +244,10 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         keysPressed[2] = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_D)
         keysPressed[3] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_Q)
+        keysPressed[4] = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_E)
+        keysPressed[5] = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_R && action == GLFW_PRESS) {
         reset();
     }
@@ -280,6 +293,8 @@ void Camera::updateCameraMatrices()
     if (keysPressed[1]) moveDir -= right;     // A
     if (keysPressed[2]) moveDir -= forward;   // S
     if (keysPressed[3]) moveDir += right;     // D
+    if (keysPressed[4]) moveDir -= worldUp;   // Q (down)
+    if (keysPressed[5]) moveDir += worldUp;   // E (up)
 
     if (glm::length(moveDir) > 0.0f) {
         cameraPos += glm::normalize(moveDir) * moveSpeed;
