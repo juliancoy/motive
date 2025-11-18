@@ -227,12 +227,6 @@ Primitive::~Primitive()
         vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
     }
 
-    if (textureDescriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(engine->logicalDevice, textureDescriptorSetLayout, nullptr);
-        textureDescriptorSetLayout = VK_NULL_HANDLE;
-    }
-
     // Free descriptor set if allocated
     if (primitiveDescriptorSet != VK_NULL_HANDLE)
     {

@@ -43,6 +43,7 @@ public:
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceMemoryProperties memProperties;
     VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorSetLayout primitiveDescriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;
 

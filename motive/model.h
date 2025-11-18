@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 #include <string>
 #include <GLFW/glfw3.h>
@@ -10,6 +11,7 @@
 class Engine;  // Forward declaration
 class Model;  // Forward declaration
 class Mesh;  // Forward declaration
+class Texture;  // Forward declaration
 
 struct Vertex {
     glm::vec3 pos;
@@ -48,15 +50,11 @@ public:
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
-    VkDescriptorSetLayoutCreateInfo textureLayoutInfo{};
-    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-
     // various info
     VkSamplerCreateInfo samplerInfo{};
     VkDescriptorBufferInfo bufferInfo{};
     VkDescriptorImageInfo imageInfo{};
     VkImageViewCreateInfo viewInfo{};
-    VkDescriptorSetAllocateInfo allocInfo{};
     VkBufferCreateInfo stagingBufferInfo{};
     VkMemoryAllocateInfo stagingAllocInfo{};
     VkImageCreateInfo textureImageInfo{};
@@ -71,7 +69,6 @@ public:
     
     // Descriptor set for rendering
     VkDescriptorSet primitiveDescriptorSet;
-    VkDescriptorSetLayout textureDescriptorSetLayout;
     
     Engine* engine;
 };
