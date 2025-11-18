@@ -103,3 +103,4 @@ print("2. For better backtraces: gdb -ex 'set pagination off' -ex run -ex bt -ex
 print("3. To examine core dumps (if enabled):")
 print("   - First enable core dumps: ulimit -c unlimited")
 print("   - After crash: gdb ./main core")
+print("4. For renderdoc: ./renderdoc_1.39/bin/renderdoccmd capture   -d /media/julian/Cancer/PanelVid2TikTok/motive/motive   -c /media/julian/Cancer/PanelVid2TikTok/motive/motive/capture.rdc   ./main --gltf")

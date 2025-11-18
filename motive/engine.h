@@ -3,8 +3,10 @@
 #include <vector>
 #include <string>
 #include <array>
+#include <memory>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 class Model;  // Forward declaration
 
@@ -17,11 +19,11 @@ class Model;  // Forward declaration
 #include <vector>
 #include <chrono>
 #include "display.h"
+#include "graphicsdevice.h"
+#include "camera.h"
 
-struct UniformBufferObject {
+struct ObjectTransform {
     glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
 };
 
 std::vector<char> readSPIRVFile(const std::string &filename);
@@ -32,31 +34,29 @@ public:
     Engine();
     ~Engine();
 
-    std::vector<Model> models;
+    RenderDevice renderDevice;
+    VkInstance &instance;
+    VkDevice &logicalDevice;
+    VkPhysicalDevice &physicalDevice;
+    std::vector<std::unique_ptr<Model>> models;
+    std::vector<Display *> displays;
 
-    VkInstance instance;
-    VkDevice logicalDevice;
-    VkPhysicalDevice physicalDevice;
-    Display * display;
-
-    VkPhysicalDeviceProperties props;
-    VkPhysicalDeviceFeatures features;
-    VkPhysicalDeviceMemoryProperties memProperties;
-    VkDescriptorSetLayout descriptorSetLayout;
-    VkDescriptorSetLayout primitiveDescriptorSetLayout;
-    VkDescriptorPool descriptorPool;
+    VkPhysicalDeviceProperties &props;
+    VkPhysicalDeviceFeatures &features;
+    VkPhysicalDeviceMemoryProperties &memProperties;
+    VkDescriptorSetLayout &descriptorSetLayout;
+    VkDescriptorSetLayout &primitiveDescriptorSetLayout;
+    VkDescriptorPool &descriptorPool;
     VkDescriptorSet descriptorSet;
 
-    void createInstance();
-    void pickPhysicalDevice();
-    void createLogicalDevice();
-    void verifyDeviceSuitability();
     void renderLoop();
-    void addModel(Model* model);
-    void createWindow(int width, int height, const char* title);
+    void addModel(std::unique_ptr<Model> model);
+    void addCamera();
+    Display* createWindow(int width, int height, const char* title);
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     void nameVulkanObject(uint64_t handle, VkObjectType type, const char* name);
+    void createDescriptorSetLayouts();
 
 
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, 
@@ -66,7 +66,7 @@ public:
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     VkShaderModule createShaderModule(const std::vector<char> &code);
     
-    VkCommandPool commandPool;
-    uint32_t graphicsQueueFamilyIndex;
-    VkQueue graphicsQueue;
+    VkCommandPool &commandPool;
+    uint32_t &graphicsQueueFamilyIndex;
+    VkQueue &graphicsQueue;
 };

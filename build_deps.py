@@ -18,9 +18,23 @@ def ensure_exists_or_exit(directory):
         print("    git submodule update --init --recursive")
         sys.exit(1)
 
+def is_detached_head(directory):
+    """Return True if the git repo at directory is in detached HEAD state."""
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "HEAD"],
+        cwd=directory,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode != 0
+
 def setup_vulkan_headers():
     ensure_exists_or_exit("Vulkan-Headers")
-    print("Vulkan-Headers exists, pulling latest changes...")
+    print("Vulkan-Headers exists, checking for updates...")
+    if is_detached_head("Vulkan-Headers"):
+        print("Vulkan-Headers is detached (pinned submodule commit); skipping git pull.")
+        return
     run_command("git pull", cwd="Vulkan-Headers")
 
 def setup_glfw():
