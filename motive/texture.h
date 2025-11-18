@@ -6,7 +6,7 @@
 #include <../tinygltf/tiny_gltf.h>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
-#include <model.h>
+#include "model.h"
 
 class Engine;  // Forward declaration
 class Model;  // Forward declaration

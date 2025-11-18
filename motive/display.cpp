@@ -1,60 +1,12 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
+#include <algorithm>
+#include <iostream>
 #include "display.h"
 #include "engine.h"
 #include "model.h"
-
-// Static mouse callback functions
-static void mouseButtonCallback(GLFWwindow *window, int button, int action, int mods)
-{
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-    if (button == GLFW_MOUSE_BUTTON_RIGHT)
-    {
-        display->rightMouseDown = (action == GLFW_PRESS);
-        if (display->rightMouseDown)
-        {
-            double x, y;
-            glfwGetCursorPos(window, &x, &y);
-            display->lastMousePos = glm::vec2(x, y);
-        }
-    }
-}
-
-
-static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos)
-{
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-    if (display->rightMouseDown)
-    {
-        glm::vec2 currentPos(xpos, ypos);
-        glm::vec2 delta = currentPos - display->lastMousePos;
-        display->lastMousePos = currentPos;
-
-        // Adjust rotation based on mouse movement
-        display->cameraRotation.x += delta.x * 0.005f; //pitch
-        display->cameraRotation.y += delta.y * 0.005f; //yaw
-    }
-}
-
-static void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
-{
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-
-    if (key == GLFW_KEY_W)
-        display->keysPressed[0] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_A)
-        display->keysPressed[1] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_S)
-        display->keysPressed[2] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_D)
-        display->keysPressed[3] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_R && action == GLFW_PRESS) {
-        display->cameraPos = display->initialCameraPos;
-        display->cameraRotation = display->initialCameraRotation;
-        std::cout << "Camera reset to initial position\n";
-    }
-}
+#include "camera.h"
 
 void Display::createCommandPool()
 {
@@ -80,8 +32,10 @@ void Display::createCommandPool()
 }
 
 
-Display::Display(Engine* engine){
+Display::Display(Engine* engine, int width, int height, const char* title){
     this->engine = engine;
+    this->width = width;
+    this->height = height;
     
     graphicsQueue = engine->graphicsQueue;
     commandPool = VK_NULL_HANDLE;
@@ -89,7 +43,7 @@ Display::Display(Engine* engine){
     fragShaderModule = VK_NULL_HANDLE;
 
     // Create window and surface
-    createWindow(800, 600, "Engine");
+    createWindow(title);
 
     // Create command buffer using engine's command pool
     createCommandPool();
@@ -98,57 +52,9 @@ Display::Display(Engine* engine){
         throw std::runtime_error("Command buffer allocation failed");
     }
 
-    // Create uniform buffer with proper alignment
-    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(engine->logicalDevice, &bufferInfo, nullptr, &uniformBuffer) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to create uniform buffer!");
-    }
-
-    // Get memory requirements with proper alignment
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(engine->logicalDevice, uniformBuffer, &memRequirements);
-
-    // Allocate memory with proper alignment
-    VkMemoryAllocateInfo memAllocInfo{};
-    memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    memAllocInfo.allocationSize = memRequirements.size;
-    memAllocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
-                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(engine->logicalDevice, &memAllocInfo, nullptr, &uniformBufferMemory) != VK_SUCCESS)
-    {
-        vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
-        throw std::runtime_error("Failed to allocate uniform buffer memory!");
-    }
-
-    if (vkBindBufferMemory(engine->logicalDevice, uniformBuffer, uniformBufferMemory, 0) != VK_SUCCESS)
-    {
-        vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
-        vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
-        throw std::runtime_error("Failed to bind uniform buffer memory!");
-    }
-
-    // Initialize mapped pointer
-    std::cout << "About to map uniform buffer" << std::endl;
-    if (vkMapMemory(engine->logicalDevice, uniformBufferMemory, 0, bufferSize, 0, &mappedUniformBuffer) != VK_SUCCESS)
-    {
-        vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
-        vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
-        throw std::runtime_error("Failed to map uniform buffer memory!");
-    }
-
     std::cout << "About to create swapchain" << std::endl;
     // Ensure all operations are complete before proceeding
     vkDeviceWaitIdle(engine->logicalDevice);
-
 
     // Initialize swapchain before main loop
     createSwapchain();
@@ -164,72 +70,20 @@ Display::Display(Engine* engine){
 
 }
 
-void Display::updateCamera(uint32_t currentImage)
+void Display::addCamera(Camera* camera)
 {
-    UniformBufferObject ubo{};
-    ubo.model = glm::mat4(1.0f);
-
-    // === Camera Rotation Angles ===
-    float yaw = cameraRotation.x;    // Y-axis rotation (left/right)
-    float pitch = cameraRotation.y;  // X-axis rotation (up/down)
-
-    // === Forward vector from pitch & yaw ===
-    glm::vec3 front;
-    front.x = cos(pitch) * sin(yaw);      // note: swapped from your original
-    front.y = sin(pitch);
-    front.z = -cos(pitch) * cos(yaw);
-    front = glm::normalize(front);
-
-    // === Calculate up & right from front ===
-    glm::vec3 worldUp = glm::vec3(0, 1, 0);
-    // Apply full camera rotation to movement vectors
-    glm::vec3 forward = glm::vec3(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw));
-    glm::vec3 right = glm::normalize(glm::cross(glm::vec3(0, 1, 0), forward));
-    
-    glm::vec3 up = glm::normalize(glm::cross(front, right));
-
-    // === Movement Handling (flattened) ===
-    float moveSpeed = 0.01;
-    glm::vec3 moveDir(0.0f);
-
-    // Flatten forward vector for movement (optional - remove to allow flying)
-    //forward.y = 0;
-    forward = glm::normalize(forward);
-
-    if (keysPressed[0]) moveDir += forward;   // W
-    if (keysPressed[1]) moveDir -= right;     // A
-    if (keysPressed[2]) moveDir -= forward;   // S
-    if (keysPressed[3]) moveDir += right;     // D
-
-    if (glm::length(moveDir) > 0.0f) {
-        cameraPos += glm::normalize(moveDir) * moveSpeed;
-        std::cout << "Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
+    if (!camera)
+    {
+        return;
     }
-
-    // === Construct View Matrix ===
-    // Basis matrix from right, up, front
-    glm::mat4 rotation = glm::mat4(1.0f);
-    rotation[0] = glm::vec4(right, 0.0f);
-    rotation[1] = glm::vec4(up, 0.0f);
-    rotation[2] = glm::vec4(-front, 0.0f);  // invert forward
-
-    // Translation matrix
-    glm::mat4 translation = glm::translate(glm::mat4(1.0f), -cameraPos);
-
-    // Combine rotation and translation
-    ubo.view = rotation * translation;
-
-    // === Projection Matrix (Vulkan fix) ===
-    ubo.proj = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 10.0f);
-    ubo.proj[1][1] *= -1; // Vulkan Y-flip
-
-    // === Upload to GPU ===
-    if (mappedUniformBuffer) {
-        memcpy(mappedUniformBuffer, &ubo, sizeof(ubo));
-    } else {
-        throw std::runtime_error("Uniform buffer not mapped!");
+    camera->setWindow(window);
+    cameras.push_back(camera);
+    if (graphicsPipeline != VK_NULL_HANDLE)
+    {
+        camera->allocateDescriptorSet();
     }
 }
+
 
 
 void Display::createSwapchain() {
@@ -317,8 +171,8 @@ void Display::createSwapchain() {
 
     VkExtent2D extent = capabilities.currentExtent;
     if (extent.width == std::numeric_limits<uint32_t>::max()) {
-        extent.width = std::clamp(extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-        extent.height = std::clamp(extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+        extent.width = std::max(capabilities.minImageExtent.width, std::min(extent.width, capabilities.maxImageExtent.width));
+        extent.height = std::max(capabilities.minImageExtent.height, std::min(extent.height, capabilities.maxImageExtent.height));
     }
 
     uint32_t imageCount = capabilities.minImageCount + 1;
@@ -562,7 +416,7 @@ void Display::createSwapchain() {
 }
 
 
-void Display::createWindow(int width, int height, const char *title)
+void Display::createWindow(const char *title)
 {
     window = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window)
@@ -572,10 +426,6 @@ void Display::createWindow(int width, int height, const char *title)
 
     // Set window user pointer and callbacks
     glfwSetWindowUserPointer(window, this);
-    glfwSetMouseButtonCallback(window, mouseButtonCallback);
-    glfwSetCursorPosCallback(window, cursorPosCallback);
-    glfwSetKeyCallback(window, keyCallback);
-    std::cout << "Registered key callback for WASD movement\n";
 
     createSurface(window);
     if (!surface)
@@ -697,11 +547,9 @@ void Display::render()
         throw std::runtime_error("Failed to acquire swapchain image.");
     }
 
-    // Update uniform buffer with current transformation matrices
-    if (uniformBufferMemory != VK_NULL_HANDLE) {
-        updateCamera(imageIndex);
-    } else {
-        throw std::runtime_error("Uniform buffer memory not allocated!");
+    // Update all cameras with current transformation matrices
+    for (auto& camera : cameras) {
+        camera->update(imageIndex);
     }
 
     vkResetFences(engine->logicalDevice, 1, &inFlightFences[currentFrame]);
@@ -729,46 +577,85 @@ void Display::render()
     VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassInfo.renderPass = renderPass;
     renderPassInfo.framebuffer = swapchainFramebuffers[imageIndex];
-    renderPassInfo.renderArea = {{0, 0}, {800, 600}};
+    renderPassInfo.renderArea = {{0, 0}, {static_cast<uint32_t>(width), static_cast<uint32_t>(height)}};
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-    
-    // Bind global UBO descriptor set (set 0)
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          pipelineLayout, 0, 1, &engine->descriptorSet, 0, nullptr);
 
-    for (const auto& model : engine->models)
-    {
-        for (const auto& mesh : model.meshes)
+    // Render for each camera
+    for (size_t cameraIndex = 0; cameraIndex < cameras.size(); cameraIndex++) {
+        auto& camera = cameras[cameraIndex];
+        
+        // Set viewport for this camera
+        VkViewport viewport{};
+        viewport.x = camera->centerpoint.x - camera->width / 2.0f;
+        viewport.y = camera->centerpoint.y - camera->height / 2.0f;
+        viewport.width = camera->width;
+        viewport.height = camera->height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+        // Set scissor for this camera
+        VkRect2D scissor{};
+        scissor.offset = {static_cast<int32_t>(viewport.x), static_cast<int32_t>(viewport.y)};
+        scissor.extent = {static_cast<uint32_t>(viewport.width), static_cast<uint32_t>(viewport.height)};
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+        // Bind this camera's UBO descriptor set (set 0)
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipelineLayout, 0, 1, &camera->descriptorSet, 0, nullptr);
+
+        for (const auto& modelPtr : engine->models)
         {
-            for (const auto& primitive : mesh.primitives) {
-                // Update UBO with object's transform
-                UniformBufferObject ubo{};
-                ubo.model = glm::mat4(1.0f); // Use identity matrix as default
-                ubo.view = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
-                ubo.proj = glm::mat4(1.0f); // Will be updated in updateUniformBuffer
-                
-                if (primitive.uniformBufferMemory == VK_NULL_HANDLE) {
-                    throw std::runtime_error("Invalid primitive.uniformBufferMemory for object: " + model.name);
-                }
-                memcpy(primitive.uniformBufferMapped, &ubo, sizeof(ubo));
+            if (!modelPtr)
+            {
+                continue;
+            }
+            const Model& model = *modelPtr;
+            for (const auto& mesh : model.meshes)
+            {
+                for (const auto& primitive : mesh.primitives) {  // This is now unique_ptr<Primitive>
+                    if (primitive->vertexCount == 0) {
+                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to zero vertices." << std::endl;
+                        continue;
+                    }
+                    if (primitive->ObjectTransformUBOBufferMemory == VK_NULL_HANDLE) {
+                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to missing transform buffer memory." << std::endl;
+                        continue;
+                    }
+                    if (primitive->ObjectTransformUBOMapped == nullptr) {
+                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to unmapped transform buffer." << std::endl;
+                        continue;
+                    }
+                    // Update UBO with object's transform
+                    ObjectTransform perObjectTransformUBO{};
+                    perObjectTransformUBO.model = primitive->transform;
 
-                // Bind primitive's texture descriptor set (set 1)
-                if (primitive.primitiveDescriptorSet != VK_NULL_HANDLE) {
-                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                          pipelineLayout, 1, 1, &primitive.primitiveDescriptorSet, 0, nullptr);
-                } else {
-                    throw std::runtime_error("Primitive descriptor set is null");
-                }
+                    memcpy(primitive->ObjectTransformUBOMapped, &perObjectTransformUBO, sizeof(perObjectTransformUBO));
 
-                VkBuffer vertexBuffers[] = {primitive.vertexBuffer};
-                VkDeviceSize offsets[] = {0};
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-                vkCmdDraw(commandBuffer, primitive.vertexCount, 1, 0, 0);
+                    // Bind primitive's texture descriptor set (set 1)
+                    if (primitive->primitiveDescriptorSet != VK_NULL_HANDLE) {
+                        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              pipelineLayout, 1, 1, &primitive->primitiveDescriptorSet, 0, nullptr);
+                    } else {
+                        throw std::runtime_error("Primitive descriptor set is null");
+                    }
+
+                    VkBuffer vertexBuffers[] = {primitive->vertexBuffer};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+                    if (primitive->indexCount > 0 && primitive->indexBuffer != VK_NULL_HANDLE) {
+                        vkCmdBindIndexBuffer(commandBuffer, primitive->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                        vkCmdDrawIndexed(commandBuffer, primitive->indexCount, 1, 0, 0, 0);
+                    } else {
+                        vkCmdDraw(commandBuffer, primitive->vertexCount, 1, 0, 0);
+                    }
+                }
             }
         }
     }
@@ -864,7 +751,18 @@ void Display::createGraphicsPipeline()
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-    // Viewport and scissor
+    // Dynamic state
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // Viewport and scissor (initial values, will be set dynamically)
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -931,56 +829,8 @@ void Display::createGraphicsPipeline()
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
-    // Global descriptor set layout (set 0) for camera UBO
-    if (engine->descriptorSetLayout == VK_NULL_HANDLE)
-    {
-        VkDescriptorSetLayoutBinding globalUboBinding{};
-        globalUboBinding.binding = 0;
-        globalUboBinding.descriptorCount = 1;
-        globalUboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        globalUboBinding.pImmutableSamplers = nullptr;
-        globalUboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-        VkDescriptorSetLayoutCreateInfo globalLayoutInfo{};
-        globalLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        globalLayoutInfo.bindingCount = 1;
-        globalLayoutInfo.pBindings = &globalUboBinding;
-
-        if (vkCreateDescriptorSetLayout(engine->logicalDevice, &globalLayoutInfo, nullptr, &engine->descriptorSetLayout) != VK_SUCCESS)
-        {
-            throw std::runtime_error("Failed to create global descriptor set layout!");
-        }
-        engine->nameVulkanObject((uint64_t)engine->descriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "globalDescriptorSetLayout");
-    }
-
-    // Primitive descriptor set layout (set 1) for per-primitive UBO + sampler
-    if (engine->primitiveDescriptorSetLayout == VK_NULL_HANDLE)
-    {
-        std::array<VkDescriptorSetLayoutBinding, 2> primitiveBindings{};
-
-        primitiveBindings[0].binding = 0;
-        primitiveBindings[0].descriptorCount = 1;
-        primitiveBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        primitiveBindings[0].pImmutableSamplers = nullptr;
-        primitiveBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-        primitiveBindings[1].binding = 1;
-        primitiveBindings[1].descriptorCount = 1;
-        primitiveBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        primitiveBindings[1].pImmutableSamplers = nullptr;
-        primitiveBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        VkDescriptorSetLayoutCreateInfo primitiveLayoutInfo{};
-        primitiveLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        primitiveLayoutInfo.bindingCount = static_cast<uint32_t>(primitiveBindings.size());
-        primitiveLayoutInfo.pBindings = primitiveBindings.data();
-
-        if (vkCreateDescriptorSetLayout(engine->logicalDevice, &primitiveLayoutInfo, nullptr, &engine->primitiveDescriptorSetLayout) != VK_SUCCESS)
-        {
-            throw std::runtime_error("Failed to create primitive descriptor set layout!");
-        }
-        engine->nameVulkanObject((uint64_t)engine->primitiveDescriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "primitiveDescriptorSetLayout");
-    }
+    // Ensure descriptor set layouts are initialized before creating the pipeline layout
+    engine->createDescriptorSetLayouts();
 
     // Pipeline layout with single descriptor set
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -1010,7 +860,7 @@ void Display::createGraphicsPipeline()
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
@@ -1022,34 +872,10 @@ void Display::createGraphicsPipeline()
         throw std::runtime_error("Failed to create graphics pipeline!");
     }
 
-    // Allocate descriptor set now that layout exists
-    VkDescriptorSetAllocateInfo descriptorAllocInfo{};
-    descriptorAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    descriptorAllocInfo.descriptorPool = engine->descriptorPool;
-    descriptorAllocInfo.descriptorSetCount = 1;
-    descriptorAllocInfo.pSetLayouts = &engine->descriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(engine->logicalDevice, &descriptorAllocInfo, &engine->descriptorSet) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to allocate descriptor set!");
+    // Allocate descriptor sets for all cameras now that layout is available
+    for (auto& camera : cameras) {
+        camera->allocateDescriptorSet();
     }
-
-    // Update descriptor set with UBO
-    VkDescriptorBufferInfo bufferDescInfo{};
-    bufferDescInfo.buffer = uniformBuffer;
-    bufferDescInfo.offset = 0;
-    bufferDescInfo.range = sizeof(UniformBufferObject);
-
-    VkWriteDescriptorSet UBOdescriptorWrite{};
-    UBOdescriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    UBOdescriptorWrite.dstSet = engine->descriptorSet;
-    UBOdescriptorWrite.dstBinding = 0;
-    UBOdescriptorWrite.dstArrayElement = 0;
-    UBOdescriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    UBOdescriptorWrite.descriptorCount = 1;
-    UBOdescriptorWrite.pBufferInfo = &bufferDescInfo;
-
-    vkUpdateDescriptorSets(engine->logicalDevice, 1, &UBOdescriptorWrite, 0, nullptr);
 }
 
 Display::~Display() {
@@ -1124,15 +950,11 @@ Display::~Display() {
             pipelineLayout = VK_NULL_HANDLE;
         }
 
-        // Destroy uniform buffer
-        if (uniformBuffer != VK_NULL_HANDLE) {
-            vkDestroyBuffer(engine->logicalDevice, uniformBuffer, nullptr);
-            uniformBuffer = VK_NULL_HANDLE;
+        // Cleanup cameras (each camera manages its own UBO)
+        for (auto& camera : cameras) {
+            delete camera;
         }
-        if (uniformBufferMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(engine->logicalDevice, uniformBufferMemory, nullptr);
-            uniformBufferMemory = VK_NULL_HANDLE;
-        }
+        cameras.clear();
 
         // Free command buffers
         if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE) {
@@ -1144,14 +966,10 @@ Display::~Display() {
             commandBuffer = VK_NULL_HANDLE;
         }
 
-        // Destroy command pools
+        // Destroy swapchain-specific command pool (engine command pool is owned by Engine)
         if (swapchainCmdPool != VK_NULL_HANDLE) {
             vkDestroyCommandPool(engine->logicalDevice, swapchainCmdPool, nullptr);
             swapchainCmdPool = VK_NULL_HANDLE;
-        }
-        if (commandPool != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(engine->logicalDevice, commandPool, nullptr);
-            commandPool = VK_NULL_HANDLE;
         }
 
         // Destroy semaphores

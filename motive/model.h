@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <GLFW/glfw3.h>
+#include <memory>
 #include <../tinygltf/tiny_gltf.h>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -34,12 +35,16 @@ public:
     void createDefaultTexture();
     void createTextureSampler();
     void createTextureImageView();
+    void createIndexBuffer(const std::vector<uint32_t>& indices);
     Mesh* mesh;
 
     // Vertex data
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     uint32_t vertexCount;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+    uint32_t indexCount;
 
     // Transformation data
     glm::mat4 transform;
@@ -63,9 +68,9 @@ public:
     VkImageMemoryBarrier shaderBarrier{};
     
     // Uniform buffer
-    VkBuffer uniformBuffer;
-    VkDeviceMemory uniformBufferMemory;
-    void* uniformBufferMapped;
+    VkBuffer ObjectTransformUBO;
+    VkDeviceMemory ObjectTransformUBOBufferMemory;
+    void* ObjectTransformUBOMapped;
     
     // Descriptor set for rendering
     VkDescriptorSet primitiveDescriptorSet;
@@ -77,10 +82,14 @@ class Mesh {
 public:
     Mesh(Engine* engine, Model* model, const std::vector<Vertex>& vertices);
     Mesh(Engine* engine, Model* model, tinygltf::Mesh);
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+    Mesh(Mesh&& other) noexcept;
+    Mesh& operator=(Mesh&& other) noexcept;
     ~Mesh();
     Model* model;
 
-    std::vector<Primitive> primitives;
+    std::vector<std::unique_ptr<Primitive>> primitives; 
     Engine* engine;
 };
 
@@ -89,6 +98,7 @@ public:
     Model(const std::string& gltfPath, Engine* engine);
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
+    void scaleModelToUnitBox();
 
     tinygltf::Model* tgltfModel = nullptr;
 

@@ -3,11 +3,11 @@
 #include "engine.h"
 #include "model.h"
 
-Material::Material(Engine* engine, Model* model, Primitive* primitive){
+Material::Material(Engine* engine, Model* model, Primitive* primitive, tinygltf::Material /*tmaterial*/){
     
 }
 
-void Texture::createTextureSampler()
+void Primitive::createTextureSampler()
 {
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -35,7 +35,7 @@ void Texture::createTextureSampler()
     }
 }
 
-void Texture::createTextureResources()
+void Primitive::createTextureResources()
 {
     // Create texture resources first
     createTextureSampler();
@@ -48,50 +48,24 @@ void Texture::createTextureResources()
         throw std::runtime_error("Failed to create texture resources!");
     }
 
-    // Create descriptor set layout with both UBO (binding 0) and sampler (binding 1)
-    VkDescriptorSetLayoutBinding uboLayoutBinding{};
-    uboLayoutBinding.binding = 0;
-    uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboLayoutBinding.pImmutableSamplers = nullptr;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    samplerLayoutBinding.binding = 1;
-    samplerLayoutBinding.descriptorCount = 1;
-    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerLayoutBinding.pImmutableSamplers = nullptr;
-    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
-
-    textureLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    textureLayoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    textureLayoutInfo.pBindings = bindings.data();
-
-    if (vkCreateDescriptorSetLayout(engine->logicalDevice, &textureLayoutInfo, nullptr, &textureDescriptorSetLayout) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to create texture descriptor set layout!");
-    }
-    engine->nameVulkanObject((uint64_t)textureDescriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "engineTextureDescriptorSetLayout");
-
-
-    // Allocate descriptor set for texture
+    // Allocate descriptor set for texture (set 1 in pipeline layout)
+    VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = engine->descriptorPool;
     allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &textureDescriptorSetLayout;
+    allocInfo.pSetLayouts = &engine->primitiveDescriptorSetLayout;
 
-    if (vkAllocateDescriptorSets(engine->logicalDevice, &allocInfo, &TextureDescriptorSet) != VK_SUCCESS)
+    if (vkAllocateDescriptorSets(engine->logicalDevice, &allocInfo, &primitiveDescriptorSet) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to allocate texture descriptor set!");
     }
 
-    engine->nameVulkanObject((uint64_t)TextureDescriptorSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "TextureDescriptorSet");
+    engine->nameVulkanObject((uint64_t)primitiveDescriptorSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "TextureDescriptorSet");
 
     updateDescriptorSet();
 }
 
-void Texture::createTextureImageView()
+void Primitive::createTextureImageView()
 {
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = textureImage;
@@ -109,7 +83,7 @@ void Texture::createTextureImageView()
     }
 }
 
-void Texture::createDefaultTexture()
+void Primitive::createDefaultTexture()
 {
     // Create a 1x1 white texture
     const uint32_t width = 1;

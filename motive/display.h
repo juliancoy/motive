@@ -9,32 +9,26 @@
 
 // Forward declarations
 class Engine;
+class Camera;
 
 class Display
 {
 public:
-    Display(Engine* engine);
+    Display(Engine* engine, int width = 800, int height = 600, const char* title = "Motive");
     ~Display();
-    void updateCamera(uint32_t currentImage);
     void createSwapchain();
-    void createWindow(int width, int height, const char *title);
+    void createWindow(const char *title);
     void createSurface(GLFWwindow *window);    
+    void addCamera(Camera* camera);
 
     void render();
     void createCommandPool();
     void createGraphicsPipeline();
 
-    // Camera state
-    glm::vec3 initialCameraPos = glm::vec3(0.0f, 0.0f, -3.0f);
-    glm::vec2 initialCameraRotation = glm::vec2(glm::radians(-180.0f), 0.0f);
-    glm::vec3 cameraPos = initialCameraPos;
-    glm::vec2 cameraRotation = initialCameraRotation;
-    float moveSpeed = 0.1f;
-
-    // Input tracking
-    bool rightMouseDown = false;
-    glm::vec2 lastMousePos = glm::vec2(0.0f);
-    bool keysPressed[5] = {false}; // W,A,S,D
+    // Input handling (forwarded to camera)
+    void handleMouseButton(int button, int action, int mods);
+    void handleCursorPos(double xpos, double ypos);
+    void handleKey(int key, int scancode, int action, int mods);
 
     GLFWwindow *window;
     VkSurfaceKHR surface;
@@ -71,9 +65,11 @@ public:
     VkShaderModule vertShaderModule;
     VkShaderModule fragShaderModule;
 
-    VkBuffer uniformBuffer;
-    VkDeviceMemory uniformBufferMemory;
-    void* mappedUniformBuffer = nullptr;
+    int width;
+    int height;
+
+    // Camera instance
+    std::vector<Camera*> cameras;
 
 private:
     Engine* engine;
