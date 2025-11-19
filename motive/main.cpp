@@ -1,4 +1,6 @@
 #include <iostream>
+#include <memory>
+#include <thread>
 #include <vector>
 #include <memory>
 #include <unistd.h> // for sleep
@@ -11,6 +13,7 @@
 #include "model.h"
 #include "utils.h"
 #include "light.h"
+#include "video.h"
 
 int main(int argc, char *argv[])
 {
@@ -55,6 +58,15 @@ int main(int argc, char *argv[])
                 std::cerr << "[Warning] Failed to parse MSAA option '" << value << "': " << e.what() << std::endl;
             }
         }
+        else if (std::string(argv[i]) == "--video")
+        {
+            videoMode = true;
+        }
+    }
+
+    if (videoMode)
+    {
+        return runVideoPlayback(msaaOverride, requestedMsaa);
     }
 
     // Create engine instance

@@ -63,12 +63,42 @@ def setup_glm():
     ensure_exists_or_exit("glm")
     print("GLM found (header-only library, no build required)")
 
+def setup_ffmpeg():
+    ffmpeg_dir = Path("FFmpeg")
+    if ffmpeg_dir.exists():
+        print("FFmpeg repository already present, pulling latest changes...")
+        if is_detached_head(ffmpeg_dir):
+            print("FFmpeg repository is detached; skipping git pull.")
+            return
+        run_command("git pull", cwd=ffmpeg_dir)
+    else:
+        print("Cloning FFmpeg repository...")
+        run_command("git clone https://github.com/FFmpeg/FFmpeg.git FFmpeg")
+        print("FFmpeg repository cloned.")
+
+    print("Configuring and building FFmpeg (per README instructions)...")
+    install_prefix = (ffmpeg_dir / "build").resolve()
+    install_prefix.mkdir(parents=True, exist_ok=True)
+    configure_cmd = (
+        f"./configure --prefix={install_prefix} "
+        "--enable-shared --disable-programs --disable-doc "
+        "--enable-gpl --enable-version3 "
+        "--extra-ldflags='-Wl,-rpath,$ORIGIN'"
+    )
+    run_command(configure_cmd, cwd=ffmpeg_dir)
+
+    make_cmd = f"make -j{os.cpu_count()}"
+    run_command(make_cmd, cwd=ffmpeg_dir)
+    run_command("make install", cwd=ffmpeg_dir)
+    print(f"FFmpeg built and installed to {install_prefix}")
+
 def main():
     print("=== Checking and setting up development dependencies ===")
     setup_vulkan_headers()
     setup_glfw()
     setup_tinygltf()
     setup_glm()
+    setup_ffmpeg()
     print("=== Setup complete ===")
 
 if __name__ == "__main__":

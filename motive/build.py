@@ -27,16 +27,27 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "../glfw/include")),
     os.path.abspath(os.path.join(this_dir, "../tinygltf")),
     os.path.abspath(os.path.join(this_dir, "../glm/glm")),
+    os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/include")),
 ]
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
     os.path.abspath(os.path.join(this_dir, "../glfw/build/src")),
+    os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/lib")),
     os.path.abspath(os.path.join(this_dir, "../"))
 ]
 libraries = [
     "glfw3",
     "tinygltf",
-    "vulkan"
+    "vulkan",
+    "avformat",
+    "avcodec",
+    "swscale",
+    "avutil",
+    "swresample",
+    "m",
+    "pthread",
+    "dl",
+    "z",
 ]
 
 # Flags
@@ -82,6 +93,8 @@ with ThreadPoolExecutor() as executor:
 
 # Link shared object
 so_link_cmd = f"g++ -shared {sanitize_flags} {lib_flags} {' '.join(so_objects)} {lib_links} -o libengine.so"
+engine_rpath = "-Wl,-rpath,'$ORIGIN/../FFmpeg/build/lib'"
+so_link_cmd = f"g++ -shared {sanitize_flags} {lib_flags} {' '.join(so_objects)} {lib_links} {engine_rpath} -o libengine.so"
 print(f"\nLinking shared library:\n{so_link_cmd}")
 so_link_result = subprocess.run(so_link_cmd, shell=True)
 if so_link_result.returncode != 0:
@@ -89,7 +102,8 @@ if so_link_result.returncode != 0:
     sys.exit(so_link_result.returncode)
 
 # Link main executable
-main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {' '.join(main_objects)} -L. -lengine {lib_links} -o main"
+main_rpath = "-Wl,-rpath,'$ORIGIN' -Wl,-rpath,'$ORIGIN/../FFmpeg/build/lib'"
+main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {' '.join(main_objects)} -L. -lengine {lib_links} {main_rpath} -o main"
 print(f"\nLinking main executable:\n{main_link_cmd}")
 main_link_result = subprocess.run(main_link_cmd, shell=True)
 if main_link_result.returncode != 0:

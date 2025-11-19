@@ -38,6 +38,7 @@ public:
     void createTextureImageView();
     void finalizeTextureResources();
     void createTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format);
+    void updateTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format);
     bool createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive);
     void createIndexBuffer(const std::vector<uint32_t>& indices);
     Mesh* mesh;
@@ -59,6 +60,9 @@ public:
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
+    uint32_t textureWidth = 0;
+    uint32_t textureHeight = 0;
+    VkFormat textureFormat = VK_FORMAT_UNDEFINED;
     // various info
     VkSamplerCreateInfo samplerInfo{};
     VkDescriptorBufferInfo bufferInfo{};

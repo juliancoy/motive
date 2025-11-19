@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <array>
+#include <algorithm>
 
 namespace
 {
@@ -228,6 +229,10 @@ void Camera::reset()
 
 void Camera::handleMouseButton(int button, int action, int mods)
 {
+    if (!controlsEnabled)
+    {
+        return;
+    }
     if (button == GLFW_MOUSE_BUTTON_RIGHT)
     {
         rightMouseDown = (action == GLFW_PRESS);
@@ -249,6 +254,10 @@ void Camera::handleMouseButton(int button, int action, int mods)
 
 void Camera::handleCursorPos(double xpos, double ypos)
 {
+    if (!controlsEnabled)
+    {
+        return;
+    }
     if (rightMouseDown)
     {
         glm::vec2 currentPos(xpos, ypos);
@@ -263,6 +272,10 @@ void Camera::handleCursorPos(double xpos, double ypos)
 
 void Camera::handleKey(int key, int scancode, int action, int mods)
 {
+    if (!controlsEnabled)
+    {
+        return;
+    }
     if (key == GLFW_KEY_W)
         keysPressed[0] = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_A)
@@ -291,46 +304,58 @@ void Camera::updateCameraMatrices()
 {
     CameraTransform camera0TransformUBO{};
 
-    float yaw = cameraRotation.x;
-    float pitch = cameraRotation.y;
-
-    glm::vec3 front;
-    front.x = cos(pitch) * sin(yaw);
-    front.y = sin(pitch);
-    front.z = -cos(pitch) * cos(yaw);
-    front = glm::normalize(front);
-
-    glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
-    glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
-    glm::vec3 up = glm::normalize(glm::cross(right, front));
-
-    // Movement (camera-relative)
-    glm::vec3 moveDir(0.0f);
-    if (keysPressed[0])
-        moveDir += front;
-    if (keysPressed[1])
-        moveDir -= right;
-    if (keysPressed[2])
-        moveDir -= front;
-    if (keysPressed[3])
-        moveDir += right;
-    if (keysPressed[4])
-        moveDir -= up;
-    if (keysPressed[5])
-        moveDir += up;
-
-    if (glm::length(moveDir) > 0.0f)
+    if (useOrthoProjection)
     {
-        cameraPos += glm::normalize(moveDir) * moveSpeed;
-        std::cout << "[Camera] Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
+        camera0TransformUBO.view = glm::mat4(1.0f);
+        float halfWidth = orthoWidth * 0.5f;
+        float halfHeight = orthoHeight * 0.5f;
+        camera0TransformUBO.proj = glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, orthoNear, orthoFar);
+        camera0TransformUBO.proj[1][1] *= -1;
     }
+    else
+    {
+        float yaw = cameraRotation.x;
+        float pitch = cameraRotation.y;
 
-    // Use lookAt for view matrix
-    camera0TransformUBO.view = glm::lookAt(cameraPos, cameraPos + front, worldUp);
+        glm::vec3 front;
+        front.x = cos(pitch) * sin(yaw);
+        front.y = sin(pitch);
+        front.z = -cos(pitch) * cos(yaw);
+        front = glm::normalize(front);
 
-    // Projection
-    camera0TransformUBO.proj = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 10.0f);
-    camera0TransformUBO.proj[1][1] *= -1;
+        glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
+        glm::vec3 up = glm::normalize(glm::cross(right, front));
+
+        if (controlsEnabled)
+        {
+            glm::vec3 moveDir(0.0f);
+            if (keysPressed[0])
+                moveDir += front;
+            if (keysPressed[1])
+                moveDir -= right;
+            if (keysPressed[2])
+                moveDir -= front;
+            if (keysPressed[3])
+                moveDir += right;
+            if (keysPressed[4])
+                moveDir -= up;
+            if (keysPressed[5])
+                moveDir += up;
+
+            if (glm::length(moveDir) > 0.0f)
+            {
+                cameraPos += glm::normalize(moveDir) * moveSpeed;
+                std::cout << "[Camera] Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
+            }
+        }
+
+        camera0TransformUBO.view = glm::lookAt(cameraPos, cameraPos + front, worldUp);
+
+        float aspect = (height > 0.0f) ? (width / height) : (800.0f / 600.0f);
+        camera0TransformUBO.proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        camera0TransformUBO.proj[1][1] *= -1;
+    }
 
     if (camera0TransformMappedUBO)
     {
@@ -375,4 +400,28 @@ glm::mat4 Camera::getProjectionMatrix() const
     // This would return the current projection matrix
     // For now, we'll return identity - this can be implemented based on the updateCameraMatrices logic
     return glm::mat4(1.0f);
+}
+
+void Camera::setOrthographicProjection(float width, float height, float nearPlane, float farPlane)
+{
+    useOrthoProjection = true;
+    orthoWidth = std::max(0.001f, width);
+    orthoHeight = std::max(0.001f, height);
+    orthoNear = nearPlane;
+    orthoFar = farPlane;
+}
+
+void Camera::setPerspectiveProjection()
+{
+    useOrthoProjection = false;
+}
+
+void Camera::setControlsEnabled(bool enabled)
+{
+    controlsEnabled = enabled;
+    if (!controlsEnabled)
+    {
+        std::fill(std::begin(keysPressed), std::end(keysPressed), false);
+        rightMouseDown = false;
+    }
 }
