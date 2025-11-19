@@ -62,6 +62,9 @@ public:
 
     // Descriptor set management
     void allocateDescriptorSet();
+    void setOrthographicProjection(float width, float height, float nearPlane = -1.0f, float farPlane = 1.0f);
+    void setPerspectiveProjection();
+    void setControlsEnabled(bool enabled);
 
 private:
     Engine* engine;
@@ -73,4 +76,11 @@ private:
     void destroyCameraUBO();
     void updateCameraMatrices();
     void registerWindowCallbacks();
+
+    bool useOrthoProjection = false;
+    float orthoWidth = 2.0f;
+    float orthoHeight = 2.0f;
+    float orthoNear = -1.0f;
+    float orthoFar = 1.0f;
+    bool controlsEnabled = true;
 };
