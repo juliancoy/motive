@@ -21,12 +21,11 @@ class Model;  // Forward declaration
 #include "display.h"
 #include "graphicsdevice.h"
 #include "camera.h"
+#include "light.h"
 
 struct ObjectTransform {
     glm::mat4 model;
 };
-
-std::vector<char> readSPIRVFile(const std::string &filename);
 
 class Engine
 {
@@ -48,6 +47,10 @@ public:
     VkDescriptorSetLayout &primitiveDescriptorSetLayout;
     VkDescriptorPool &descriptorPool;
     VkDescriptorSet descriptorSet;
+    VkBuffer getLightBuffer() const { return lightUBO; }
+    VkDeviceSize getLightUBOSize() const { return sizeof(LightUBOData); }
+    const Light& getLight() const { return currentLight; }
+    VkSampleCountFlagBits getMsaaSampleCount() const { return msaaSampleCount; }
 
     void renderLoop();
     void addModel(std::unique_ptr<Model> model);
@@ -65,8 +68,22 @@ public:
                     VkBuffer &buffer, VkDeviceMemory &bufferMemory);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     VkShaderModule createShaderModule(const std::vector<char> &code);
+    void setLight(const Light& light);
+    void setMsaaSampleCount(VkSampleCountFlagBits requested);
     
     VkCommandPool &commandPool;
     uint32_t &graphicsQueueFamilyIndex;
     VkQueue &graphicsQueue;
+private:
+    void createLightResources();
+    void destroyLightResources();
+    void updateLightBuffer();
+    VkSampleCountFlagBits queryMaxUsableSampleCount() const;
+    VkSampleCountFlagBits clampSampleCount(VkSampleCountFlagBits requested) const;
+
+    Light currentLight;
+    VkBuffer lightUBO = VK_NULL_HANDLE;
+    VkDeviceMemory lightUBOMemory = VK_NULL_HANDLE;
+    void* lightUBOMapped = nullptr;
+    VkSampleCountFlagBits msaaSampleCount = VK_SAMPLE_COUNT_1_BIT;
 };

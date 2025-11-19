@@ -8,12 +8,17 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 1, binding = 1) uniform sampler2D texSampler;
+layout(set = 0, binding = 1) uniform LightUBO {
+    vec4 direction;
+    vec4 ambient;
+    vec4 diffuse;
+} lightUBO;
 
 void main() {
-    // Simple diffuse lighting with light coming from camera
-    vec3 lightDir = vec3(0.0, 0.0, 1.0);
-    float diff = max(dot(normalize(fragNormal), lightDir), 0.0);
-    vec3 lighting = vec3(0.1) + diff * vec3(0.9); // Ambient + diffuse
+    vec3 normal = normalize(fragNormal);
+    vec3 lightDir = normalize(lightUBO.direction.xyz);
+    float diff = max(dot(normal, lightDir), 0.0);
+    vec3 lighting = lightUBO.ambient.xyz + diff * lightUBO.diffuse.xyz;
     
     // Sample texture or use fallback color
     outColor = texture(texSampler, fragTexCoord) * vec4(lighting, 1.0);

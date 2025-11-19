@@ -32,9 +32,13 @@ public:
     void updateDescriptorSet();
     void updateUniformBuffer(const glm::mat4& model, const glm::mat4& view, const glm::mat4& proj);
     void createTextureResources();
+    void createTextureResources(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive);
     void createDefaultTexture();
     void createTextureSampler();
     void createTextureImageView();
+    void finalizeTextureResources();
+    void createTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format);
+    bool createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive);
     void createIndexBuffer(const std::vector<uint32_t>& indices);
     Mesh* mesh;
 

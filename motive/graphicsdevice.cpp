@@ -476,6 +476,7 @@ void RenderDevice::createLogicalDevice()
 
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
+    deviceFeatures.sampleRateShading = VK_TRUE;
 
     const std::vector<const char *> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -533,16 +534,21 @@ void RenderDevice::createDescriptorSetLayouts()
 {
     if (descriptorSetLayout == VK_NULL_HANDLE)
     {
-        VkDescriptorSetLayoutBinding globalUboBinding{};
-        globalUboBinding.binding = 0;
-        globalUboBinding.descriptorCount = 1;
-        globalUboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        globalUboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        std::array<VkDescriptorSetLayoutBinding, 2> globalBindings{};
+        globalBindings[0].binding = 0;
+        globalBindings[0].descriptorCount = 1;
+        globalBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        globalBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        globalBindings[1].binding = 1;
+        globalBindings[1].descriptorCount = 1;
+        globalBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        globalBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &globalUboBinding;
+        layoutInfo.bindingCount = static_cast<uint32_t>(globalBindings.size());
+        layoutInfo.pBindings = globalBindings.data();
 
         if (vkCreateDescriptorSetLayout(logicalDevice, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
         {

@@ -2,7 +2,6 @@
 #include "model.h"
 #include <../tinygltf/tiny_gltf.h>
 #include <array>
-#include <fstream>
 
 Engine::Engine()
     : renderDevice(),
@@ -26,6 +25,8 @@ Engine::Engine()
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
     renderDevice.initialize();
+    msaaSampleCount = queryMaxUsableSampleCount();
+    createLightResources();
 }
 
 void Engine::nameVulkanObject(uint64_t handle, VkObjectType type, const char* name) {
@@ -82,6 +83,7 @@ Engine::~Engine()
         delete display;
     }
     displays.clear();
+    destroyLightResources();
 
     renderDevice.shutdown();
     glfwTerminate();
@@ -114,36 +116,113 @@ void Engine::renderLoop()
     }
 }
 
-std::vector<char> readSPIRVFile(const std::string &filename)
+void Engine::createLightResources()
 {
-    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+    VkDeviceSize bufferSize = sizeof(LightUBOData);
+    createBuffer(bufferSize,
+                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 lightUBO,
+                 lightUBOMemory);
 
-    if (!file.is_open())
+    if (vkMapMemory(logicalDevice, lightUBOMemory, 0, bufferSize, 0, &lightUBOMapped) != VK_SUCCESS)
     {
-        throw std::runtime_error("Failed to open SPIR-V file: " + filename);
+        throw std::runtime_error("Failed to map light uniform buffer.");
     }
 
-    size_t fileSize = static_cast<size_t>(file.tellg());
-    if (fileSize % 4 != 0)
+    currentLight = Light();
+    updateLightBuffer();
+}
+
+void Engine::destroyLightResources()
+{
+    if (lightUBOMapped)
     {
-        throw std::runtime_error("SPIR-V file size not multiple of 4: " + filename);
+        vkUnmapMemory(logicalDevice, lightUBOMemory);
+        lightUBOMapped = nullptr;
+    }
+    if (lightUBO != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(logicalDevice, lightUBO, nullptr);
+        lightUBO = VK_NULL_HANDLE;
+    }
+    if (lightUBOMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(logicalDevice, lightUBOMemory, nullptr);
+        lightUBOMemory = VK_NULL_HANDLE;
+    }
+}
+
+void Engine::updateLightBuffer()
+{
+    if (!lightUBOMapped)
+    {
+        return;
     }
 
-    std::vector<char> buffer(fileSize);
-    file.seekg(0);
-    file.read(buffer.data(), fileSize);
-    file.close();
+    LightUBOData ubo{};
+    ubo.direction = glm::vec4(currentLight.direction, 0.0f);
+    ubo.ambient = glm::vec4(currentLight.ambient, 0.0f);
+    ubo.diffuse = glm::vec4(currentLight.diffuse, 0.0f);
 
-    if (fileSize >= 4)
+    std::memcpy(lightUBOMapped, &ubo, sizeof(ubo));
+}
+
+void Engine::setLight(const Light &light)
+{
+    currentLight = light;
+    updateLightBuffer();
+}
+
+void Engine::setMsaaSampleCount(VkSampleCountFlagBits requested)
+{
+    msaaSampleCount = clampSampleCount(requested);
+}
+
+VkSampleCountFlagBits Engine::queryMaxUsableSampleCount() const
+{
+    VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts &
+                                props.limits.framebufferDepthSampleCounts;
+    if (counts & VK_SAMPLE_COUNT_8_BIT)
+        return VK_SAMPLE_COUNT_8_BIT;
+    if (counts & VK_SAMPLE_COUNT_4_BIT)
+        return VK_SAMPLE_COUNT_4_BIT;
+    if (counts & VK_SAMPLE_COUNT_2_BIT)
+        return VK_SAMPLE_COUNT_2_BIT;
+    return VK_SAMPLE_COUNT_1_BIT;
+}
+
+VkSampleCountFlagBits Engine::clampSampleCount(VkSampleCountFlagBits requested) const
+{
+    VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts &
+                                props.limits.framebufferDepthSampleCounts;
+
+    std::array<VkSampleCountFlagBits, 7> order = {
+        VK_SAMPLE_COUNT_64_BIT,
+        VK_SAMPLE_COUNT_32_BIT,
+        VK_SAMPLE_COUNT_16_BIT,
+        VK_SAMPLE_COUNT_8_BIT,
+        VK_SAMPLE_COUNT_4_BIT,
+        VK_SAMPLE_COUNT_2_BIT,
+        VK_SAMPLE_COUNT_1_BIT};
+
+    uint32_t requestedValue = static_cast<uint32_t>(requested);
+    for (auto candidate : order)
     {
-        uint32_t magic = *reinterpret_cast<uint32_t *>(buffer.data());
-        if (magic != 0x07230203)
-        {
-            throw std::runtime_error("Invalid SPIR-V magic number in file: " + filename);
-        }
+        uint32_t candidateValue = static_cast<uint32_t>(candidate);
+        if (candidateValue > requestedValue)
+            continue;
+        if (counts & candidate)
+            return candidate;
     }
 
-    return buffer;
+    // Fallback to highest available if request was invalid
+    for (auto candidate : order)
+    {
+        if (counts & candidate)
+            return candidate;
+    }
+    return VK_SAMPLE_COUNT_1_BIT;
 }
 
 // C interface for Python

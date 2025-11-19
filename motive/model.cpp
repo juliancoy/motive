@@ -268,8 +268,8 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
 
     vkMapMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory, 0, uboSize, 0, &ObjectTransformUBOMapped);
 
-    // Create texture resources using consolidated initialization
-    createTextureResources();
+    // Create texture resources using GLTF data when available
+    createTextureResources(tgltfModel, tprimitive);
 }
 
 void Primitive::createIndexBuffer(const std::vector<uint32_t> &indices)

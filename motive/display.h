@@ -48,7 +48,11 @@ public:
     VkImage depthImage;
     VkDeviceMemory depthImageMemory;
     VkImageView depthImageView;
+    VkImage colorImage = VK_NULL_HANDLE;
+    VkDeviceMemory colorImageMemory = VK_NULL_HANDLE;
+    VkImageView colorImageView = VK_NULL_HANDLE;
     int graphicsQueueFamilyIndex;
+    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
