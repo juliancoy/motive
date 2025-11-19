@@ -3,6 +3,7 @@
 #include "display.h"
 #include <stdexcept>
 #include <iostream>
+#include <array>
 
 namespace {
 void ForwardMouseButton(GLFWwindow *window, int button, int action, int mods)
@@ -168,22 +169,44 @@ void Camera::allocateDescriptorSet()
         std::cout << "[Debug] Camera " << this << " descriptor set allocated: " << descriptorSet << std::endl;
     }
 
-    // Update descriptor set with UBO
-    VkDescriptorBufferInfo bufferDescInfo{};
-    bufferDescInfo.buffer = cameraTransformUBO;
-    bufferDescInfo.offset = 0;
-    bufferDescInfo.range = sizeof(CameraTransform);
+    VkDescriptorBufferInfo cameraBufferInfo{};
+    cameraBufferInfo.buffer = cameraTransformUBO;
+    cameraBufferInfo.offset = 0;
+    cameraBufferInfo.range = sizeof(CameraTransform);
 
-    VkWriteDescriptorSet UBOdescriptorWrite{};
-    UBOdescriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    UBOdescriptorWrite.dstSet = descriptorSet;
-    UBOdescriptorWrite.dstBinding = 0;
-    UBOdescriptorWrite.dstArrayElement = 0;
-    UBOdescriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    UBOdescriptorWrite.descriptorCount = 1;
-    UBOdescriptorWrite.pBufferInfo = &bufferDescInfo;
+    VkDescriptorBufferInfo lightBufferInfo{};
+    lightBufferInfo.buffer = engine->getLightBuffer();
+    lightBufferInfo.offset = 0;
+    lightBufferInfo.range = engine->getLightUBOSize();
 
-    vkUpdateDescriptorSets(engine->logicalDevice, 1, &UBOdescriptorWrite, 0, nullptr);
+    if (lightBufferInfo.buffer == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("Light buffer is not initialized.");
+    }
+
+    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSet;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &cameraBufferInfo;
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSet;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pBufferInfo = &lightBufferInfo;
+
+    vkUpdateDescriptorSets(engine->logicalDevice,
+                           static_cast<uint32_t>(descriptorWrites.size()),
+                           descriptorWrites.data(),
+                           0,
+                           nullptr);
 }
 
 void Camera::update(uint32_t currentImage)
@@ -267,38 +290,31 @@ void Camera::updateCameraMatrices()
     float yaw = cameraRotation.x;    // Y-axis rotation (left/right)
     float pitch = cameraRotation.y;  // X-axis rotation (up/down)
 
-    // === Forward vector from pitch & yaw ===
     glm::vec3 front;
-    front.x = cos(pitch) * sin(yaw);      // note: swapped from your original
+    front.x = cos(pitch) * sin(yaw);
     front.y = sin(pitch);
     front.z = -cos(pitch) * cos(yaw);
     front = glm::normalize(front);
 
-    // === Calculate up & right from front ===
-    glm::vec3 worldUp = glm::vec3(0, 1, 0);
-    // Apply full camera rotation to movement vectors
-    glm::vec3 forward = glm::vec3(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw));
-    glm::vec3 right = glm::normalize(glm::cross(glm::vec3(0, 1, 0), forward));
-    
-    glm::vec3 up = glm::normalize(glm::cross(front, right));
+    glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
+    glm::vec3 up = glm::normalize(glm::cross(right, front));
 
-    // === Movement Handling (flattened) ===
+    // === Movement Handling (fully camera-relative) ===
     glm::vec3 moveDir(0.0f);
-
-    // Flatten forward vector for movement (optional - remove to allow flying)
-    //forward.y = 0;
-    forward = glm::normalize(forward);
-
-    if (keysPressed[0]) moveDir += forward;   // W
-    if (keysPressed[1]) moveDir -= right;     // A
-    if (keysPressed[2]) moveDir -= forward;   // S
-    if (keysPressed[3]) moveDir += right;     // D
-    if (keysPressed[4]) moveDir -= worldUp;   // Q (down)
-    if (keysPressed[5]) moveDir += worldUp;   // E (up)
+    if (keysPressed[0]) {
+        moveDir += front;   // W
+        std::cout << "[Camera] W pressed. Forward normal: (" << front.x << ", " << front.y << ", " << front.z << ")\n";
+    }
+    if (keysPressed[1]) moveDir -= right;   // A
+    if (keysPressed[2]) moveDir -= front;   // S
+    if (keysPressed[3]) moveDir += right;   // D
+    if (keysPressed[4]) moveDir -= up;      // Q (down)
+    if (keysPressed[5]) moveDir += up;      // E (up)
 
     if (glm::length(moveDir) > 0.0f) {
         cameraPos += glm::normalize(moveDir) * moveSpeed;
-        std::cout << "Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
+        std::cout << "[Camera] Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
     }
 
     // === Construct View Matrix ===
