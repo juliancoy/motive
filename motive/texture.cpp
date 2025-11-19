@@ -37,32 +37,20 @@ void Primitive::createTextureSampler()
 
 void Primitive::createTextureResources()
 {
-    // Create texture resources first
     createTextureSampler();
     createDefaultTexture();
-    createTextureImageView();
+    finalizeTextureResources();
+}
 
-    // Only proceed if we have valid texture resources
-    if (textureImageView == VK_NULL_HANDLE || textureSampler == VK_NULL_HANDLE)
+void Primitive::createTextureResources(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive)
+{
+    createTextureSampler();
+    bool loaded = createTextureFromGLTF(model, tprimitive);
+    if (!loaded)
     {
-        throw std::runtime_error("Failed to create texture resources!");
+        createDefaultTexture();
     }
-
-    // Allocate descriptor set for texture (set 1 in pipeline layout)
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = engine->descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &engine->primitiveDescriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(engine->logicalDevice, &allocInfo, &primitiveDescriptorSet) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to allocate texture descriptor set!");
-    }
-
-    engine->nameVulkanObject((uint64_t)primitiveDescriptorSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "TextureDescriptorSet");
-
-    updateDescriptorSet();
+    finalizeTextureResources();
 }
 
 void Primitive::createTextureImageView()
@@ -85,17 +73,25 @@ void Primitive::createTextureImageView()
 
 void Primitive::createDefaultTexture()
 {
-    // Create a 1x1 white texture
     const uint32_t width = 1;
     const uint32_t height = 1;
-    const uint32_t pixel = 0xFFFFFFFF; // White RGBA
+    const uint32_t pixel = 0xFFFFFFFFu; // White RGBA
+    createTextureFromPixelData(&pixel, sizeof(pixel), width, height, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format)
+{
+    if (!pixelData || dataSize == 0 || width == 0 || height == 0)
+    {
+        throw std::runtime_error("Invalid pixel data for texture creation.");
+    }
 
     // Create staging buffer
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
 
     stagingBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    stagingBufferInfo.size = sizeof(pixel);
+    stagingBufferInfo.size = static_cast<VkDeviceSize>(dataSize);
     stagingBufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     stagingBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -122,8 +118,8 @@ void Primitive::createDefaultTexture()
 
     // Copy texture data to staging buffer
     void *data;
-    vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, sizeof(pixel), 0, &data);
-    memcpy(data, &pixel, sizeof(pixel));
+    vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, stagingBufferInfo.size, 0, &data);
+    memcpy(data, pixelData, static_cast<size_t>(stagingBufferInfo.size));
     vkUnmapMemory(engine->logicalDevice, stagingBufferMemory);
 
     // Create texture image
@@ -134,7 +130,7 @@ void Primitive::createDefaultTexture()
     textureImageInfo.extent.depth = 1;
     textureImageInfo.mipLevels = 1;
     textureImageInfo.arrayLayers = 1;
-    textureImageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    textureImageInfo.format = format;
     textureImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     textureImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     textureImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -233,6 +229,94 @@ void Primitive::createDefaultTexture()
     // Cleanup staging resources
     vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
     vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+}
 
-    // Descriptor set will be updated by createTextureResources()
+bool Primitive::createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive)
+{
+    if (!model || tprimitive.material < 0 || tprimitive.material >= static_cast<int>(model->materials.size()))
+    {
+        return false;
+    }
+
+    const auto& material = model->materials[tprimitive.material];
+    int textureIndex = material.pbrMetallicRoughness.baseColorTexture.index;
+    if (textureIndex < 0 || textureIndex >= static_cast<int>(model->textures.size()))
+    {
+        return false;
+    }
+
+    const auto& textureInfo = model->textures[textureIndex];
+    if (textureInfo.source < 0 || textureInfo.source >= static_cast<int>(model->images.size()))
+    {
+        return false;
+    }
+
+    const auto& image = model->images[textureInfo.source];
+    if (image.image.empty() || image.width <= 0 || image.height <= 0)
+    {
+        return false;
+    }
+
+    if (image.pixel_type != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+    {
+        std::cerr << "[Warning] Unsupported GLTF texture pixel type for primitive texture." << std::endl;
+        return false;
+    }
+
+    std::vector<uint8_t> rgbaData;
+    size_t pixelCount = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+    rgbaData.resize(pixelCount * 4);
+
+    if (image.component == 4)
+    {
+        memcpy(rgbaData.data(), image.image.data(), rgbaData.size());
+    }
+    else if (image.component == 3)
+    {
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            rgbaData[i * 4 + 0] = image.image[i * 3 + 0];
+            rgbaData[i * 4 + 1] = image.image[i * 3 + 1];
+            rgbaData[i * 4 + 2] = image.image[i * 3 + 2];
+            rgbaData[i * 4 + 3] = 255;
+        }
+    }
+    else
+    {
+        std::cerr << "[Warning] Unsupported GLTF texture component count: " << image.component << std::endl;
+        return false;
+    }
+
+    createTextureFromPixelData(rgbaData.data(), rgbaData.size(), image.width, image.height, VK_FORMAT_R8G8B8A8_SRGB);
+    return true;
+}
+
+void Primitive::finalizeTextureResources()
+{
+    if (textureImage == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("Texture image was not created before finalization.");
+    }
+
+    createTextureImageView();
+
+    if (textureImageView == VK_NULL_HANDLE || textureSampler == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("Failed to finalize texture resources!");
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = engine->descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &engine->primitiveDescriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(engine->logicalDevice, &allocInfo, &primitiveDescriptorSet) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to allocate texture descriptor set!");
+    }
+
+    engine->nameVulkanObject((uint64_t)primitiveDescriptorSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "TextureDescriptorSet");
+
+    updateDescriptorSet();
 }

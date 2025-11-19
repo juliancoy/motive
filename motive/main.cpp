@@ -4,10 +4,13 @@
 #include <unistd.h> // for sleep
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <vulkan/vulkan.h>
 #include "engine.h"
 #include "display.h"
 #include "camera.h"
 #include "model.h"
+#include "utils.h"
+#include "light.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,6 +18,9 @@ int main(int argc, char *argv[])
     // Parse command line arguments
     bool loadTriangle = true;
     bool loadGLTF = false;
+
+    bool msaaOverride = false;
+    VkSampleCountFlagBits requestedMsaa = VK_SAMPLE_COUNT_1_BIT;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -27,17 +33,52 @@ int main(int argc, char *argv[])
             loadTriangle = false;
             loadGLTF = true;
         }
+        else if (std::string(argv[i]).rfind("--msaa=", 0) == 0)
+        {
+            std::string value = std::string(argv[i]).substr(7);
+            try
+            {
+                int samples = std::stoi(value);
+                VkSampleCountFlagBits flag = msaaFlagFromInt(samples);
+                if (flag == static_cast<VkSampleCountFlagBits>(VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM))
+                {
+                    std::cerr << "[Warning] Unsupported MSAA value '" << samples << "'. Valid values: 1,2,4,8,16,32,64." << std::endl;
+                }
+                else
+                {
+                    requestedMsaa = flag;
+                    msaaOverride = true;
+                }
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "[Warning] Failed to parse MSAA option '" << value << "': " << e.what() << std::endl;
+            }
+        }
     }
 
     // Create engine instance
     Engine *engine = new Engine();
+    if (msaaOverride)
+    {
+        engine->setMsaaSampleCount(requestedMsaa);
+        std::cout << "[Info] Requested MSAA " << msaaIntFromFlag(requestedMsaa)
+                  << "x. Using " << msaaIntFromFlag(engine->getMsaaSampleCount()) << "x.\n";
+    }
 
     // Create the primary display/window before entering the render loop
     Display* display = engine->createWindow(800, 600, "Motive");
 
+    // Define primary light for the scene
+    Light sceneLight(glm::vec3(0.0f, 0.0f, 1.0f),
+                     glm::vec3(0.1f),
+                     glm::vec3(0.9f));
+    sceneLight.setDiffuse(glm::vec3(1.0f, 0.95f, 0.9f));
+    engine->setLight(sceneLight);
+
     // Create a default camera tied to this display
-    glm::vec3 defaultCameraPos(0.0f, 0.0f, -3.0f);
-    glm::vec2 defaultCameraRotation(glm::radians(-180.0f), 0.0f);
+    glm::vec3 defaultCameraPos(0.0f, 0.0f, 3.0f);
+    glm::vec2 defaultCameraRotation(glm::radians(0.0f), 0.0f);
     auto* primaryCamera = new Camera(engine, display, defaultCameraPos, defaultCameraRotation);
     display->addCamera(primaryCamera);
 

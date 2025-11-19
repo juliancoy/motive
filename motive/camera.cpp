@@ -5,59 +5,60 @@
 #include <iostream>
 #include <array>
 
-namespace {
-void ForwardMouseButton(GLFWwindow *window, int button, int action, int mods)
+namespace
 {
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-    if (!display)
-        return;
-    for (auto *camera : display->cameras)
+    void ForwardMouseButton(GLFWwindow *window, int button, int action, int mods)
     {
-        if (camera)
+        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
+        if (!display)
+            return;
+        for (auto *camera : display->cameras)
         {
-            camera->handleMouseButton(button, action, mods);
+            if (camera)
+            {
+                camera->handleMouseButton(button, action, mods);
+            }
         }
     }
-}
 
-void ForwardCursorPos(GLFWwindow *window, double xpos, double ypos)
-{
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-    if (!display)
-        return;
-    for (auto *camera : display->cameras)
+    void ForwardCursorPos(GLFWwindow *window, double xpos, double ypos)
     {
-        if (camera)
+        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
+        if (!display)
+            return;
+        for (auto *camera : display->cameras)
         {
-            camera->handleCursorPos(xpos, ypos);
+            if (camera)
+            {
+                camera->handleCursorPos(xpos, ypos);
+            }
         }
     }
-}
 
-void ForwardKey(GLFWwindow *window, int key, int scancode, int action, int mods)
-{
-    Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-    if (!display)
-        return;
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+    void ForwardKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-        return;
-    }
-    for (auto *camera : display->cameras)
-    {
-        if (camera)
+        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
+        if (!display)
+            return;
+        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         {
-            camera->handleKey(key, scancode, action, mods);
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            return;
+        }
+        for (auto *camera : display->cameras)
+        {
+            if (camera)
+            {
+                camera->handleKey(key, scancode, action, mods);
+            }
         }
     }
-}
 } // namespace
 
-Camera::Camera(Engine* engine,
-               Display* display,
-               const glm::vec3& initialPos,
-               const glm::vec2& initialRot)
+Camera::Camera(Engine *engine,
+               Display *display,
+               const glm::vec3 &initialPos,
+               const glm::vec2 &initialRot)
     : engine(engine),
       display(display),
       initialCameraPos(initialPos),
@@ -72,10 +73,10 @@ Camera::Camera(Engine* engine,
               << " position (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")"
               << " rotation (" << cameraRotation.x << ", " << cameraRotation.y << ")"
               << std::endl;
-    
+
     // Create camera UBO
     createCameraUBO();
-    
+
     // Note: Descriptor set allocation is deferred until after graphics pipeline creation
     // when engine->descriptorSetLayout is available
     descriptorSet = VK_NULL_HANDLE;
@@ -111,8 +112,8 @@ void Camera::createCameraUBO()
     memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     memAllocInfo.allocationSize = memRequirements.size;
     memAllocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
-                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     if (vkAllocateMemory(engine->logicalDevice, &memAllocInfo, nullptr, &cameraTransformDeviceUBO) != VK_SUCCESS)
     {
@@ -139,12 +140,15 @@ void Camera::createCameraUBO()
 
 void Camera::destroyCameraUBO()
 {
-    if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
-        if (cameraTransformUBO != VK_NULL_HANDLE) {
+    if (engine && engine->logicalDevice != VK_NULL_HANDLE)
+    {
+        if (cameraTransformUBO != VK_NULL_HANDLE)
+        {
             vkDestroyBuffer(engine->logicalDevice, cameraTransformUBO, nullptr);
             cameraTransformUBO = VK_NULL_HANDLE;
         }
-        if (cameraTransformDeviceUBO != VK_NULL_HANDLE) {
+        if (cameraTransformDeviceUBO != VK_NULL_HANDLE)
+        {
             vkFreeMemory(engine->logicalDevice, cameraTransformDeviceUBO, nullptr);
             cameraTransformDeviceUBO = VK_NULL_HANDLE;
         }
@@ -251,9 +255,9 @@ void Camera::handleCursorPos(double xpos, double ypos)
         glm::vec2 delta = currentPos - lastMousePos;
         lastMousePos = currentPos;
 
-        // Adjust rotation based on mouse movement
-        cameraRotation.x += delta.x * 0.005f; //pitch
-        cameraRotation.y += delta.y * 0.005f; //yaw
+        const float sensitivity = 0.005f;
+        cameraRotation.x += delta.x * sensitivity; // yaw (left/right)
+        cameraRotation.y -= delta.y * sensitivity; // pitch (up/down)
     }
 }
 
@@ -271,12 +275,13 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         keysPressed[4] = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_E)
         keysPressed[5] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_R && action == GLFW_PRESS)
+    {
         reset();
     }
 }
 
-void Camera::setWindow(GLFWwindow* window)
+void Camera::setWindow(GLFWwindow *window)
 {
     windowHandle = window;
     registerWindowCallbacks();
@@ -286,9 +291,8 @@ void Camera::updateCameraMatrices()
 {
     CameraTransform camera0TransformUBO{};
 
-    // === Camera Rotation Angles ===
-    float yaw = cameraRotation.x;    // Y-axis rotation (left/right)
-    float pitch = cameraRotation.y;  // X-axis rotation (up/down)
+    float yaw = cameraRotation.x;
+    float pitch = cameraRotation.y;
 
     glm::vec3 front;
     front.x = cos(pitch) * sin(yaw);
@@ -300,44 +304,40 @@ void Camera::updateCameraMatrices()
     glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
     glm::vec3 up = glm::normalize(glm::cross(right, front));
 
-    // === Movement Handling (fully camera-relative) ===
+    // Movement (camera-relative)
     glm::vec3 moveDir(0.0f);
-    if (keysPressed[0]) {
-        moveDir += front;   // W
-        std::cout << "[Camera] W pressed. Forward normal: (" << front.x << ", " << front.y << ", " << front.z << ")\n";
-    }
-    if (keysPressed[1]) moveDir -= right;   // A
-    if (keysPressed[2]) moveDir -= front;   // S
-    if (keysPressed[3]) moveDir += right;   // D
-    if (keysPressed[4]) moveDir -= up;      // Q (down)
-    if (keysPressed[5]) moveDir += up;      // E (up)
+    if (keysPressed[0])
+        moveDir += front;
+    if (keysPressed[1])
+        moveDir -= right;
+    if (keysPressed[2])
+        moveDir -= front;
+    if (keysPressed[3])
+        moveDir += right;
+    if (keysPressed[4])
+        moveDir -= up;
+    if (keysPressed[5])
+        moveDir += up;
 
-    if (glm::length(moveDir) > 0.0f) {
+    if (glm::length(moveDir) > 0.0f)
+    {
         cameraPos += glm::normalize(moveDir) * moveSpeed;
         std::cout << "[Camera] Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
     }
 
-    // === Construct View Matrix ===
-    // Basis matrix from right, up, front
-    glm::mat4 rotation = glm::mat4(1.0f);
-    rotation[0] = glm::vec4(right, 0.0f);
-    rotation[1] = glm::vec4(up, 0.0f);
-    rotation[2] = glm::vec4(-front, 0.0f);  // invert forward
+    // Use lookAt for view matrix
+    camera0TransformUBO.view = glm::lookAt(cameraPos, cameraPos + front, worldUp);
 
-    // Translation matrix
-    glm::mat4 translation = glm::translate(glm::mat4(1.0f), -cameraPos);
-
-    // Combine rotation and translation
-    camera0TransformUBO.view = rotation * translation;
-
-    // === Projection Matrix (Vulkan fix) ===
+    // Projection
     camera0TransformUBO.proj = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 10.0f);
-    camera0TransformUBO.proj[1][1] *= -1; // Vulkan Y-flip
+    camera0TransformUBO.proj[1][1] *= -1;
 
-    // === Upload to GPU ===
-    if (camera0TransformMappedUBO) {
+    if (camera0TransformMappedUBO)
+    {
         memcpy(camera0TransformMappedUBO, &camera0TransformUBO, sizeof(camera0TransformUBO));
-    } else {
+    }
+    else
+    {
         throw std::runtime_error("Uniform buffer not mapped!");
     }
 }
