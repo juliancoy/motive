@@ -249,6 +249,7 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
 
     if (needsRecreate)
     {
+        // Clean up existing texture resources
         if (textureImageView != VK_NULL_HANDLE)
         {
             vkDestroyImageView(engine->logicalDevice, textureImageView, nullptr);
@@ -264,6 +265,8 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
             vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
             textureImageMemory = VK_NULL_HANDLE;
         }
+        
+        // Create new texture with the updated data
         createTextureFromPixelData(pixelData, dataSize, width, height, format);
         createTextureImageView();
         updateDescriptorSet();

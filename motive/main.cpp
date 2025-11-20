@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.h>
@@ -53,54 +54,58 @@ namespace
         return options;
     }
 
-    bool addVideoQuadModel(Engine *engine)
-    {
-        if (!std::filesystem::exists(kVideoPath))
-        {
-            std::cerr << "[Video] Hardcoded path " << kVideoPath << " does not exist." << std::endl;
-            return false;
-        }
-
-        video::VideoDecoder decoder{};
-        if (!video::initializeVideoDecoder(kVideoPath, decoder))
-        {
-            video::cleanupVideoDecoder(decoder);
-            return false;
-        }
-
+    struct VideoPlaybackState {
+        video::VideoDecoder decoder;
+        Primitive* videoPrimitive = nullptr;
         std::vector<uint8_t> frameBuffer;
-        if (!video::decodeNextFrame(decoder, frameBuffer))
+        std::chrono::steady_clock::time_point lastFrameTime;
+        std::chrono::duration<double> frameDuration;
+        bool initialized = false;
+    };
+
+    std::unique_ptr<VideoPlaybackState> videoState;
+
+    void updateVideoFrame()
+    {
+        if (!videoState || !videoState->initialized || !videoState->videoPrimitive)
         {
-            std::cerr << "[Video] Unable to decode first frame from " << kVideoPath << std::endl;
-            video::cleanupVideoDecoder(decoder);
-            return false;
+            return;
         }
 
-        auto quadVertices = video::buildVideoQuadVertices(static_cast<float>(decoder.width), static_cast<float>(decoder.height));
-        auto videoModel = std::make_unique<Model>(quadVertices, engine);
-        Primitive *videoPrimitive = nullptr;
-        if (!videoModel->meshes.empty() && !videoModel->meshes[0].primitives.empty())
-        {
-            videoPrimitive = videoModel->meshes[0].primitives[0].get();
-        }
-        if (!videoPrimitive)
-        {
-            std::cerr << "[Video] Failed to construct quad primitive." << std::endl;
-            video::cleanupVideoDecoder(decoder);
-            return false;
-        }
+        auto currentTime = std::chrono::steady_clock::now();
+        auto elapsed = currentTime - videoState->lastFrameTime;
 
-        videoPrimitive->updateTextureFromPixelData(frameBuffer.data(),
-                                                   frameBuffer.size(),
-                                                   static_cast<uint32_t>(decoder.width),
-                                                   static_cast<uint32_t>(decoder.height),
-                                                   kVideoTextureFormat);
-        videoPrimitive->transform = glm::mat4(1.0f);
-        videoModel->resizeToUnitBox();
-        engine->addModel(std::move(videoModel));
+        // Decode and update frame if enough time has passed
+        if (elapsed >= videoState->frameDuration)
+        {
+            if (video::decodeNextFrame(videoState->decoder, videoState->frameBuffer))
+            {
+                videoState->videoPrimitive->updateTextureFromPixelData(
+                    videoState->frameBuffer.data(),
+                    videoState->frameBuffer.size(),
+                    videoState->decoder.width,
+                    videoState->decoder.height,
+                    kVideoTextureFormat
+                );
+            }
+            else
+            {
+                std::cout << "[Video] End of video reached" << std::endl;
+                // Optionally restart video or exit
+                // For now, just stop updating
+                videoState->initialized = false;
+            }
+            videoState->lastFrameTime = currentTime;
+        }
+    }
 
-        video::cleanupVideoDecoder(decoder);
-        return true;
+    void cleanupVideoPlayback()
+    {
+        if (videoState)
+        {
+            video::cleanupVideoDecoder(videoState->decoder);
+            videoState.reset();
+        }
     }
 }
 
@@ -146,14 +151,79 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    else if (!addVideoQuadModel(engine))
+    else
     {
-        delete engine;
-        return 1;
+        primaryCamera->cameraPos = glm::vec3(0.0f, 0.0f, 1.0f);
+        if (!std::filesystem::exists(kVideoPath))
+        {
+            std::cerr << "[Video] Hardcoded path " << kVideoPath << " does not exist." << std::endl;
+            return false;
+        }
+
+        videoState = std::make_unique<VideoPlaybackState>();
+
+        if (!video::initializeVideoDecoder(kVideoPath, videoState->decoder))
+        {
+            std::cerr << "[Video] Failed to initialize video decoder" << std::endl;
+            videoState.reset();
+            return false;
+        }
+
+        std::cout << "[Video] Video dimensions: " << videoState->decoder.width << "x" << videoState->decoder.height 
+                  << ", FPS: " << videoState->decoder.fps << std::endl;
+
+        // Create video quad geometry
+        auto quadVertices = video::buildVideoQuadVertices(
+            static_cast<float>(videoState->decoder.width), 
+            static_cast<float>(videoState->decoder.height)
+        );
+        
+        auto videoModel = std::make_unique<Model>(quadVertices, engine);
+        
+        // Get the primitive that will display the video
+        if (videoModel->meshes.empty() || videoModel->meshes[0].primitives.empty())
+        {
+            std::cerr << "[Video] Failed to construct quad primitive." << std::endl;
+            video::cleanupVideoDecoder(videoState->decoder);
+            videoState.reset();
+            return false;
+        }
+
+        videoState->videoPrimitive = videoModel->meshes[0].primitives[0].get();
+        
+        // Create initial texture for video (gray frame)
+        std::vector<uint8_t> initialFrame(videoState->decoder.width * videoState->decoder.height * 4, 128);
+        videoState->videoPrimitive->updateTextureFromPixelData(
+            initialFrame.data(), 
+            initialFrame.size(), 
+            videoState->decoder.width, 
+            videoState->decoder.height, 
+            kVideoTextureFormat
+        );
+
+        videoState->videoPrimitive->transform = glm::mat4(1.0f);
+        videoModel->resizeToUnitBox();
+        engine->addModel(std::move(videoModel));
+
+        // Set up timing for video playback
+        videoState->frameDuration = std::chrono::duration<double>(1.0 / videoState->decoder.fps);
+        videoState->lastFrameTime = std::chrono::steady_clock::now();
+        videoState->initialized = true;
+
+        std::cout << "[Video] Video playback initialized successfully" << std::endl;
     }
 
-    engine->renderLoop();
+    // Custom render loop for video playback
+    for (auto &display : engine->displays)
+    {
+        while (!glfwWindowShouldClose(display->window))
+        {
+            updateVideoFrame();
+            display->render();
+        }
+    }
 
+    cleanupVideoPlayback();
     delete engine;
     return 0;
 }

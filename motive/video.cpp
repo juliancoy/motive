@@ -295,7 +295,7 @@ int runVideoPlayback(bool msaaOverride, VkSampleCountFlagBits requestedMsaa)
     
     // Create initial texture for video
     std::vector<uint8_t> initialFrame(decoder.width * decoder.height * 4, 128); // Gray frame
-    primitive->createTextureFromPixelData(
+    primitive->updateTextureFromPixelData(
         initialFrame.data(), 
         initialFrame.size(), 
         decoder.width, 
