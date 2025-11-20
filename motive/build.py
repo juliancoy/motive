@@ -29,21 +29,29 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "../glm/glm")),
     os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/include")),
 ]
+ffmpeg_lib_dir = os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/lib"))
+
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
     os.path.abspath(os.path.join(this_dir, "../glfw/build/src")),
-    os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/lib")),
+    ffmpeg_lib_dir,
     os.path.abspath(os.path.join(this_dir, "../"))
 ]
+
+ffmpeg_static_libs = [
+    "libavformat.a",
+    "libavcodec.a",
+    "libswscale.a",
+    "libswresample.a",
+    "libavutil.a",
+]
+
 libraries = [
     "glfw3",
     "tinygltf",
     "vulkan",
-    "avformat",
-    "avcodec",
-    "swscale",
-    "avutil",
-    "swresample",
+    "bz2",
+    "lzma",
     "m",
     "pthread",
     "dl",
@@ -60,6 +68,7 @@ if DEBUG_MODE == "ADDRESS_SANITIZER":
 include_flags = " ".join(f"-I{p}" for p in include_paths)
 lib_flags = " ".join(f"-L{p}" for p in lib_paths)
 lib_links = " ".join(f"-l{lib}" for lib in libraries)
+ffmpeg_static_links = " ".join(os.path.join(ffmpeg_lib_dir, lib) for lib in ffmpeg_static_libs)
 
 # Compile shaders
 print("Compiling shaders...")
@@ -92,9 +101,7 @@ with ThreadPoolExecutor() as executor:
     executor.map(compile_cpp_to_o, all_sources)
 
 # Link shared object
-so_link_cmd = f"g++ -shared {sanitize_flags} {lib_flags} {' '.join(so_objects)} {lib_links} -o libengine.so"
-engine_rpath = "-Wl,-rpath,'$ORIGIN/../FFmpeg/build/lib'"
-so_link_cmd = f"g++ -shared {sanitize_flags} {lib_flags} {' '.join(so_objects)} {lib_links} {engine_rpath} -o libengine.so"
+so_link_cmd = f"g++ -shared {sanitize_flags} {lib_flags} {' '.join(so_objects)} {ffmpeg_static_links} {lib_links} -o libengine.so"
 print(f"\nLinking shared library:\n{so_link_cmd}")
 so_link_result = subprocess.run(so_link_cmd, shell=True)
 if so_link_result.returncode != 0:
@@ -102,8 +109,7 @@ if so_link_result.returncode != 0:
     sys.exit(so_link_result.returncode)
 
 # Link main executable
-main_rpath = "-Wl,-rpath,'$ORIGIN' -Wl,-rpath,'$ORIGIN/../FFmpeg/build/lib'"
-main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {' '.join(main_objects)} -L. -lengine {lib_links} {main_rpath} -o main"
+main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {' '.join(main_objects)} -L. -lengine {lib_links} -o main"
 print(f"\nLinking main executable:\n{main_link_cmd}")
 main_link_result = subprocess.run(main_link_cmd, shell=True)
 if main_link_result.returncode != 0:
