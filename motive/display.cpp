@@ -79,7 +79,9 @@ void Display::addCamera(Camera* camera)
         return;
     }
     camera->setWindow(window);
+    camera->setFullscreenViewportEnabled(true);
     cameras.push_back(camera);
+    updateCameraViewports();
     if (graphicsPipeline != VK_NULL_HANDLE)
     {
         camera->allocateDescriptorSet();
@@ -503,6 +505,13 @@ void Display::createWindow(const char *title)
 
     // Set window user pointer and callbacks
     glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow *win, int fbWidth, int fbHeight) {
+        auto *display = static_cast<Display *>(glfwGetWindowUserPointer(win));
+        if (display)
+        {
+            display->handleFramebufferResize(fbWidth, fbHeight);
+        }
+    });
 
     createSurface(window);
     if (!surface)
@@ -577,6 +586,150 @@ void Display::createSurface(GLFWwindow *window)
     }
 }
 
+void Display::cleanupSwapchainResources()
+{
+    if (!engine || engine->logicalDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
+    for (auto framebuffer : swapchainFramebuffers)
+    {
+        if (framebuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyFramebuffer(engine->logicalDevice, framebuffer, nullptr);
+        }
+    }
+    swapchainFramebuffers.clear();
+
+    for (auto imageView : swapchainImageViews)
+    {
+        if (imageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(engine->logicalDevice, imageView, nullptr);
+        }
+    }
+    swapchainImageViews.clear();
+
+    if (colorImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, colorImageView, nullptr);
+        colorImageView = VK_NULL_HANDLE;
+    }
+    if (colorImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, colorImage, nullptr);
+        colorImage = VK_NULL_HANDLE;
+    }
+    if (colorImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, colorImageMemory, nullptr);
+        colorImageMemory = VK_NULL_HANDLE;
+    }
+
+    if (depthImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, depthImageView, nullptr);
+        depthImageView = VK_NULL_HANDLE;
+    }
+    if (depthImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, depthImage, nullptr);
+        depthImage = VK_NULL_HANDLE;
+    }
+    if (depthImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, depthImageMemory, nullptr);
+        depthImageMemory = VK_NULL_HANDLE;
+    }
+
+    if (renderPass != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(engine->logicalDevice, renderPass, nullptr);
+        renderPass = VK_NULL_HANDLE;
+    }
+
+    if (swapchain != VK_NULL_HANDLE)
+    {
+        vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
+        swapchain = VK_NULL_HANDLE;
+    }
+
+    if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE)
+    {
+        vkFreeCommandBuffers(engine->logicalDevice, swapchainCmdPool, 1, &swapchainRecreationCmdBuffer);
+        swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
+    }
+
+    if (swapchainCmdPool != VK_NULL_HANDLE)
+    {
+        vkDestroyCommandPool(engine->logicalDevice, swapchainCmdPool, nullptr);
+        swapchainCmdPool = VK_NULL_HANDLE;
+    }
+
+    if (swapchainRecreationFence != VK_NULL_HANDLE)
+    {
+        vkDestroyFence(engine->logicalDevice, swapchainRecreationFence, nullptr);
+        swapchainRecreationFence = VK_NULL_HANDLE;
+    }
+}
+
+void Display::handleFramebufferResize(int newWidth, int newHeight)
+{
+    framebufferResized = true;
+    width = std::max(0, newWidth);
+    height = std::max(0, newHeight);
+}
+
+void Display::updateCameraViewports()
+{
+    if (cameras.empty())
+    {
+        return;
+    }
+
+    float screenWidth = std::max(1.0f, static_cast<float>(width));
+    float screenHeight = std::max(1.0f, static_cast<float>(height));
+    glm::vec2 screenCenter(screenWidth * 0.5f, screenHeight * 0.5f);
+
+    for (auto *camera : cameras)
+    {
+        if (camera)
+        {
+            if (!camera->isFullscreenViewportEnabled())
+            {
+                continue;
+            }
+            float viewportWidth = std::max(1.0f, screenWidth * camera->getFullscreenPercentX());
+            float viewportHeight = std::max(1.0f, screenHeight * camera->getFullscreenPercentY());
+            camera->setViewport(screenCenter.x, screenCenter.y, viewportWidth, viewportHeight);
+        }
+    }
+}
+
+void Display::recreateSwapchain()
+{
+    if (!engine || engine->logicalDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
+    int fbWidth = width;
+    int fbHeight = height;
+    while (fbWidth == 0 || fbHeight == 0)
+    {
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        glfwWaitEvents();
+    }
+    width = fbWidth;
+    height = fbHeight;
+
+    vkDeviceWaitIdle(engine->logicalDevice);
+    cleanupSwapchainResources();
+    createSwapchain();
+    updateCameraViewports();
+}
+
 
 void Display::render()
 {
@@ -603,6 +756,12 @@ void Display::render()
 
     static size_t currentFrame = 0;
 
+    if (framebufferResized)
+    {
+        framebufferResized = false;
+        recreateSwapchain();
+    }
+
     if (firstFrame)
         firstFrame = false;
     else
@@ -616,10 +775,15 @@ void Display::render()
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
-        createSwapchain(); // optional
+        recreateSwapchain();
         return;
     }
-    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+    else if (result == VK_SUBOPTIMAL_KHR)
+    {
+        recreateSwapchain();
+        return;
+    }
+    else if (result != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to acquire swapchain image.");
     }

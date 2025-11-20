@@ -1,6 +1,15 @@
 #include "video.h"
+#include "engine.h"
+#include "display.h"
+#include "camera.h"
+#include "model.h"
+#include "light.h"
+#include "utils.h"
 
 #include <iostream>
+#include <chrono>
+#include <thread>
+#include <fstream>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -10,26 +19,6 @@ extern "C" {
 }
 
 namespace video {
-
-std::optional<std::filesystem::path> locateVideoFile(const std::string& filename)
-{
-    namespace fs = std::filesystem;
-    fs::path current = fs::current_path();
-    for (int i = 0; i < 6; ++i)
-    {
-        fs::path candidate = current / filename;
-        if (fs::exists(candidate))
-        {
-            return fs::canonical(candidate);
-        }
-        if (!current.has_parent_path())
-        {
-            break;
-        }
-        current = current.parent_path();
-    }
-    return std::nullopt;
-}
 
 bool initializeVideoDecoder(const std::filesystem::path& videoPath, VideoDecoder& decoder)
 {
@@ -227,3 +216,139 @@ std::vector<Vertex> buildVideoQuadVertices(float width, float height)
 }
 
 } // namespace video
+
+// Global function for video playback mode
+int runVideoPlayback(bool msaaOverride, VkSampleCountFlagBits requestedMsaa)
+{
+    std::cout << "[Video] Starting video playback mode..." << std::endl;
+
+    // Hardcoded video file path
+    std::string videoPath = "../P1090533.MOV";
+    
+    // Check if file exists using basic file operations
+    std::ifstream testFile(videoPath);
+    if (!testFile.good())
+    {
+        std::cerr << "[Video] Could not find video file: " << videoPath << std::endl;
+        return 1;
+    }
+    testFile.close();
+
+    std::cout << "[Video] Using video file: " << videoPath << std::endl;
+
+    // Initialize video decoder
+    video::VideoDecoder decoder;
+    if (!video::initializeVideoDecoder(videoPath, decoder))
+    {
+        std::cerr << "[Video] Failed to initialize video decoder" << std::endl;
+        return 1;
+    }
+
+    std::cout << "[Video] Video dimensions: " << decoder.width << "x" << decoder.height 
+              << ", FPS: " << decoder.fps << std::endl;
+
+    // Create engine instance
+    Engine *engine = new Engine();
+    if (msaaOverride)
+    {
+        engine->setMsaaSampleCount(requestedMsaa);
+        std::cout << "[Info] Requested MSAA " << msaaIntFromFlag(requestedMsaa)
+                  << "x. Using " << msaaIntFromFlag(engine->getMsaaSampleCount()) << "x.\n";
+    }
+
+    // Create display window
+    Display* display = engine->createWindow(800, 600, "Motive Video Player");
+
+    // Set up lighting
+    Light sceneLight(glm::vec3(0.0f, 0.0f, 1.0f),
+                     glm::vec3(0.1f),
+                     glm::vec3(0.9f));
+    sceneLight.setDiffuse(glm::vec3(1.0f, 0.95f, 0.9f));
+    engine->setLight(sceneLight);
+
+    // Create camera
+    glm::vec3 defaultCameraPos(0.0f, 0.0f, 3.0f);
+    glm::vec2 defaultCameraRotation(glm::radians(0.0f), 0.0f);
+    auto* primaryCamera = new Camera(engine, display, defaultCameraPos, defaultCameraRotation);
+    display->addCamera(primaryCamera);
+
+    // Create video quad geometry
+    float quadWidth = 1.6f;  // 16:9 aspect ratio
+    float quadHeight = 0.9f;
+    auto videoVertices = video::buildVideoQuadVertices(quadWidth, quadHeight);
+    
+    // Create model with video quad
+    auto videoModel = std::make_unique<Model>(videoVertices, engine);
+    engine->addModel(std::move(videoModel));
+
+    // Get the primitive that will display the video
+    if (engine->models.empty() || engine->models[0]->meshes.empty() || 
+        engine->models[0]->meshes[0].primitives.empty())
+    {
+        std::cerr << "[Video] Failed to create video quad geometry" << std::endl;
+        cleanupVideoDecoder(decoder);
+        delete engine;
+        return 1;
+    }
+
+    auto& primitive = engine->models[0]->meshes[0].primitives[0];
+    
+    // Create initial texture for video
+    std::vector<uint8_t> initialFrame(decoder.width * decoder.height * 4, 128); // Gray frame
+    primitive->createTextureFromPixelData(
+        initialFrame.data(), 
+        initialFrame.size(), 
+        decoder.width, 
+        decoder.height, 
+        VK_FORMAT_R8G8B8A8_UNORM
+    );
+
+    std::cout << "[Video] Starting video playback loop..." << std::endl;
+
+    // Video playback loop
+    std::vector<uint8_t> frameBuffer;
+    auto frameDuration = std::chrono::duration<double>(1.0 / decoder.fps);
+    auto lastFrameTime = std::chrono::steady_clock::now();
+
+    while (!glfwWindowShouldClose(display->window))
+    {
+        auto currentTime = std::chrono::steady_clock::now();
+        auto elapsed = currentTime - lastFrameTime;
+
+        // Decode and update frame if enough time has passed
+        if (elapsed >= frameDuration)
+        {
+            if (video::decodeNextFrame(decoder, frameBuffer))
+            {
+                // Update texture with new frame
+                primitive->updateTextureFromPixelData(
+                    frameBuffer.data(),
+                    frameBuffer.size(),
+                    decoder.width,
+                    decoder.height,
+                    VK_FORMAT_R8G8B8A8_UNORM
+                );
+            }
+            else
+            {
+                std::cout << "[Video] End of video reached" << std::endl;
+                break;
+            }
+            lastFrameTime = currentTime;
+        }
+
+        // Render frame
+        display->render();
+
+        // Handle events
+        glfwPollEvents();
+    }
+
+    std::cout << "[Video] Video playback completed" << std::endl;
+
+    // Cleanup
+    cleanupVideoDecoder(decoder);
+    delete engine;
+
+    return 0;
+}

@@ -20,10 +20,13 @@ public:
     void createWindow(const char *title);
     void createSurface(GLFWwindow *window);    
     void addCamera(Camera* camera);
+    void recreateSwapchain();
 
     void render();
     void createCommandPool();
     void createGraphicsPipeline();
+    void handleFramebufferResize(int newWidth, int newHeight);
+    void updateCameraViewports();
 
     // Input handling (forwarded to camera)
     void handleMouseButton(int button, int action, int mods);
@@ -71,10 +74,12 @@ public:
 
     int width;
     int height;
+    bool framebufferResized = false;
 
     // Camera instance
     std::vector<Camera*> cameras;
 
 private:
     Engine* engine;
+    void cleanupSwapchainResources();
 };

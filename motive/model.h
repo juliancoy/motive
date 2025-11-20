@@ -50,6 +50,7 @@ public:
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
     uint32_t indexCount;
+    std::vector<Vertex> cpuVertices;
 
     // Transformation data
     glm::mat4 transform;
@@ -107,6 +108,7 @@ public:
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
     void scaleToUnitBox();
+    void resizeToUnitBox();
     void translate(const glm::vec3& offset);
     void rotate(float angleRadians, const glm::vec3& axis);
     void rotate(float xDegrees, float yDegrees, float zDegrees);
@@ -120,4 +122,5 @@ public:
     std::vector<Texture*> textures;
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);
+    bool computeProceduralBounds(glm::vec3& minBounds, glm::vec3& maxBounds) const;
 };
