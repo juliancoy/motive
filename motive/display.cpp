@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <iostream>
+#include <cstring>
 #include "display.h"
 #include "engine.h"
 #include "model.h"
@@ -37,6 +38,9 @@ Display::Display(Engine* engine, int width, int height, const char* title){
     this->engine = engine;
     this->width = width;
     this->height = height;
+    fpsLastSampleTime = std::chrono::steady_clock::now();
+    currentFps = 0.0f;
+    fpsFrameCounter = 0;
     
     graphicsQueue = engine->graphicsQueue;
     msaaSamples = engine ? engine->getMsaaSampleCount() : VK_SAMPLE_COUNT_1_BIT;
@@ -193,7 +197,7 @@ void Display::createSwapchain() {
     swapchainInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapchainInfo.imageExtent = extent;
     swapchainInfo.imageArrayLayers = 1;
-    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchainInfo.preTransform = capabilities.currentTransform;
     swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -207,7 +211,7 @@ void Display::createSwapchain() {
 
     // Get swapchain images
     vkGetSwapchainImagesKHR(engine->logicalDevice, swapchain, &imageCount, nullptr);
-    std::vector<VkImage> swapchainImages(imageCount);
+    swapchainImages.resize(imageCount);
     vkGetSwapchainImagesKHR(engine->logicalDevice, swapchain, &imageCount, swapchainImages.data());
 
     // Create image views
@@ -654,6 +658,7 @@ void Display::cleanupSwapchainResources()
         vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;
     }
+    swapchainImages.clear();
 
     if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE)
     {
@@ -672,6 +677,191 @@ void Display::cleanupSwapchainResources()
         vkDestroyFence(engine->logicalDevice, swapchainRecreationFence, nullptr);
         swapchainRecreationFence = VK_NULL_HANDLE;
     }
+
+    for (auto &sem : renderFinishedSemaphores)
+    {
+        if (sem != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
+            sem = VK_NULL_HANDLE;
+        }
+    }
+    renderFinishedSemaphores.clear();
+    imagesInFlight.clear();
+}
+
+void Display::createOverlayBuffer(VkDeviceSize size)
+{
+    if (size == 0)
+    {
+        return;
+    }
+
+    VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bufferInfo.size = size;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(engine->logicalDevice, &bufferInfo, nullptr, &overlayResources.stagingBuffer) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create overlay staging buffer");
+    }
+
+    VkMemoryRequirements memRequirements{};
+    vkGetBufferMemoryRequirements(engine->logicalDevice, overlayResources.stagingBuffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = engine->findMemoryType(
+        memRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &overlayResources.stagingMemory) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to allocate overlay staging buffer memory");
+    }
+
+    vkBindBufferMemory(engine->logicalDevice, overlayResources.stagingBuffer, overlayResources.stagingMemory, 0);
+
+    if (vkMapMemory(engine->logicalDevice, overlayResources.stagingMemory, 0, size, 0, &overlayResources.mapped) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to map overlay staging buffer memory");
+    }
+
+    overlayResources.bufferSize = size;
+}
+
+void Display::destroyOverlayBuffer()
+{
+    if (!engine || engine->logicalDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
+    if (overlayResources.mapped)
+    {
+        vkUnmapMemory(engine->logicalDevice, overlayResources.stagingMemory);
+        overlayResources.mapped = nullptr;
+    }
+    if (overlayResources.stagingBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(engine->logicalDevice, overlayResources.stagingBuffer, nullptr);
+        overlayResources.stagingBuffer = VK_NULL_HANDLE;
+    }
+    if (overlayResources.stagingMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, overlayResources.stagingMemory, nullptr);
+        overlayResources.stagingMemory = VK_NULL_HANDLE;
+    }
+    overlayResources.bufferSize = 0;
+    overlayResources.width = 0;
+    overlayResources.height = 0;
+}
+
+void Display::updateOverlayBitmap(float fps)
+{
+    const uint32_t referenceWidth = static_cast<uint32_t>(std::max(1, width));
+    const uint32_t referenceHeight = static_cast<uint32_t>(std::max(1, height));
+    glyph::OverlayBitmap bitmap = glyph::buildFrameRateOverlay(referenceWidth, referenceHeight, fps);
+
+    if (bitmap.width == 0 || bitmap.height == 0 || bitmap.pixels.empty())
+    {
+        overlayResources.width = 0;
+        overlayResources.height = 0;
+        return;
+    }
+
+    VkDeviceSize requiredSize = static_cast<VkDeviceSize>(bitmap.width) * bitmap.height * 4;
+    if (requiredSize > overlayResources.bufferSize)
+    {
+        destroyOverlayBuffer();
+        createOverlayBuffer(requiredSize);
+    }
+
+    if (!overlayResources.mapped)
+    {
+        overlayResources.width = 0;
+        overlayResources.height = 0;
+        return;
+    }
+
+    std::memcpy(overlayResources.mapped, bitmap.pixels.data(), static_cast<size_t>(requiredSize));
+    overlayResources.width = bitmap.width;
+    overlayResources.height = bitmap.height;
+    overlayResources.offsetX = bitmap.offsetX;
+    overlayResources.offsetY = bitmap.offsetY;
+}
+
+void Display::recordOverlayCopy(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+{
+    if (overlayResources.width == 0 || overlayResources.height == 0)
+    {
+        return;
+    }
+    if (overlayResources.stagingBuffer == VK_NULL_HANDLE || imageIndex >= swapchainImages.size())
+    {
+        return;
+    }
+
+    VkImage targetImage = swapchainImages[imageIndex];
+
+    VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.image = targetImage;
+    toTransfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toTransfer.subresourceRange.baseMipLevel = 0;
+    toTransfer.subresourceRange.levelCount = 1;
+    toTransfer.subresourceRange.baseArrayLayer = 0;
+    toTransfer.subresourceRange.layerCount = 1;
+    toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &toTransfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {static_cast<int32_t>(overlayResources.offsetX), static_cast<int32_t>(overlayResources.offsetY), 0};
+    region.imageExtent = {overlayResources.width, overlayResources.height, 1};
+
+    vkCmdCopyBufferToImage(
+        commandBuffer,
+        overlayResources.stagingBuffer,
+        targetImage,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region);
+
+    VkImageMemoryBarrier toPresent{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toPresent.image = targetImage;
+    toPresent.subresourceRange = toTransfer.subresourceRange;
+    toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toPresent.dstAccessMask = 0;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &toPresent);
 }
 
 void Display::handleFramebufferResize(int newWidth, int newHeight)
@@ -733,11 +923,10 @@ void Display::recreateSwapchain()
 
 void Display::render()
 {
-    const int MAX_FRAMES_IN_FLIGHT = 2;
+    const int MAX_FRAMES_IN_FLIGHT = 1;
     if (imageAvailableSemaphores.empty())
     {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
         VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
@@ -746,13 +935,42 @@ void Display::render()
         for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
             if (vkCreateSemaphore(engine->logicalDevice, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-                vkCreateSemaphore(engine->logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
                 vkCreateFence(engine->logicalDevice, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
             {
                 throw std::runtime_error("Failed to create sync objects for frame " + std::to_string(i));
             }
         }
     }
+
+    const size_t swapchainImageCount = swapchainFramebuffers.size();
+    if (renderFinishedSemaphores.size() != swapchainImageCount)
+    {
+        for (auto &sem : renderFinishedSemaphores)
+        {
+            if (sem != VK_NULL_HANDLE)
+            {
+                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
+                sem = VK_NULL_HANDLE;
+            }
+        }
+        renderFinishedSemaphores.assign(swapchainImageCount, VK_NULL_HANDLE);
+
+        VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        for (size_t i = 0; i < swapchainImageCount; ++i)
+        {
+            if (vkCreateSemaphore(engine->logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Failed to create per-image render finished semaphore " + std::to_string(i));
+            }
+        }
+    }
+
+    if (imagesInFlight.size() != swapchainImageCount)
+    {
+        imagesInFlight.assign(swapchainImageCount, VK_NULL_HANDLE);
+    }
+
+    updateOverlayBitmap(currentFps);
 
     static size_t currentFrame = 0;
 
@@ -788,15 +1006,23 @@ void Display::render()
         throw std::runtime_error("Failed to acquire swapchain image.");
     }
 
+    if (imageIndex >= imagesInFlight.size())
+    {
+        throw std::runtime_error("Acquired image index out of bounds");
+    }
+
+    if (imagesInFlight[imageIndex] != VK_NULL_HANDLE)
+    {
+        vkWaitForFences(engine->logicalDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
     // Update all cameras with current transformation matrices
     for (auto& camera : cameras) {
         camera->update(imageIndex);
     }
 
     vkResetFences(engine->logicalDevice, 1, &inFlightFences[currentFrame]);
-
-    // Ensure command buffer is not in use before resetting
-    vkDeviceWaitIdle(engine->logicalDevice);
 
     if (vkResetCommandBuffer(commandBuffer, 0) != VK_SUCCESS)
     {
@@ -904,6 +1130,8 @@ void Display::render()
 
     vkCmdEndRenderPass(commandBuffer);
 
+    recordOverlayCopy(commandBuffer, imageIndex);
+
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to record command buffer");
@@ -919,7 +1147,8 @@ void Display::render()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[imageIndex];
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -940,6 +1169,17 @@ void Display::render()
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to present swapchain image");
+    }
+
+    fpsFrameCounter++;
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(now - fpsLastSampleTime);
+    if (elapsed.count() >= 0.5)
+    {
+        double seconds = elapsed.count();
+        currentFps = seconds > 0.0 ? static_cast<float>(fpsFrameCounter / seconds) : 0.0f;
+        fpsFrameCounter = 0;
+        fpsLastSampleTime = now;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -1126,6 +1366,8 @@ Display::~Display() {
     if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(engine->logicalDevice);
     }
+
+    destroyOverlayBuffer();
 
     // Cleanup swapchain resources
     if (engine && engine->logicalDevice != VK_NULL_HANDLE) {

@@ -5,7 +5,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
 #include <glm/glm.hpp>
+#include <chrono>
+#include <vector>
 #include <vulkan/vulkan.h>
+#include "glyph.h"
 
 // Forward declarations
 class Engine;
@@ -59,11 +62,13 @@ public:
 
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
+    std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
+    std::vector<VkFence> imagesInFlight;
 
     bool firstFrame = true;
     std::string vertShaderPath;
@@ -75,11 +80,33 @@ public:
     int width;
     int height;
     bool framebufferResized = false;
+    float currentFps = 0.0f;
 
     // Camera instance
     std::vector<Camera*> cameras;
+    float getCurrentFps() const { return currentFps; }
 
 private:
+    struct OverlayResources
+    {
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        void* mapped = nullptr;
+        VkDeviceSize bufferSize = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t offsetX = 0;
+        uint32_t offsetY = 0;
+    };
+
     Engine* engine;
     void cleanupSwapchainResources();
+    void createOverlayBuffer(VkDeviceSize size);
+    void destroyOverlayBuffer();
+    void updateOverlayBitmap(float fps);
+    void recordOverlayCopy(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+
+    uint32_t fpsFrameCounter = 0;
+    std::chrono::steady_clock::time_point fpsLastSampleTime = std::chrono::steady_clock::now();
+    OverlayResources overlayResources;
 };
