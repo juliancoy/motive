@@ -300,6 +300,38 @@ void Camera::setWindow(GLFWwindow *window)
     registerWindowCallbacks();
 }
 
+void Camera::setViewport(float centerX, float centerY, float viewportWidth, float viewportHeight)
+{
+    width = std::max(1.0f, viewportWidth);
+    height = std::max(1.0f, viewportHeight);
+    centerpoint = glm::vec2(centerX, centerY);
+}
+
+void Camera::setFullscreenViewportEnabled(bool enabled, float xPercent, float yPercent)
+{
+    fullscreenViewportEnabled = enabled;
+    if (enabled)
+    {
+        fullscreenPercentX = std::clamp(xPercent, 0.01f, 1.0f);
+        fullscreenPercentY = std::clamp(yPercent, 0.01f, 1.0f);
+    }
+}
+
+bool Camera::isFullscreenViewportEnabled() const
+{
+    return fullscreenViewportEnabled;
+}
+
+float Camera::getFullscreenPercentX() const
+{
+    return fullscreenPercentX;
+}
+
+float Camera::getFullscreenPercentY() const
+{
+    return fullscreenPercentY;
+}
+
 void Camera::updateCameraMatrices()
 {
     CameraTransform camera0TransformUBO{};

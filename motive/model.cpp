@@ -62,6 +62,7 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
       primitiveDescriptorSet(VK_NULL_HANDLE)
 {
     // Create vertex buffer
+    cpuVertices = vertices;
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
     VkBuffer stagingBuffer;
@@ -168,6 +169,7 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
         vertices[i].texCoord = glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]);
     }
 
+    cpuVertices = vertices;
     vertexCount = static_cast<uint32_t>(vertices.size());
 
     // Create vertex buffer
@@ -539,45 +541,51 @@ Model::~Model()
 
 void Model::scaleToUnitBox()
 {
-    if (!tgltfModel)
-    {
-        std::cerr << "[Warning] scaleToUnitBox is only supported for GLTF-backed models." << std::endl;
-        return;
-    }
-
     glm::vec3 minBounds(std::numeric_limits<float>::max());
     glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
     bool foundPositions = false;
 
-    for (const auto &meshData : tgltfModel->meshes)
+    if (tgltfModel)
     {
-        for (const auto &primitiveData : meshData.primitives)
+        for (const auto &meshData : tgltfModel->meshes)
         {
-            auto attrIt = primitiveData.attributes.find("POSITION");
-            if (attrIt == primitiveData.attributes.end())
+            for (const auto &primitiveData : meshData.primitives)
             {
-                continue;
-            }
+                auto attrIt = primitiveData.attributes.find("POSITION");
+                if (attrIt == primitiveData.attributes.end())
+                {
+                    continue;
+                }
 
-            const tinygltf::Accessor &accessor = tgltfModel->accessors[attrIt->second];
-            const tinygltf::BufferView &bufferView = tgltfModel->bufferViews[accessor.bufferView];
-            const tinygltf::Buffer &buffer = tgltfModel->buffers[bufferView.buffer];
+                const tinygltf::Accessor &accessor = tgltfModel->accessors[attrIt->second];
+                const tinygltf::BufferView &bufferView = tgltfModel->bufferViews[accessor.bufferView];
+                const tinygltf::Buffer &buffer = tgltfModel->buffers[bufferView.buffer];
 
-            size_t stride = accessor.ByteStride(bufferView);
-            if (stride == 0)
-            {
-                stride = 3 * sizeof(float);
-            }
+                size_t stride = accessor.ByteStride(bufferView);
+                if (stride == 0)
+                {
+                    stride = 3 * sizeof(float);
+                }
 
-            const uint8_t *dataPtr = buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
-            for (size_t i = 0; i < accessor.count; ++i)
-            {
-                const float *position = reinterpret_cast<const float *>(dataPtr + i * stride);
-                glm::vec3 pos(position[0], position[1], position[2]);
-                minBounds = glm::min(minBounds, pos);
-                maxBounds = glm::max(maxBounds, pos);
-                foundPositions = true;
+                const uint8_t *dataPtr = buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
+                for (size_t i = 0; i < accessor.count; ++i)
+                {
+                    const float *position = reinterpret_cast<const float *>(dataPtr + i * stride);
+                    glm::vec3 pos(position[0], position[1], position[2]);
+                    minBounds = glm::min(minBounds, pos);
+                    maxBounds = glm::max(maxBounds, pos);
+                    foundPositions = true;
+                }
             }
+        }
+    }
+    else
+    {
+        foundPositions = computeProceduralBounds(minBounds, maxBounds);
+        if (!foundPositions)
+        {
+            std::cerr << "[Warning] scaleToUnitBox: Unable to compute bounds for procedural model " << name << std::endl;
+            return;
         }
     }
 
@@ -620,6 +628,12 @@ void Model::scaleToUnitBox()
     }
 
     std::cout << "[Debug] Model " << name << " scaled to unit box (scale=" << scale << ")" << std::endl;
+}
+
+void Model::resizeToUnitBox()
+{
+    // Currently identical to scaleToUnitBox but exposed with the requested name
+    scaleToUnitBox();
 }
 
 void Model::translate(const glm::vec3 &offset)
@@ -674,4 +688,27 @@ void Model::applyTransformToPrimitives(const glm::mat4 &transform)
             }
         }
     }
+}
+
+bool Model::computeProceduralBounds(glm::vec3 &minBounds, glm::vec3 &maxBounds) const
+{
+    bool found = false;
+    for (const auto &mesh : meshes)
+    {
+        for (const auto &primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+
+            for (const auto &vertex : primitive->cpuVertices)
+            {
+                minBounds = glm::min(minBounds, vertex.pos);
+                maxBounds = glm::max(maxBounds, vertex.pos);
+                found = true;
+            }
+        }
+    }
+    return found;
 }

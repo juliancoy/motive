@@ -32,6 +32,11 @@ public:
     void handleCursorPos(double xpos, double ypos);
     void handleKey(int key, int scancode, int action, int mods);
     void setWindow(GLFWwindow* window);
+    void setViewport(float centerX, float centerY, float viewportWidth, float viewportHeight);
+    void setFullscreenViewportEnabled(bool enabled, float xPercent = 1.0f, float yPercent = 1.0f);
+    bool isFullscreenViewportEnabled() const;
+    float getFullscreenPercentX() const;
+    float getFullscreenPercentY() const;
 
     // Camera state
     glm::vec3 initialCameraPos;
@@ -83,4 +88,7 @@ private:
     float orthoNear = -1.0f;
     float orthoFar = 1.0f;
     bool controlsEnabled = true;
+    bool fullscreenViewportEnabled = false;
+    float fullscreenPercentX = 1.0f;
+    float fullscreenPercentY = 1.0f;
 };

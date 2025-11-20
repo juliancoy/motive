@@ -76,21 +76,21 @@ def setup_ffmpeg():
         run_command("git clone https://github.com/FFmpeg/FFmpeg.git FFmpeg")
         print("FFmpeg repository cloned.")
 
-    print("Configuring and building FFmpeg (per README instructions)...")
+    print("Configuring and building FFmpeg with static libraries...")
     install_prefix = (ffmpeg_dir / "build").resolve()
     install_prefix.mkdir(parents=True, exist_ok=True)
     configure_cmd = (
         f"./configure --prefix={install_prefix} "
-        "--enable-shared --disable-programs --disable-doc "
-        "--enable-gpl --enable-version3 "
-        "--extra-ldflags='-Wl,-rpath,$ORIGIN'"
+        "--enable-static --disable-shared --enable-pic "
+        "--disable-programs --disable-doc "
+        "--enable-gpl --enable-version3"
     )
     run_command(configure_cmd, cwd=ffmpeg_dir)
 
     make_cmd = f"make -j{os.cpu_count()}"
     run_command(make_cmd, cwd=ffmpeg_dir)
     run_command("make install", cwd=ffmpeg_dir)
-    print(f"FFmpeg built and installed to {install_prefix}")
+    print(f"FFmpeg built and installed to {install_prefix} with static libraries")
 
 def main():
     print("=== Checking and setting up development dependencies ===")
