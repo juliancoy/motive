@@ -8,6 +8,7 @@
 #include <../tinygltf/tiny_gltf.h>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
+#include "object_transform.h"
 
 class Engine;  // Forward declaration
 class Model;  // Forward declaration
@@ -41,6 +42,7 @@ public:
     void updateTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format);
     bool createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive);
     void createIndexBuffer(const std::vector<uint32_t>& indices);
+    ObjectTransform buildObjectTransformData() const;
     Mesh* mesh;
 
     // Vertex data
@@ -55,6 +57,8 @@ public:
     // Transformation data
     glm::mat4 transform;
     glm::vec3 rotation;
+    uint32_t instanceCount = 1;
+    std::array<glm::vec3, kMaxPrimitiveInstances> instanceOffsets{};
     
     // Texture resources
     VkImage textureImage;

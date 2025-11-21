@@ -1100,9 +1100,8 @@ void Display::render()
                         continue;
                     }
                     // Update UBO with object's transform
-                    ObjectTransform perObjectTransformUBO{};
-                    perObjectTransformUBO.model = primitive->transform;
-
+                    ObjectTransform perObjectTransformUBO = primitive->buildObjectTransformData();
+                    uint32_t activeInstanceCount = static_cast<uint32_t>(perObjectTransformUBO.instanceData.x);
                     memcpy(primitive->ObjectTransformUBOMapped, &perObjectTransformUBO, sizeof(perObjectTransformUBO));
 
                     // Bind primitive's texture descriptor set (set 1)
@@ -1119,9 +1118,9 @@ void Display::render()
 
                     if (primitive->indexCount > 0 && primitive->indexBuffer != VK_NULL_HANDLE) {
                         vkCmdBindIndexBuffer(commandBuffer, primitive->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                        vkCmdDrawIndexed(commandBuffer, primitive->indexCount, 1, 0, 0, 0);
+                        vkCmdDrawIndexed(commandBuffer, primitive->indexCount, activeInstanceCount, 0, 0, 0);
                     } else {
-                        vkCmdDraw(commandBuffer, primitive->vertexCount, 1, 0, 0);
+                        vkCmdDraw(commandBuffer, primitive->vertexCount, activeInstanceCount, 0, 0);
                     }
                 }
             }
