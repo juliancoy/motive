@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <algorithm>
 #include <vector>
 #include <chrono>
 #include <glm/glm.hpp>
@@ -153,7 +154,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        primaryCamera->cameraPos = glm::vec3(0.0f, 0.0f, 1.0f);
+        primaryCamera->cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
         if (!std::filesystem::exists(kVideoPath))
         {
             std::cerr << "[Video] Hardcoded path " << kVideoPath << " does not exist." << std::endl;
@@ -190,6 +191,36 @@ int main(int argc, char *argv[])
         }
 
         videoState->videoPrimitive = videoModel->meshes[0].primitives[0].get();
+
+        // Enable instancing so we can render a 4x4 grid of quads with the same video texture.
+        const uint32_t gridDimension = 4;
+        const uint32_t totalInstances = gridDimension * gridDimension;
+        const float longestVideoSide = static_cast<float>(std::max(videoState->decoder.width, videoState->decoder.height));
+        const float normalizedWidth = static_cast<float>(videoState->decoder.width) / longestVideoSide;
+        const float normalizedHeight = static_cast<float>(videoState->decoder.height) / longestVideoSide;
+        const float stackedGap = 0.0f;
+        const float columnSpacing = normalizedWidth + stackedGap;
+        const float rowSpacing = normalizedHeight + stackedGap;
+        const float colCenter = (static_cast<float>(gridDimension) - 1.0f) * 0.5f;
+        const float rowCenter = (static_cast<float>(gridDimension) - 1.0f) * 0.5f;
+
+        videoState->videoPrimitive->instanceCount = totalInstances;
+        videoState->videoPrimitive->instanceOffsets.fill(glm::vec3(0.0f));
+
+        uint32_t instanceIndex = 0;
+        for (uint32_t row = 0; row < gridDimension; ++row)
+        {
+            for (uint32_t col = 0; col < gridDimension; ++col)
+            {
+                if (instanceIndex >= videoState->videoPrimitive->instanceOffsets.size())
+                {
+                    break;
+                }
+                const float xOffset = (static_cast<float>(col) - colCenter) * columnSpacing;
+                const float yOffset = (static_cast<float>(row) - rowCenter) * rowSpacing;
+                videoState->videoPrimitive->instanceOffsets[instanceIndex++] = glm::vec3(xOffset, yOffset, 0.0f);
+            }
+        }
         
         // Create initial texture for video (gray frame)
         std::vector<uint8_t> initialFrame(videoState->decoder.width * videoState->decoder.height * 4, 128);

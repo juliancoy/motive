@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include "object_transform.h"
 
 class Model;  // Forward declaration
 
@@ -22,10 +23,6 @@ class Model;  // Forward declaration
 #include "graphicsdevice.h"
 #include "camera.h"
 #include "light.h"
-
-struct ObjectTransform {
-    glm::mat4 model;
-};
 
 class Engine
 {

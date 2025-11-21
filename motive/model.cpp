@@ -6,6 +6,7 @@
 #include <utility>
 #include <limits>
 #include <cmath>
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
 #include <iostream>
@@ -61,6 +62,10 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
       ObjectTransformUBOMapped(nullptr),
       primitiveDescriptorSet(VK_NULL_HANDLE)
 {
+    instanceOffsets.fill(glm::vec3(0.0f));
+
+    instanceOffsets.fill(glm::vec3(0.0f));
+
     // Create vertex buffer
     cpuVertices = vertices;
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
@@ -380,9 +385,27 @@ Primitive::~Primitive()
 
 void Primitive::updateUniformBuffer(const glm::mat4 &model, const glm::mat4 &view, const glm::mat4 &proj)
 {
-    ObjectTransform thisTransformUBO{};
+    ObjectTransform thisTransformUBO = buildObjectTransformData();
     thisTransformUBO.model = model * transform;
     memcpy(ObjectTransformUBOMapped, &thisTransformUBO, sizeof(thisTransformUBO));
+}
+
+ObjectTransform Primitive::buildObjectTransformData() const
+{
+    ObjectTransform data{};
+    uint32_t count = std::max(1u, instanceCount);
+    data.model = transform;
+    data.instanceData = glm::uvec4(count, 0, 0, 0);
+    for (uint32_t i = 0; i < kMaxPrimitiveInstances; ++i)
+    {
+        glm::vec3 offset = instanceOffsets[i];
+        if (i >= count)
+        {
+            offset = glm::vec3(0.0f);
+        }
+        data.instanceOffsets[i] = glm::vec4(offset, 0.0f);
+    }
+    return data;
 }
 
 void Primitive::updateDescriptorSet()
@@ -614,16 +637,15 @@ void Model::scaleToUnitBox()
     {
         for (auto &primitive : mesh.primitives)
         {
-            if (primitive)
-            {
-                primitive->transform = transform;
-                if (primitive->ObjectTransformUBOMapped)
+                if (primitive)
                 {
-                    ObjectTransform updated{};
-                    updated.model = primitive->transform;
-                    memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+                    primitive->transform = transform;
+                    if (primitive->ObjectTransformUBOMapped)
+                    {
+                        ObjectTransform updated = primitive->buildObjectTransformData();
+                        memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+                    }
                 }
-            }
         }
     }
 
@@ -682,8 +704,7 @@ void Model::applyTransformToPrimitives(const glm::mat4 &transform)
 
             if (primitive->ObjectTransformUBOMapped)
             {
-                ObjectTransform updated{};
-                updated.model = primitive->transform;
+                ObjectTransform updated = primitive->buildObjectTransformData();
                 memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
             }
         }
