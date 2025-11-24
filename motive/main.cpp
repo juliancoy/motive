@@ -291,6 +291,7 @@ int main(int argc, char *argv[])
         videoState->videoPrimitive->setYuvColorMetadata(
             static_cast<uint32_t>(videoState->colorInfo.colorSpace),
             static_cast<uint32_t>(videoState->colorInfo.colorRange));
+        videoState->videoPrimitive->enableTextureDoubleBuffering();
 
         // Enable instancing so we can render a 4x4 grid of quads with the same video texture.
         const uint32_t gridDimension = 4;

@@ -43,6 +43,7 @@ public:
     void updateTextureFromNV12(const uint8_t* nv12Data, size_t dataSize, uint32_t width, uint32_t height);
     void updateChromaPlaneTexture(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height);
     void setYuvColorMetadata(uint32_t colorSpace, uint32_t colorRange);
+    void enableTextureDoubleBuffering();
     bool createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive);
     void createIndexBuffer(const std::vector<uint32_t>& indices);
     ObjectTransform buildObjectTransformData() const;
@@ -67,6 +68,9 @@ public:
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
+    VkImage textureImageInactive = VK_NULL_HANDLE;
+    VkDeviceMemory textureImageMemoryInactive = VK_NULL_HANDLE;
+    VkImageView textureImageViewInactive = VK_NULL_HANDLE;
     VkSampler textureSampler;
     uint32_t textureWidth = 0;
     uint32_t textureHeight = 0;
@@ -74,12 +78,18 @@ public:
     VkImage chromaImage = VK_NULL_HANDLE;
     VkDeviceMemory chromaImageMemory = VK_NULL_HANDLE;
     VkImageView chromaImageView = VK_NULL_HANDLE;
+    VkImage chromaImageInactive = VK_NULL_HANDLE;
+    VkDeviceMemory chromaImageMemoryInactive = VK_NULL_HANDLE;
+    VkImageView chromaImageViewInactive = VK_NULL_HANDLE;
     uint32_t chromaWidth = 0;
     uint32_t chromaHeight = 0;
     VkFormat chromaFormat = VK_FORMAT_UNDEFINED;
     bool usesYuvTexture = false;
     uint32_t yuvColorSpace = 0;
     uint32_t yuvColorRange = 0;
+    bool textureDoubleBuffered = false;
+    bool textureInactiveInitialized = false;
+    bool chromaInactiveInitialized = false;
     // various info
     VkSamplerCreateInfo samplerInfo{};
     VkDescriptorBufferInfo bufferInfo{};
