@@ -86,6 +86,10 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
         throw std::runtime_error("Invalid pixel data for texture creation.");
     }
 
+    usesYuvTexture = false;
+    yuvColorSpace = 0;
+    yuvColorRange = 0;
+
     // Create staging buffer
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
@@ -242,6 +246,10 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
         throw std::runtime_error("Invalid pixel data for texture update.");
     }
 
+    usesYuvTexture = false;
+    yuvColorSpace = 0;
+    yuvColorRange = 0;
+
     const bool needsRecreate = (textureImage == VK_NULL_HANDLE) ||
                                (width != textureWidth) ||
                                (height != textureHeight) ||
@@ -356,6 +364,219 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
 
     vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
     vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
+}
+
+void Primitive::updateTextureFromNV12(const uint8_t* nv12Data, size_t dataSize, uint32_t width, uint32_t height)
+{
+    if (!nv12Data || dataSize == 0 || width == 0 || height == 0)
+    {
+        throw std::runtime_error("Invalid NV12 data for texture update.");
+    }
+
+    const size_t lumaSize = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (dataSize < lumaSize)
+    {
+        throw std::runtime_error("Insufficient NV12 data for Y plane.");
+    }
+
+    const uint32_t chromaWidthLocal = width / 2;
+    const uint32_t chromaHeightLocal = height / 2;
+    if (chromaWidthLocal == 0 || chromaHeightLocal == 0)
+    {
+        throw std::runtime_error("NV12 chroma plane dimensions invalid.");
+    }
+
+    const size_t expectedUvSize = static_cast<size_t>(chromaWidthLocal) * static_cast<size_t>(chromaHeightLocal) * 2;
+    if ((dataSize - lumaSize) < expectedUvSize)
+    {
+        throw std::runtime_error("Insufficient NV12 data for UV plane.");
+    }
+
+    const uint8_t* uvPlane = nv12Data + lumaSize;
+
+    updateTextureFromPixelData(nv12Data, lumaSize, width, height, VK_FORMAT_R8_UNORM);
+    updateChromaPlaneTexture(uvPlane, expectedUvSize, chromaWidthLocal, chromaHeightLocal);
+
+    usesYuvTexture = true;
+    updateDescriptorSet();
+}
+
+void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height)
+{
+    if (!pixelData || dataSize == 0 || width == 0 || height == 0)
+    {
+        throw std::runtime_error("Invalid chroma data for texture update.");
+    }
+
+    const bool needsRecreate = (chromaImage == VK_NULL_HANDLE) ||
+                               (width != chromaWidth) ||
+                               (height != chromaHeight) ||
+                               (chromaFormat != VK_FORMAT_R8G8_UNORM);
+
+    if (needsRecreate)
+    {
+        if (chromaImageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(engine->logicalDevice, chromaImageView, nullptr);
+            chromaImageView = VK_NULL_HANDLE;
+        }
+        if (chromaImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(engine->logicalDevice, chromaImage, nullptr);
+            chromaImage = VK_NULL_HANDLE;
+        }
+        if (chromaImageMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(engine->logicalDevice, chromaImageMemory, nullptr);
+            chromaImageMemory = VK_NULL_HANDLE;
+        }
+
+        VkImageCreateInfo chromaImageInfo{};
+        chromaImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        chromaImageInfo.imageType = VK_IMAGE_TYPE_2D;
+        chromaImageInfo.extent = {width, height, 1};
+        chromaImageInfo.mipLevels = 1;
+        chromaImageInfo.arrayLayers = 1;
+        chromaImageInfo.format = VK_FORMAT_R8G8_UNORM;
+        chromaImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        chromaImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        chromaImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        chromaImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        chromaImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+        if (vkCreateImage(engine->logicalDevice, &chromaImageInfo, nullptr, &chromaImage) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create chroma image.");
+        }
+
+        VkMemoryRequirements memRequirements{};
+        vkGetImageMemoryRequirements(engine->logicalDevice, chromaImage, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = engine->findMemoryType(memRequirements.memoryTypeBits,
+                                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &chromaImageMemory) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to allocate chroma image memory.");
+        }
+
+        vkBindImageMemory(engine->logicalDevice, chromaImage, chromaImageMemory, 0);
+    }
+
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    engine->createBuffer(
+        static_cast<VkDeviceSize>(dataSize),
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer,
+        stagingMemory);
+
+    void* mapped = nullptr;
+    vkMapMemory(engine->logicalDevice, stagingMemory, 0, static_cast<VkDeviceSize>(dataSize), 0, &mapped);
+    memcpy(mapped, pixelData, dataSize);
+    vkUnmapMemory(engine->logicalDevice, stagingMemory);
+
+    VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
+
+    VkImageMemoryBarrier beginBarrier{};
+    beginBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    beginBarrier.oldLayout = needsRecreate ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    beginBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    beginBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    beginBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    beginBarrier.image = chromaImage;
+    beginBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    beginBarrier.subresourceRange.baseMipLevel = 0;
+    beginBarrier.subresourceRange.levelCount = 1;
+    beginBarrier.subresourceRange.baseArrayLayer = 0;
+    beginBarrier.subresourceRange.layerCount = 1;
+    beginBarrier.srcAccessMask = needsRecreate ? 0 : VK_ACCESS_SHADER_READ_BIT;
+    beginBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    vkCmdPipelineBarrier(
+        cmdBuffer,
+        needsRecreate ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &beginBarrier);
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {width, height, 1};
+
+    vkCmdCopyBufferToImage(
+        cmdBuffer,
+        stagingBuffer,
+        chromaImage,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region);
+
+    VkImageMemoryBarrier endBarrier{};
+    endBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    endBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    endBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    endBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    endBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    endBarrier.image = chromaImage;
+    endBarrier.subresourceRange = beginBarrier.subresourceRange;
+    endBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    endBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        cmdBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &endBarrier);
+
+    engine->endSingleTimeCommands(cmdBuffer);
+
+    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
+    vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
+
+    chromaWidth = width;
+    chromaHeight = height;
+    chromaFormat = VK_FORMAT_R8G8_UNORM;
+
+    if (chromaImageView == VK_NULL_HANDLE || needsRecreate)
+    {
+        if (chromaImageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(engine->logicalDevice, chromaImageView, nullptr);
+        }
+
+        VkImageViewCreateInfo chromaViewInfo{};
+        chromaViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        chromaViewInfo.image = chromaImage;
+        chromaViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        chromaViewInfo.format = VK_FORMAT_R8G8_UNORM;
+        chromaViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        chromaViewInfo.subresourceRange.baseMipLevel = 0;
+        chromaViewInfo.subresourceRange.levelCount = 1;
+        chromaViewInfo.subresourceRange.baseArrayLayer = 0;
+        chromaViewInfo.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(engine->logicalDevice, &chromaViewInfo, nullptr, &chromaImageView) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create chroma image view.");
+        }
+    }
 }
 
 bool Primitive::createTextureFromGLTF(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive)

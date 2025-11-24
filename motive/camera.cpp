@@ -143,6 +143,7 @@ void Camera::destroyCameraUBO()
 {
     if (engine && engine->logicalDevice != VK_NULL_HANDLE)
     {
+        vkDeviceWaitIdle(engine->logicalDevice);
         if (cameraTransformUBO != VK_NULL_HANDLE)
         {
             vkDestroyBuffer(engine->logicalDevice, cameraTransformUBO, nullptr);

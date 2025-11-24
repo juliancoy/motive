@@ -26,12 +26,16 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "../tinygltf")),
     os.path.abspath(os.path.join(this_dir, "../glm/glm")),
     os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/include")),
+    os.path.abspath(os.path.join(this_dir, "../freetype/include")),
+    os.path.abspath(os.path.join(this_dir, "../freetype/build/include")),
+    os.path.abspath(os.path.join(this_dir, "../freetype/build/include/freetype2")),
 ]
 ffmpeg_lib_dir = os.path.abspath(os.path.join(this_dir, "../FFmpeg/build/lib"))
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
     os.path.abspath(os.path.join(this_dir, "../glfw/build/src")),
     ffmpeg_lib_dir,
+    os.path.abspath(os.path.join(this_dir, "../freetype/build")),
     os.path.abspath(os.path.join(this_dir, "../")),
 ]
 libraries = [
@@ -43,6 +47,10 @@ libraries = [
     "swscale",
     "avutil",
     "swresample",
+    "freetype",
+    "png",
+    "brotlidec",
+    "brotlicommon",
     "bz2",
     "lzma",
     "drm",

@@ -1,172 +1,108 @@
 #include "glyph.h"
 
+#include "fonts.h"
+
 #include <algorithm>
-#include <array>
 #include <cstdio>
 #include <string>
-#include <string_view>
-#include <unordered_map>
 
 namespace glyph
 {
 namespace
 {
-    constexpr int kGlyphHeight = 7;
-    constexpr int kCharacterSpacing = 1;
-    constexpr int kSpaceWidth = 3;
-    constexpr int kBaseMargin = 8;
-    constexpr int kBasePadding = 4;
+constexpr int kBaseMargin = 8;
+constexpr int kBasePadding = 4;
+constexpr int kBaseFontSize = 16;
 
-    struct GlyphPattern
+uint32_t computePixelScale(uint32_t referenceWidth, uint32_t referenceHeight)
+{
+    int scaleFromWidth = static_cast<int>(referenceWidth / 640);
+    int scaleFromHeight = static_cast<int>(referenceHeight / 360);
+    scaleFromWidth = std::max(1, scaleFromWidth);
+    scaleFromHeight = std::max(1, scaleFromHeight);
+    return static_cast<uint32_t>(std::max(1, std::min(scaleFromWidth, scaleFromHeight)));
+}
+
+void fillBackground(OverlayBitmap &bitmap)
+{
+    bitmap.pixels.assign(static_cast<size_t>(bitmap.width) * bitmap.height * 4, 0);
+    for (uint32_t y = 0; y < bitmap.height; ++y)
     {
-        int width;
-        std::array<std::string_view, kGlyphHeight> rows;
-    };
-
-    const std::unordered_map<char, GlyphPattern> kGlyphPatterns = {
-        {'0', {5, {" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "}}},
-        {'1', {5, {"  #  ", " ##  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "}}},
-        {'2', {5, {" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####"}}},
-        {'3', {5, {"#### ", "    #", "  ## ", "    #", "    #", "#   #", " ### "}}},
-        {'4', {5, {"   # ", "  ## ", " # # ", "#  # ", "#####", "   # ", "   # "}}},
-        {'5', {5, {"#####", "#    ", "#### ", "    #", "    #", "#   #", " ### "}}},
-        {'6', {5, {" ### ", "#   #", "#    ", "#### ", "#   #", "#   #", " ### "}}},
-        {'7', {5, {"#####", "    #", "   # ", "  #  ", " #   ", " #   ", " #   "}}},
-        {'8', {5, {" ### ", "#   #", "#   #", " ### ", "#   #", "#   #", " ### "}}},
-        {'9', {5, {" ### ", "#   #", "#   #", " ####", "    #", "#   #", " ### "}}},
-        {'F', {5, {"#####", "#    ", "###  ", "#    ", "#    ", "#    ", "#    "}}},
-        {'P', {5, {"#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "}}},
-        {'S', {5, {" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "}}},
-        {'A', {5, {" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"}}},
-        {'E', {5, {"#####", "#    ", "###  ", "#    ", "#    ", "#    ", "#####"}}},
-        {'H', {5, {"#   #", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"}}},
-        {'L', {5, {"#    ", "#    ", "#    ", "#    ", "#    ", "#    ", "#####"}}},
-        {'O', {5, {" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "}}},
-        {':', {3, {"   ", " # ", "   ", "   ", " # ", "   ", "   "}}},
-        {'.', {3, {"   ", "   ", "   ", "   ", "   ", " ##", " ##"}}},
-        {'-', {5, {"     ", "     ", "     ", " ### ", "     ", "     ", "     "}}},
-    };
-
-    char normalizeGlyphChar(char c)
-    {
-        if (c >= 'a' && c <= 'z')
+        for (uint32_t x = 0; x < bitmap.width; ++x)
         {
-            return static_cast<char>(c - 32);
-        }
-        return c;
-    }
-
-    int measureTextWidth(const std::string &text)
-    {
-        int width = 0;
-        for (char c : text)
-        {
-            if (c == ' ')
-            {
-                width += kSpaceWidth + kCharacterSpacing;
-                continue;
-            }
-            const char key = normalizeGlyphChar(c);
-            auto it = kGlyphPatterns.find(key);
-            if (it != kGlyphPatterns.end())
-            {
-                width += it->second.width + kCharacterSpacing;
-            }
-            else
-            {
-                width += kSpaceWidth + kCharacterSpacing;
-            }
-        }
-        if (width > 0)
-        {
-            width -= kCharacterSpacing;
-        }
-        return width;
-    }
-
-    void fillOverlayBitmap(const std::string &text,
-                           uint32_t pixelScale,
-                           OverlayBitmap &bitmap)
-    {
-        if (bitmap.width == 0 || bitmap.height == 0)
-        {
-            return;
-        }
-
-        bitmap.pixels.assign(static_cast<size_t>(bitmap.width) * bitmap.height * 4, 0);
-
-        auto setPixel = [&](int px, int py, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-            if (px < 0 || py < 0 || px >= static_cast<int>(bitmap.width) || py >= static_cast<int>(bitmap.height))
-            {
-                return;
-            }
-            const size_t index = (static_cast<size_t>(py) * bitmap.width + static_cast<size_t>(px)) * 4;
-            bitmap.pixels[index + 0] = r;
-            bitmap.pixels[index + 1] = g;
-            bitmap.pixels[index + 2] = b;
-            bitmap.pixels[index + 3] = a;
-        };
-
-        for (uint32_t y = 0; y < bitmap.height; ++y)
-        {
-            for (uint32_t x = 0; x < bitmap.width; ++x)
-            {
-                setPixel(static_cast<int>(x), static_cast<int>(y), 0, 0, 0, 200);
-            }
-        }
-
-        const int scaledPadding = kBasePadding * static_cast<int>(pixelScale);
-        const int scaledCharacterSpacing = kCharacterSpacing * static_cast<int>(pixelScale);
-        const int scaledSpaceWidth = kSpaceWidth * static_cast<int>(pixelScale);
-
-        int penX = scaledPadding;
-        const int penY = scaledPadding;
-        for (char c : text)
-        {
-            if (c == ' ')
-            {
-                penX += scaledSpaceWidth + scaledCharacterSpacing;
-                continue;
-            }
-            const char key = normalizeGlyphChar(c);
-            auto it = kGlyphPatterns.find(key);
-            if (it == kGlyphPatterns.end())
-            {
-                penX += scaledSpaceWidth + scaledCharacterSpacing;
-                continue;
-            }
-            const GlyphPattern &glyph = it->second;
-            for (int row = 0; row < kGlyphHeight; ++row)
-            {
-                const std::string_view pattern = glyph.rows[row];
-                for (int col = 0; col < glyph.width && col < static_cast<int>(pattern.size()); ++col)
-                {
-                    if (pattern[col] != ' ')
-                    {
-                        for (uint32_t sy = 0; sy < pixelScale; ++sy)
-                        {
-                            for (uint32_t sx = 0; sx < pixelScale; ++sx)
-                            {
-                                setPixel(penX + col * static_cast<int>(pixelScale) + static_cast<int>(sx),
-                                         penY + row * static_cast<int>(pixelScale) + static_cast<int>(sy),
-                                         255, 255, 255, 255);
-                            }
-                        }
-                    }
-                }
-            }
-            penX += glyph.width * static_cast<int>(pixelScale) + scaledCharacterSpacing;
-            if (penX >= static_cast<int>(bitmap.width))
-            {
-                break;
-            }
+            const size_t index = (static_cast<size_t>(y) * bitmap.width + x) * 4;
+            bitmap.pixels[index + 0] = 0;
+            bitmap.pixels[index + 1] = 0;
+            bitmap.pixels[index + 2] = 0;
+            bitmap.pixels[index + 3] = 200; // translucent background
         }
     }
+}
+
+void blitText(const fonts::FontBitmap &textBitmap,
+              OverlayBitmap &overlay,
+              uint32_t padding)
+{
+    if (textBitmap.width == 0 || textBitmap.height == 0 || overlay.pixels.empty())
+    {
+        return;
+    }
+
+    const uint32_t startX = std::min(padding, overlay.width);
+    const uint32_t startY = std::min(padding, overlay.height);
+
+    const uint32_t maxCopyWidth = std::min(textBitmap.width, overlay.width > startX ? overlay.width - startX : 0);
+    const uint32_t maxCopyHeight = std::min(textBitmap.height, overlay.height > startY ? overlay.height - startY : 0);
+
+    for (uint32_t row = 0; row < maxCopyHeight; ++row)
+    {
+        for (uint32_t col = 0; col < maxCopyWidth; ++col)
+        {
+            const size_t srcIndex = (static_cast<size_t>(row) * textBitmap.width + col) * 4;
+            const uint8_t alpha = textBitmap.pixels[srcIndex + 3];
+            if (alpha == 0)
+            {
+                continue;
+            }
+
+            const size_t dstIndex = (static_cast<size_t>(row + startY) * overlay.width + (col + startX)) * 4;
+            const uint8_t srcR = textBitmap.pixels[srcIndex + 0];
+            const uint8_t srcG = textBitmap.pixels[srcIndex + 1];
+            const uint8_t srcB = textBitmap.pixels[srcIndex + 2];
+
+            const uint8_t dstR = overlay.pixels[dstIndex + 0];
+            const uint8_t dstG = overlay.pixels[dstIndex + 1];
+            const uint8_t dstB = overlay.pixels[dstIndex + 2];
+            const uint8_t dstA = overlay.pixels[dstIndex + 3];
+
+            const float srcAF = static_cast<float>(alpha) / 255.0f;
+            const float dstAF = static_cast<float>(dstA) / 255.0f;
+            const float outA = srcAF + dstAF * (1.0f - srcAF);
+            if (outA <= 0.0f)
+            {
+                continue;
+            }
+
+            const auto blendChannel = [&](uint8_t srcC, uint8_t dstC) -> uint8_t {
+                const float srcCF = static_cast<float>(srcC) / 255.0f;
+                const float dstCF = static_cast<float>(dstC) / 255.0f;
+                const float outCF = (srcCF * srcAF + dstCF * dstAF * (1.0f - srcAF)) / outA;
+                return static_cast<uint8_t>(std::clamp(outCF * 255.0f, 0.0f, 255.0f));
+            };
+
+            overlay.pixels[dstIndex + 0] = blendChannel(srcR, dstR);
+            overlay.pixels[dstIndex + 1] = blendChannel(srcG, dstG);
+            overlay.pixels[dstIndex + 2] = blendChannel(srcB, dstB);
+            overlay.pixels[dstIndex + 3] = static_cast<uint8_t>(std::clamp(outA * 255.0f, 0.0f, 255.0f));
+        }
+    }
+}
 } // namespace
 
-OverlayBitmap buildFrameRateOverlay(uint32_t referenceWidth,
-                                    uint32_t referenceHeight,
-                                    float fps)
+OverlayBitmap buildLabeledOverlay(uint32_t referenceWidth,
+                                  uint32_t referenceHeight,
+                                  std::string_view label,
+                                  float value)
 {
     OverlayBitmap bitmap{};
     if (referenceWidth == 0 || referenceHeight == 0)
@@ -174,28 +110,32 @@ OverlayBitmap buildFrameRateOverlay(uint32_t referenceWidth,
         return bitmap;
     }
 
-    char text[32];
-    if (fps > 0.0f)
+    char text[64];
+    const std::string labelText = label.empty() ? "" : std::string(label) + " ";
+    if (value > 0.0f)
     {
-        std::snprintf(text, sizeof(text), "FPS %.1f", fps);
+        std::snprintf(text, sizeof(text), "%s%.1f", labelText.c_str(), value);
     }
     else
     {
-        std::snprintf(text, sizeof(text), "FPS ----");
+        std::snprintf(text, sizeof(text), "%s----", labelText.c_str());
     }
 
-    int scaleFromWidth = static_cast<int>(referenceWidth / 640);
-    int scaleFromHeight = static_cast<int>(referenceHeight / 360);
-    scaleFromWidth = std::max(1, scaleFromWidth);
-    scaleFromHeight = std::max(1, scaleFromHeight);
-    const uint32_t pixelScale = static_cast<uint32_t>(std::max(1, std::min(scaleFromWidth, scaleFromHeight)));
+    const uint32_t pixelScale = computePixelScale(referenceWidth, referenceHeight);
+    const uint32_t fontSize = std::max<uint32_t>(kBaseFontSize, kBaseFontSize * pixelScale);
+    const fonts::FontBitmap textBitmap = fonts::renderText(text, fontSize);
+    if (textBitmap.width == 0 || textBitmap.height == 0)
+    {
+        return bitmap;
+    }
 
-    const int textWidth = std::max(0, measureTextWidth(text));
-    const uint32_t overlayWidth = static_cast<uint32_t>(textWidth * static_cast<int>(pixelScale) + kBasePadding * 2 * static_cast<int>(pixelScale));
-    const uint32_t overlayHeight = static_cast<uint32_t>(kGlyphHeight * static_cast<int>(pixelScale) + kBasePadding * 2 * static_cast<int>(pixelScale));
+    const uint32_t padding = static_cast<uint32_t>(kBasePadding * static_cast<int>(pixelScale));
+    const uint32_t desiredWidth = textBitmap.width + padding * 2;
+    const uint32_t desiredHeight = textBitmap.height + padding * 2;
+    bitmap.width = std::min(desiredWidth, referenceWidth);
+    bitmap.height = std::min(desiredHeight, referenceHeight);
 
-    bitmap.width = std::min(overlayWidth, referenceWidth);
-    bitmap.height = std::min(overlayHeight, referenceHeight);
+    fillBackground(bitmap);
 
     const uint32_t scaledMargin = static_cast<uint32_t>(kBaseMargin * static_cast<int>(pixelScale));
     const uint32_t maxOffsetX = referenceWidth > bitmap.width ? referenceWidth - bitmap.width : 0;
@@ -203,8 +143,15 @@ OverlayBitmap buildFrameRateOverlay(uint32_t referenceWidth,
     bitmap.offsetX = std::min(scaledMargin, maxOffsetX);
     bitmap.offsetY = std::min(scaledMargin, maxOffsetY);
 
-    fillOverlayBitmap(text, pixelScale, bitmap);
+    blitText(textBitmap, bitmap, padding);
     return bitmap;
+}
+
+OverlayBitmap buildFrameRateOverlay(uint32_t referenceWidth,
+                                    uint32_t referenceHeight,
+                                    float fps)
+{
+    return buildLabeledOverlay(referenceWidth, referenceHeight, "FPS", fps);
 }
 
 } // namespace glyph
