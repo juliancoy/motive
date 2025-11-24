@@ -92,6 +92,36 @@ def setup_ffmpeg():
     run_command("make install", cwd=ffmpeg_dir)
     print(f"FFmpeg built and installed to {install_prefix} with static libraries")
 
+def setup_freetype():
+    freetype_dir = Path("freetype")
+    if freetype_dir.exists():
+        print("FreeType repository already present, pulling latest changes...")
+        if is_detached_head(freetype_dir):
+            print("FreeType repository is detached; skipping git pull.")
+        else:
+            run_command("git pull", cwd=freetype_dir)
+    else:
+        print("Cloning FreeType repository...")
+        run_command("git clone https://github.com/freetype/freetype.git freetype")
+        print("FreeType repository cloned.")
+
+    build_dir = freetype_dir / "build"
+    install_dir = build_dir / "install"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    install_dir.mkdir(parents=True, exist_ok=True)
+
+    cmake_cmd = (
+        f"cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF "
+        f"-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX={install_dir}"
+    )
+    print("Configuring FreeType...")
+    run_command(cmake_cmd, cwd=build_dir)
+
+    print("Building FreeType...")
+    run_command(f"make -j{os.cpu_count()}", cwd=build_dir)
+    run_command("make install", cwd=build_dir)
+    print(f"FreeType built and installed to {install_dir}")
+
 def main():
     print("=== Checking and setting up development dependencies ===")
     setup_vulkan_headers()
@@ -99,6 +129,7 @@ def main():
     setup_tinygltf()
     setup_glm()
     setup_ffmpeg()
+    setup_freetype()
     print("=== Setup complete ===")
 
 if __name__ == "__main__":

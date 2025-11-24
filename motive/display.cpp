@@ -738,6 +738,8 @@ void Display::destroyOverlayBuffer()
         return;
     }
 
+    vkDeviceWaitIdle(engine->logicalDevice);
+
     if (overlayResources.mapped)
     {
         vkUnmapMemory(engine->logicalDevice, overlayResources.stagingMemory);

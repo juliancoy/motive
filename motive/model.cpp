@@ -368,6 +368,19 @@ Primitive::~Primitive()
         vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
     }
 
+    if (chromaImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, chromaImageView, nullptr);
+    }
+    if (chromaImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, chromaImage, nullptr);
+    }
+    if (chromaImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, chromaImageMemory, nullptr);
+    }
+
     // Destroy sampler
     if (textureSampler != VK_NULL_HANDLE)
     {
@@ -395,7 +408,10 @@ ObjectTransform Primitive::buildObjectTransformData() const
     ObjectTransform data{};
     uint32_t count = std::max(1u, instanceCount);
     data.model = transform;
-    data.instanceData = glm::uvec4(count, 0, 0, 0);
+    data.instanceData = glm::uvec4(count,
+                                   usesYuvTexture ? 1u : 0u,
+                                   yuvColorSpace,
+                                   yuvColorRange);
     for (uint32_t i = 0; i < kMaxPrimitiveInstances; ++i)
     {
         glm::vec3 offset = instanceOffsets[i];
@@ -427,8 +443,14 @@ void Primitive::updateDescriptorSet()
     imageInfo.imageView = textureImageView;
     imageInfo.sampler = textureSampler;
 
+    VkDescriptorImageInfo chromaInfo = imageInfo;
+    if (chromaImageView != VK_NULL_HANDLE)
+    {
+        chromaInfo.imageView = chromaImageView;
+    }
+
     // Fill descriptor writes for UBO and sampler
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+    std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
     // Binding 0: Uniform Buffer Object
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -448,10 +470,25 @@ void Primitive::updateDescriptorSet()
     descriptorWrites[1].descriptorCount = 1;
     descriptorWrites[1].pImageInfo = &imageInfo;
 
+    // Binding 2: Chroma sampler (falls back to base texture when unused)
+    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[2].dstSet = primitiveDescriptorSet;
+    descriptorWrites[2].dstBinding = 2;
+    descriptorWrites[2].dstArrayElement = 0;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[2].descriptorCount = 1;
+    descriptorWrites[2].pImageInfo = &chromaInfo;
+
     vkUpdateDescriptorSets(engine->logicalDevice,
                            static_cast<uint32_t>(descriptorWrites.size()),
                            descriptorWrites.data(),
                            0, nullptr);
+}
+
+void Primitive::setYuvColorMetadata(uint32_t colorSpace, uint32_t colorRange)
+{
+    yuvColorSpace = colorSpace;
+    yuvColorRange = colorRange;
 }
 
 

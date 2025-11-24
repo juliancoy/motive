@@ -515,7 +515,7 @@ void RenderDevice::createLogicalDevice()
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = 100;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = 100;
+    poolSizes[1].descriptorCount = 200;
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -559,15 +559,19 @@ void RenderDevice::createDescriptorSetLayouts()
 
     if (primitiveDescriptorSetLayout == VK_NULL_HANDLE)
     {
-        std::array<VkDescriptorSetLayoutBinding, 2> primitiveBindings{};
+        std::array<VkDescriptorSetLayoutBinding, 3> primitiveBindings{};
         primitiveBindings[0].binding = 0;
         primitiveBindings[0].descriptorCount = 1;
         primitiveBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        primitiveBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        primitiveBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         primitiveBindings[1].binding = 1;
         primitiveBindings[1].descriptorCount = 1;
         primitiveBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         primitiveBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        primitiveBindings[2].binding = 2;
+        primitiveBindings[2].descriptorCount = 1;
+        primitiveBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        primitiveBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo primitiveLayoutInfo{};
         primitiveLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
