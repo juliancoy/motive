@@ -681,6 +681,7 @@ int runVideoPlayback(bool msaaOverride, VkSampleCountFlagBits requestedMsaa)
     auto& primitive = engine->models[0]->meshes[0].primitives[0];
     primitive->setYuvColorMetadata(static_cast<uint32_t>(colorInfo.colorSpace),
                                    static_cast<uint32_t>(colorInfo.colorRange));
+    primitive->enableTextureDoubleBuffering();
     
     // Create initial texture for video using gray NV12 data
     std::vector<uint8_t> initialFrame(static_cast<size_t>(decoder.bufferSize), 128);

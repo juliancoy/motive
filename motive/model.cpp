@@ -56,6 +56,9 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
       textureImage(VK_NULL_HANDLE),
       textureImageMemory(VK_NULL_HANDLE),
       textureImageView(VK_NULL_HANDLE),
+      textureImageInactive(VK_NULL_HANDLE),
+      textureImageMemoryInactive(VK_NULL_HANDLE),
+      textureImageViewInactive(VK_NULL_HANDLE),
       textureSampler(VK_NULL_HANDLE),
       ObjectTransformUBO(VK_NULL_HANDLE),
       ObjectTransformUBOBufferMemory(VK_NULL_HANDLE),
@@ -133,6 +136,9 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
       textureImage(VK_NULL_HANDLE),
       textureImageMemory(VK_NULL_HANDLE),
       textureImageView(VK_NULL_HANDLE),
+      textureImageInactive(VK_NULL_HANDLE),
+      textureImageMemoryInactive(VK_NULL_HANDLE),
+      textureImageViewInactive(VK_NULL_HANDLE),
       textureSampler(VK_NULL_HANDLE),
       ObjectTransformUBO(VK_NULL_HANDLE),
       ObjectTransformUBOBufferMemory(VK_NULL_HANDLE),
@@ -367,6 +373,18 @@ Primitive::~Primitive()
     {
         vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
     }
+    if (textureImageViewInactive != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, textureImageViewInactive, nullptr);
+    }
+    if (textureImageInactive != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, textureImageInactive, nullptr);
+    }
+    if (textureImageMemoryInactive != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, textureImageMemoryInactive, nullptr);
+    }
 
     if (chromaImageView != VK_NULL_HANDLE)
     {
@@ -379,6 +397,18 @@ Primitive::~Primitive()
     if (chromaImageMemory != VK_NULL_HANDLE)
     {
         vkFreeMemory(engine->logicalDevice, chromaImageMemory, nullptr);
+    }
+    if (chromaImageViewInactive != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, chromaImageViewInactive, nullptr);
+    }
+    if (chromaImageInactive != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, chromaImageInactive, nullptr);
+    }
+    if (chromaImageMemoryInactive != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, chromaImageMemoryInactive, nullptr);
     }
 
     // Destroy sampler
@@ -489,6 +519,11 @@ void Primitive::setYuvColorMetadata(uint32_t colorSpace, uint32_t colorRange)
 {
     yuvColorSpace = colorSpace;
     yuvColorRange = colorRange;
+}
+
+void Primitive::enableTextureDoubleBuffering()
+{
+    textureDoubleBuffered = true;
 }
 
 

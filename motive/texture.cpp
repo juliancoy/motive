@@ -2,6 +2,233 @@
 #include "texture.h"
 #include "engine.h"
 #include "model.h"
+#include <stdexcept>
+
+namespace
+{
+void destroyImageResources(VkDevice device, VkImage &image, VkDeviceMemory &memory, VkImageView &view)
+{
+    if (view != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device, view, nullptr);
+        view = VK_NULL_HANDLE;
+    }
+    if (image != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device, image, nullptr);
+        image = VK_NULL_HANDLE;
+    }
+    if (memory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+    }
+}
+
+void createImageResources(Primitive *primitive,
+                          uint32_t width,
+                          uint32_t height,
+                          VkFormat format,
+                          VkImage &outImage,
+                          VkDeviceMemory &outMemory)
+{
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    if (vkCreateImage(primitive->engine->logicalDevice, &imageInfo, nullptr, &outImage) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create image.");
+    }
+
+    VkMemoryRequirements memRequirements{};
+    vkGetImageMemoryRequirements(primitive->engine->logicalDevice, outImage, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = primitive->engine->findMemoryType(
+        memRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    if (vkAllocateMemory(primitive->engine->logicalDevice, &allocInfo, nullptr, &outMemory) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to allocate image memory.");
+    }
+
+    vkBindImageMemory(primitive->engine->logicalDevice, outImage, outMemory, 0);
+}
+
+VkImageView createImageView(Primitive *primitive, VkImage image, VkFormat format)
+{
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    VkImageView imageView = VK_NULL_HANDLE;
+    if (vkCreateImageView(primitive->engine->logicalDevice, &viewInfo, nullptr, &imageView) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create image view.");
+    }
+    return imageView;
+}
+
+void copyBufferToImage(Primitive *primitive,
+                       VkBuffer stagingBuffer,
+                       VkImage targetImage,
+                       VkImageLayout oldLayout,
+                       uint32_t width,
+                       uint32_t height)
+{
+    VkCommandBuffer cmdBuffer = primitive->engine->beginSingleTimeCommands();
+
+    VkImageMemoryBarrier beginBarrier{};
+    beginBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    beginBarrier.oldLayout = oldLayout;
+    beginBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    beginBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    beginBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    beginBarrier.image = targetImage;
+    beginBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    beginBarrier.subresourceRange.baseMipLevel = 0;
+    beginBarrier.subresourceRange.levelCount = 1;
+    beginBarrier.subresourceRange.baseArrayLayer = 0;
+    beginBarrier.subresourceRange.layerCount = 1;
+    beginBarrier.srcAccessMask = (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) ? 0 : VK_ACCESS_SHADER_READ_BIT;
+    beginBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    vkCmdPipelineBarrier(
+        cmdBuffer,
+        (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &beginBarrier);
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {width, height, 1};
+
+    vkCmdCopyBufferToImage(
+        cmdBuffer,
+        stagingBuffer,
+        targetImage,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region);
+
+    VkImageMemoryBarrier endBarrier{};
+    endBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    endBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    endBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    endBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    endBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    endBarrier.image = targetImage;
+    endBarrier.subresourceRange = beginBarrier.subresourceRange;
+    endBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    endBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        cmdBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &endBarrier);
+
+    primitive->engine->endSingleTimeCommands(cmdBuffer);
+}
+
+void ensureInactiveTextureResources(Primitive *primitive, uint32_t width, uint32_t height, VkFormat format)
+{
+    if (!primitive->textureDoubleBuffered)
+    {
+        return;
+    }
+
+    if (primitive->textureImageInactive != VK_NULL_HANDLE &&
+        primitive->textureWidth == width &&
+        primitive->textureHeight == height &&
+        primitive->textureFormat == format)
+    {
+        return;
+    }
+
+    destroyImageResources(primitive->engine->logicalDevice,
+                          primitive->textureImageInactive,
+                          primitive->textureImageMemoryInactive,
+                          primitive->textureImageViewInactive);
+    primitive->textureInactiveInitialized = false;
+
+    if (width == 0 || height == 0 || format == VK_FORMAT_UNDEFINED)
+    {
+        return;
+    }
+
+    createImageResources(primitive, width, height, format,
+                         primitive->textureImageInactive,
+                         primitive->textureImageMemoryInactive);
+    primitive->textureImageViewInactive = createImageView(primitive, primitive->textureImageInactive, format);
+}
+
+void ensureInactiveChromaResources(Primitive *primitive, uint32_t width, uint32_t height)
+{
+    if (!primitive->textureDoubleBuffered)
+    {
+        return;
+    }
+
+    if (primitive->chromaImageInactive != VK_NULL_HANDLE &&
+        primitive->chromaWidth == width &&
+        primitive->chromaHeight == height)
+    {
+        return;
+    }
+
+    destroyImageResources(primitive->engine->logicalDevice,
+                          primitive->chromaImageInactive,
+                          primitive->chromaImageMemoryInactive,
+                          primitive->chromaImageViewInactive);
+    primitive->chromaInactiveInitialized = false;
+
+    if (width == 0 || height == 0)
+    {
+        return;
+    }
+
+    createImageResources(primitive, width, height, VK_FORMAT_R8G8_UNORM,
+                         primitive->chromaImageInactive,
+                         primitive->chromaImageMemoryInactive);
+    primitive->chromaImageViewInactive = createImageView(primitive, primitive->chromaImageInactive, VK_FORMAT_R8G8_UNORM);
+}
+} // namespace
 
 Material::Material(Engine* engine, Model* model, Primitive* primitive, tinygltf::Material /*tmaterial*/){
     
@@ -230,6 +457,16 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
 
     engine->endSingleTimeCommands(cmdBuffer);
 
+    if (textureDoubleBuffered)
+    {
+        ensureInactiveTextureResources(this, width, height, format);
+        if (textureImageInactive != VK_NULL_HANDLE)
+        {
+            copyBufferToImage(this, stagingBuffer, textureImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height);
+            textureInactiveInitialized = true;
+        }
+    }
+
     textureWidth = width;
     textureHeight = height;
     textureFormat = format;
@@ -295,72 +532,25 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
     memcpy(mapped, pixelData, dataSize);
     vkUnmapMemory(engine->logicalDevice, stagingMemory);
 
-    VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
+    VkImage targetImage = textureDoubleBuffered ? textureImageInactive : textureImage;
+    VkImageLayout oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkImageMemoryBarrier beginBarrier{};
-    beginBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    beginBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    beginBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    beginBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    beginBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    beginBarrier.image = textureImage;
-    beginBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    beginBarrier.subresourceRange.baseMipLevel = 0;
-    beginBarrier.subresourceRange.levelCount = 1;
-    beginBarrier.subresourceRange.baseArrayLayer = 0;
-    beginBarrier.subresourceRange.layerCount = 1;
-    beginBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    beginBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    if (textureDoubleBuffered)
+    {
+        ensureInactiveTextureResources(this, width, height, format);
+        oldLayout = textureInactiveInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    }
 
-    vkCmdPipelineBarrier(
-        cmdBuffer,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &beginBarrier);
+    copyBufferToImage(this, stagingBuffer, targetImage, oldLayout, width, height);
 
-    VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {textureWidth, textureHeight, 1};
-
-    vkCmdCopyBufferToImage(
-        cmdBuffer,
-        stagingBuffer,
-        textureImage,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &region);
-
-    VkImageMemoryBarrier endBarrier{};
-    endBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    endBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    endBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    endBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    endBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    endBarrier.image = textureImage;
-    endBarrier.subresourceRange = beginBarrier.subresourceRange;
-    endBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    endBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(
-        cmdBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &endBarrier);
-
-    engine->endSingleTimeCommands(cmdBuffer);
+    if (textureDoubleBuffered)
+    {
+        textureInactiveInitialized = true;
+        std::swap(textureImage, textureImageInactive);
+        std::swap(textureImageMemory, textureImageMemoryInactive);
+        std::swap(textureImageView, textureImageViewInactive);
+        updateDescriptorSet();
+    }
 
     vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
     vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
@@ -480,72 +670,42 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize,
     memcpy(mapped, pixelData, dataSize);
     vkUnmapMemory(engine->logicalDevice, stagingMemory);
 
-    VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
+    if (needsRecreate)
+    {
+        copyBufferToImage(this, stagingBuffer, chromaImage, VK_IMAGE_LAYOUT_UNDEFINED, width, height);
+        if (textureDoubleBuffered)
+        {
+            ensureInactiveChromaResources(this, width, height);
+            if (chromaImageInactive != VK_NULL_HANDLE)
+            {
+                copyBufferToImage(this, stagingBuffer, chromaImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height);
+                chromaInactiveInitialized = true;
+            }
+        }
+    }
+    else
+    {
+        VkImage targetChromaImage = textureDoubleBuffered ? chromaImageInactive : chromaImage;
+        VkImageLayout chromaOldLayout = textureDoubleBuffered
+                                            ? (chromaInactiveInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED)
+                                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkImageMemoryBarrier beginBarrier{};
-    beginBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    beginBarrier.oldLayout = needsRecreate ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    beginBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    beginBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    beginBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    beginBarrier.image = chromaImage;
-    beginBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    beginBarrier.subresourceRange.baseMipLevel = 0;
-    beginBarrier.subresourceRange.levelCount = 1;
-    beginBarrier.subresourceRange.baseArrayLayer = 0;
-    beginBarrier.subresourceRange.layerCount = 1;
-    beginBarrier.srcAccessMask = needsRecreate ? 0 : VK_ACCESS_SHADER_READ_BIT;
-    beginBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        if (textureDoubleBuffered)
+        {
+            ensureInactiveChromaResources(this, width, height);
+        }
 
-    vkCmdPipelineBarrier(
-        cmdBuffer,
-        needsRecreate ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &beginBarrier);
+        copyBufferToImage(this, stagingBuffer, targetChromaImage, chromaOldLayout, width, height);
 
-    VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {width, height, 1};
-
-    vkCmdCopyBufferToImage(
-        cmdBuffer,
-        stagingBuffer,
-        chromaImage,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &region);
-
-    VkImageMemoryBarrier endBarrier{};
-    endBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    endBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    endBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    endBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    endBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    endBarrier.image = chromaImage;
-    endBarrier.subresourceRange = beginBarrier.subresourceRange;
-    endBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    endBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(
-        cmdBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &endBarrier);
-
-    engine->endSingleTimeCommands(cmdBuffer);
+        if (textureDoubleBuffered)
+        {
+            chromaInactiveInitialized = true;
+            std::swap(chromaImage, chromaImageInactive);
+            std::swap(chromaImageMemory, chromaImageMemoryInactive);
+            std::swap(chromaImageView, chromaImageViewInactive);
+            updateDescriptorSet();
+        }
+    }
 
     vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
     vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
