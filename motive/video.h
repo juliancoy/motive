@@ -20,22 +20,34 @@ struct OverlayBitmap;
 extern "C" {
 struct AVFormatContext;
 struct AVCodecContext;
-struct SwsContext;
 struct AVFrame;
 struct AVPacket;
+struct AVBufferRef;
+#include <libavutil/pixfmt.h>
+#include <libavutil/hwcontext.h>
 }
 
-#include <libavutil/pixfmt.h>
-
 namespace video {
+
+enum class DecodeImplementation {
+    Software = 0,
+    Vulkan = 1
+};
+
+struct DecodedFrame;
+
+struct DecoderInitParams {
+    DecodeImplementation implementation = DecodeImplementation::Software;
+};
 
 struct VideoDecoder {
     AVFormatContext* formatCtx = nullptr;
     AVCodecContext* codecCtx = nullptr;
-    SwsContext* swsCtx = nullptr;
     AVFrame* frame = nullptr;
-    AVFrame* nv12Frame = nullptr;
+    AVFrame* swFrame = nullptr;
     AVPacket* packet = nullptr;
+    AVBufferRef* hwDeviceCtx = nullptr;
+    AVBufferRef* hwFramesCtx = nullptr;
     int videoStreamIndex = -1;
     int width = 0;
     int height = 0;
@@ -47,11 +59,31 @@ struct VideoDecoder {
     double fps = 30.0;
     bool draining = false;
     std::atomic<bool> finished{false};
+    DecodeImplementation implementation = DecodeImplementation::Software;
+    AVHWDeviceType hwDeviceType = AV_HWDEVICE_TYPE_NONE;
+    AVPixelFormat hwPixelFormat = AV_PIX_FMT_NONE;
+    AVPixelFormat sourcePixelFormat = AV_PIX_FMT_NONE;
+    AVPixelFormat requestedSwPixelFormat = AV_PIX_FMT_NONE;
+    std::string implementationName = "Software";
+    PrimitiveYuvFormat outputFormat = PrimitiveYuvFormat::NV12;
+    bool planarYuv = false;
+    bool chromaInterleaved = false;
+    uint32_t chromaDivX = 2;
+    uint32_t chromaDivY = 2;
+    uint32_t chromaWidth = 0;
+    uint32_t chromaHeight = 0;
+    size_t bytesPerComponent = 1;
+    uint32_t bitDepth = 8;
+    size_t yPlaneBytes = 0;
+    size_t uvPlaneBytes = 0;
     // Async decoding
     std::thread decodeThread;
     std::mutex frameMutex;
     std::condition_variable frameCond;
-    std::deque<std::vector<uint8_t>> frameQueue;
+    AVRational streamTimeBase{1, 1};
+    double fallbackPtsSeconds = 0.0;
+    uint64_t framesDecoded = 0;
+    std::deque<DecodedFrame> frameQueue;
     size_t maxBufferedFrames = 12;
     bool asyncDecoding = false;
     std::atomic<bool> stopRequested{false};
@@ -59,12 +91,20 @@ struct VideoDecoder {
 };
 
 std::optional<std::filesystem::path> locateVideoFile(const std::string& filename);
-bool initializeVideoDecoder(const std::filesystem::path& videoPath, VideoDecoder& decoder);
-bool decodeNextFrame(VideoDecoder& decoder, std::vector<uint8_t>& rgbaBuffer);
+bool initializeVideoDecoder(const std::filesystem::path& videoPath,
+                            VideoDecoder& decoder,
+                            const DecoderInitParams& initParams = DecoderInitParams{});
+struct DecodedFrame {
+    std::vector<uint8_t> buffer;
+    double ptsSeconds = 0.0;
+};
+
+bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame);
 bool startAsyncDecoding(VideoDecoder& decoder, size_t maxBufferedFrames = 12);
-bool acquireDecodedFrame(VideoDecoder& decoder, std::vector<uint8_t>& rgbaBuffer);
+bool acquireDecodedFrame(VideoDecoder& decoder, DecodedFrame& outFrame);
 void stopAsyncDecoding(VideoDecoder& decoder);
 void cleanupVideoDecoder(VideoDecoder& decoder);
+std::vector<std::string> listAvailableHardwareDevices();
 enum class VideoColorSpace : uint32_t {
     BT601 = 0,
     BT709 = 1,
@@ -105,6 +145,9 @@ void applyNv12Overlay(std::vector<uint8_t>& nv12Buffer,
                       uint32_t frameWidth,
                       uint32_t frameHeight,
                       const Nv12Overlay& overlay);
+void applyOverlayToDecodedFrame(std::vector<uint8_t>& buffer,
+                                const VideoDecoder& decoder,
+                                const Nv12Overlay& overlay);
 std::vector<Vertex> buildVideoQuadVertices(float width, float height);
 
 } // namespace video

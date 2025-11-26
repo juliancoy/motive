@@ -34,10 +34,11 @@ void Display::createCommandPool()
 }
 
 
-Display::Display(Engine* engine, int width, int height, const char* title){
+Display::Display(Engine* engine, int width, int height, const char* title, bool disableCulling){
     this->engine = engine;
     this->width = width;
     this->height = height;
+    this->cullingDisabled = disableCulling;
     fpsLastSampleTime = std::chrono::steady_clock::now();
     currentFps = 0.0f;
     fpsFrameCounter = 0;
@@ -1101,6 +1102,7 @@ void Display::render()
                         std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to unmapped transform buffer." << std::endl;
                         continue;
                     }
+                    primitive->uploadInstanceTransforms();
                     // Update UBO with object's transform
                     ObjectTransform perObjectTransformUBO = primitive->buildObjectTransformData();
                     uint32_t activeInstanceCount = static_cast<uint32_t>(perObjectTransformUBO.instanceData.x);
@@ -1272,8 +1274,7 @@ void Display::createGraphicsPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    // rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.cullMode = cullingDisabled ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 

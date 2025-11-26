@@ -9,8 +9,8 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 1, binding = 0) uniform ObjectUBO {
     mat4 model;
-    vec4 instanceOffsets[16];
     uvec4 instanceData;
+    uvec4 yuvParams;
 } objectUBO;
 
 layout(set = 1, binding = 1) uniform sampler2D texSampler;
@@ -64,7 +64,8 @@ void main() {
     vec3 lighting = lightUBO.ambient.xyz + diff * lightUBO.diffuse.xyz;
     
     vec4 sampledColor = texture(texSampler, fragTexCoord);
-    if (objectUBO.instanceData.y != 0u) {
+    const uint yuvFormat = objectUBO.instanceData.y;
+    if (yuvFormat != 0u) {
         const uint colorSpace = objectUBO.instanceData.z;
         const uint colorRange = objectUBO.instanceData.w;
         float ySample = convertLuma(sampledColor.r, colorRange);
