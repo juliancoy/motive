@@ -314,6 +314,10 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
     }
 
     usesYuvTexture = false;
+    yuvTextureFormat = PrimitiveYuvFormat::None;
+    yuvChromaDivX = 1;
+    yuvChromaDivY = 1;
+    yuvBitDepth = 8;
     yuvColorSpace = 0;
     yuvColorRange = 0;
 
@@ -585,13 +589,53 @@ void Primitive::updateTextureFromNV12(const uint8_t* nv12Data, size_t dataSize, 
     const uint8_t* uvPlane = nv12Data + lumaSize;
 
     updateTextureFromPixelData(nv12Data, lumaSize, width, height, VK_FORMAT_R8_UNORM);
-    updateChromaPlaneTexture(uvPlane, expectedUvSize, chromaWidthLocal, chromaHeightLocal);
+    updateChromaPlaneTexture(uvPlane, expectedUvSize, chromaWidthLocal, chromaHeightLocal, VK_FORMAT_R8G8_UNORM);
 
     usesYuvTexture = true;
+    yuvTextureFormat = PrimitiveYuvFormat::NV12;
+    yuvChromaDivX = 2;
+    yuvChromaDivY = 2;
+    yuvBitDepth = 8;
     updateDescriptorSet();
 }
 
-void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height)
+void Primitive::updateTextureFromPlanarYuv(const uint8_t* yPlane,
+                                           size_t yPlaneBytes,
+                                           uint32_t width,
+                                           uint32_t height,
+                                           const uint8_t* uvPlane,
+                                           size_t uvPlaneBytes,
+                                           uint32_t chromaWidthLocal,
+                                           uint32_t chromaHeightLocal,
+                                           bool sixteenBit,
+                                           PrimitiveYuvFormat formatTag)
+{
+    if (!yPlane || !uvPlane || yPlaneBytes == 0 || uvPlaneBytes == 0 || width == 0 || height == 0)
+    {
+        throw std::runtime_error("Invalid planar YUV data for texture update.");
+    }
+
+    const VkFormat lumaFormat = sixteenBit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+    const VkFormat chromaFormatLocal = sixteenBit ? VK_FORMAT_R16G16_UNORM : VK_FORMAT_R8G8_UNORM;
+
+    updateTextureFromPixelData(yPlane, yPlaneBytes, width, height, lumaFormat);
+    updateChromaPlaneTexture(uvPlane, uvPlaneBytes, chromaWidthLocal, chromaHeightLocal, chromaFormatLocal);
+
+    usesYuvTexture = true;
+    yuvTextureFormat = formatTag;
+    const uint32_t divX = chromaWidthLocal > 0 ? std::max(1u, width / chromaWidthLocal) : 1u;
+    const uint32_t divY = chromaHeightLocal > 0 ? std::max(1u, height / chromaHeightLocal) : 1u;
+    yuvChromaDivX = divX;
+    yuvChromaDivY = divY;
+    yuvBitDepth = sixteenBit ? 16u : 8u;
+    updateDescriptorSet();
+}
+
+void Primitive::updateChromaPlaneTexture(const void* pixelData,
+                                         size_t dataSize,
+                                         uint32_t width,
+                                         uint32_t height,
+                                         VkFormat format)
 {
     if (!pixelData || dataSize == 0 || width == 0 || height == 0)
     {
@@ -601,7 +645,7 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize,
     const bool needsRecreate = (chromaImage == VK_NULL_HANDLE) ||
                                (width != chromaWidth) ||
                                (height != chromaHeight) ||
-                               (chromaFormat != VK_FORMAT_R8G8_UNORM);
+                               (chromaFormat != format);
 
     if (needsRecreate)
     {
@@ -627,7 +671,7 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize,
         chromaImageInfo.extent = {width, height, 1};
         chromaImageInfo.mipLevels = 1;
         chromaImageInfo.arrayLayers = 1;
-        chromaImageInfo.format = VK_FORMAT_R8G8_UNORM;
+        chromaImageInfo.format = format;
         chromaImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         chromaImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         chromaImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -712,7 +756,7 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize,
 
     chromaWidth = width;
     chromaHeight = height;
-    chromaFormat = VK_FORMAT_R8G8_UNORM;
+    chromaFormat = format;
 
     if (chromaImageView == VK_NULL_HANDLE || needsRecreate)
     {
@@ -725,7 +769,7 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData, size_t dataSize,
         chromaViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         chromaViewInfo.image = chromaImage;
         chromaViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        chromaViewInfo.format = VK_FORMAT_R8G8_UNORM;
+        chromaViewInfo.format = format;
         chromaViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         chromaViewInfo.subresourceRange.baseMipLevel = 0;
         chromaViewInfo.subresourceRange.levelCount = 1;

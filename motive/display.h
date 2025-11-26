@@ -17,7 +17,7 @@ class Camera;
 class Display
 {
 public:
-    Display(Engine* engine, int width = 800, int height = 600, const char* title = "Motive");
+    Display(Engine* engine, int width = 800, int height = 600, const char* title = "Motive", bool disableCulling = false);
     ~Display();
     void createSwapchain();
     void createWindow(const char *title);
@@ -81,6 +81,7 @@ public:
     int height;
     bool framebufferResized = false;
     float currentFps = 0.0f;
+    bool cullingDisabled = false;
 
     // Camera instance
     std::vector<Camera*> cameras;

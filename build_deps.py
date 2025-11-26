@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def pkg_config_exists(package):
+    """Return True if pkg-config can resolve the requested package."""
+    result = subprocess.run(
+        ["pkg-config", "--exists", package],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
 
 def run_command(cmd, cwd=None):
     try:
@@ -63,6 +75,80 @@ def setup_glm():
     ensure_exists_or_exit("glm")
     print("GLM found (header-only library, no build required)")
 
+def setup_ffnvcodec():
+    install_dir = Path("/usr/include/ffnvcodec")
+    if install_dir.exists():
+        print("nv-codec-headers already installed in /usr/include/ffnvcodec; skipping.")
+        return
+    repo_dir = Path("nv-codec-headers")
+    if not repo_dir.exists():
+        print("Cloning nv-codec-headers...")
+        run_command("git clone https://github.com/FFmpeg/nv-codec-headers.git nv-codec-headers")
+    print("Building nv-codec-headers...")
+    run_command("make", cwd=repo_dir)
+    print("Installing nv-codec-headers (requires sudo)...")
+    run_command("sudo make install", cwd=repo_dir)
+
+def cuda_available():
+    """Simple detection for CUDA toolkit availability."""
+    if shutil.which("nvcc"):
+        return True
+    cuda_env = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    if cuda_env and Path(cuda_env).exists():
+        return True
+    default_path = Path("/usr/local/cuda")
+    return default_path.exists()
+
+
+def ffnvcodec_available():
+    """Detect whether the NVIDIA ffnvcodec headers are installed."""
+    custom_path = os.environ.get("FFNV_CODEC_INCLUDE")
+    candidates = []
+    if custom_path:
+        candidates.append(Path(custom_path))
+    candidates.extend(
+        [
+            Path("/usr/include/ffnvcodec"),
+            Path("/usr/local/include/ffnvcodec"),
+            Path.home() / ".local/include/ffnvcodec",
+        ]
+    )
+
+    for directory in candidates:
+        if (directory / "nvEncodeAPI.h").exists() or (directory / "nvDecodeAPI.h").exists():
+            return True
+    return False
+
+
+def determine_hwaccel_flags():
+    """Return configure flags for FFmpeg hardware decode features the system supports."""
+    pkg_features = [
+        ("--enable-libdrm", ["libdrm"], "libdrm"),
+        ("--enable-vaapi", ["libva"], "VAAPI"),
+        ("--enable-vdpau", ["vdpau"], "VDPAU"),
+        ("--enable-vulkan", ["vulkan"], "Vulkan"),
+        ("--enable-opencl", ["OpenCL"], "OpenCL"),
+    ]
+    enabled = []
+    skipped = []
+    flags = []
+
+    for flag, packages, description in pkg_features:
+        if all(pkg_config_exists(pkg) for pkg in packages):
+            flags.append(flag)
+            enabled.append(description)
+        else:
+            skipped.append(description)
+
+    cuda_flags = ["--enable-cuda", "--enable-cuvid", "--enable-nvdec", "--enable-nvenc"]
+    if cuda_available() and ffnvcodec_available():
+        flags.extend(cuda_flags)
+        enabled.append("CUDA/NVDEC")
+    else:
+        skipped.append("CUDA/NVDEC (requires CUDA toolkit + ffnvcodec headers)")
+
+    return {"flags": flags, "enabled_descriptions": enabled, "skipped_descriptions": skipped}
+
 def setup_ffmpeg():
     ffmpeg_dir = Path("FFmpeg")
     if ffmpeg_dir.exists():
@@ -77,19 +163,29 @@ def setup_ffmpeg():
         print("FFmpeg repository cloned.")
 
     print("Configuring and building FFmpeg with static libraries...")
-    install_prefix = (ffmpeg_dir / "build").resolve()
+    build_dir = ffmpeg_dir / ".build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    install_prefix = (ffmpeg_dir / ".ffmpeg").resolve()
     install_prefix.mkdir(parents=True, exist_ok=True)
+    hwaccel_options = determine_hwaccel_flags()
+    if hwaccel_options["flags"]:
+        print("Enabling FFmpeg hardware decode features:", ", ".join(hwaccel_options["enabled_descriptions"]))
+    else:
+        print("No optional FFmpeg hardware decode features detected.")
+    if hwaccel_options["skipped_descriptions"]:
+        print("Skipping unavailable hardware features:", ", ".join(hwaccel_options["skipped_descriptions"]))
     configure_cmd = (
-        f"./configure --prefix={install_prefix} "
+        f"../configure --prefix={install_prefix} "
         "--enable-static --disable-shared --enable-pic "
         "--disable-programs --disable-doc "
-        "--enable-gpl --enable-version3"
+        "--enable-gpl --enable-version3 "
+        + " ".join(hwaccel_options.get("flags", []))
     )
-    run_command(configure_cmd, cwd=ffmpeg_dir)
+    run_command(configure_cmd, cwd=build_dir)
 
     make_cmd = f"make -j{os.cpu_count()}"
-    run_command(make_cmd, cwd=ffmpeg_dir)
-    run_command("make install", cwd=ffmpeg_dir)
+    run_command(make_cmd, cwd=build_dir)
+    run_command("make install", cwd=build_dir)
     print(f"FFmpeg built and installed to {install_prefix} with static libraries")
 
 def setup_freetype():
@@ -128,6 +224,7 @@ def main():
     setup_glfw()
     setup_tinygltf()
     setup_glm()
+    setup_ffnvcodec()
     setup_ffmpeg()
     setup_freetype()
     print("=== Setup complete ===")

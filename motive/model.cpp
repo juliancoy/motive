@@ -9,7 +9,17 @@
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
+#include <cstring>
 #include <iostream>
+
+namespace
+{
+struct InstanceGpuData
+{
+    glm::vec4 offset = glm::vec4(0.0f);
+    glm::vec4 rotation = glm::vec4(0.0f);
+};
+}
 
 VkVertexInputBindingDescription Vertex::getBindingDescription()
 {
@@ -66,8 +76,7 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
       primitiveDescriptorSet(VK_NULL_HANDLE)
 {
     instanceOffsets.fill(glm::vec3(0.0f));
-
-    instanceOffsets.fill(glm::vec3(0.0f));
+    instanceRotations.fill(glm::vec4(0.0f));
 
     // Create vertex buffer
     cpuVertices = vertices;
@@ -119,6 +128,16 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
 
     vkMapMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory, 0, ObjectTransformUBOSize, 0, &ObjectTransformUBOMapped);
 
+    instanceDataBufferSize = sizeof(InstanceGpuData) * kMaxPrimitiveInstances;
+    engine->createBuffer(
+        instanceDataBufferSize,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        instanceDataBuffer,
+        instanceDataBufferMemory);
+    vkMapMemory(engine->logicalDevice, instanceDataBufferMemory, 0, instanceDataBufferSize, 0, &instanceDataBufferMapped);
+    std::memset(instanceDataBufferMapped, 0, static_cast<size_t>(instanceDataBufferSize));
+
     createTextureResources();
 }
 
@@ -145,6 +164,8 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
       ObjectTransformUBOMapped(nullptr),
       primitiveDescriptorSet(VK_NULL_HANDLE)
 {
+    instanceOffsets.fill(glm::vec3(0.0f));
+    instanceRotations.fill(glm::vec4(0.0f));
     // Initialize variables from tinygltf primitive
     if (tprimitive.attributes.count("POSITION") == 0 ||
         tprimitive.attributes.count("NORMAL") == 0 ||
@@ -281,6 +302,16 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
 
     vkMapMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory, 0, uboSize, 0, &ObjectTransformUBOMapped);
 
+    instanceDataBufferSize = sizeof(InstanceGpuData) * kMaxPrimitiveInstances;
+    engine->createBuffer(
+        instanceDataBufferSize,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        instanceDataBuffer,
+        instanceDataBufferMemory);
+    vkMapMemory(engine->logicalDevice, instanceDataBufferMemory, 0, instanceDataBufferSize, 0, &instanceDataBufferMapped);
+    std::memset(instanceDataBufferMapped, 0, static_cast<size_t>(instanceDataBufferSize));
+
     // Create texture resources using GLTF data when available
     createTextureResources(tgltfModel, tprimitive);
 }
@@ -352,6 +383,18 @@ Primitive::~Primitive()
             vkUnmapMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory);
         }
         vkFreeMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory, nullptr);
+    }
+    if (instanceDataBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(engine->logicalDevice, instanceDataBuffer, nullptr);
+    }
+    if (instanceDataBufferMemory != VK_NULL_HANDLE)
+    {
+        if (instanceDataBufferMapped)
+        {
+            vkUnmapMemory(engine->logicalDevice, instanceDataBufferMemory);
+        }
+        vkFreeMemory(engine->logicalDevice, instanceDataBufferMemory, nullptr);
     }
 
     // Free descriptor set if allocated
@@ -428,6 +471,7 @@ Primitive::~Primitive()
 
 void Primitive::updateUniformBuffer(const glm::mat4 &model, const glm::mat4 &view, const glm::mat4 &proj)
 {
+    uploadInstanceTransforms();
     ObjectTransform thisTransformUBO = buildObjectTransformData();
     thisTransformUBO.model = model * transform;
     memcpy(ObjectTransformUBOMapped, &thisTransformUBO, sizeof(thisTransformUBO));
@@ -436,22 +480,42 @@ void Primitive::updateUniformBuffer(const glm::mat4 &model, const glm::mat4 &vie
 ObjectTransform Primitive::buildObjectTransformData() const
 {
     ObjectTransform data{};
-    uint32_t count = std::max(1u, instanceCount);
+    const uint32_t clampedCount = std::max(1u, std::min(instanceCount, kMaxPrimitiveInstances));
     data.model = transform;
-    data.instanceData = glm::uvec4(count,
-                                   usesYuvTexture ? 1u : 0u,
+    const uint32_t formatValue = usesYuvTexture ? static_cast<uint32_t>(yuvTextureFormat) : 0u;
+    data.instanceData = glm::uvec4(clampedCount,
+                                   formatValue,
                                    yuvColorSpace,
                                    yuvColorRange);
+    data.yuvParams = glm::uvec4(usesYuvTexture ? yuvChromaDivX : 1u,
+                                usesYuvTexture ? yuvChromaDivY : 1u,
+                                usesYuvTexture ? yuvBitDepth : 8u,
+                                0u);
+    return data;
+}
+
+void Primitive::markInstanceTransformsDirty()
+{
+    instanceTransformsDirty = true;
+}
+
+void Primitive::uploadInstanceTransforms()
+{
+    if (!instanceTransformsDirty || !instanceDataBufferMapped)
+    {
+        return;
+    }
+
+    auto *gpuData = reinterpret_cast<InstanceGpuData *>(instanceDataBufferMapped);
     for (uint32_t i = 0; i < kMaxPrimitiveInstances; ++i)
     {
-        glm::vec3 offset = instanceOffsets[i];
-        if (i >= count)
-        {
-            offset = glm::vec3(0.0f);
-        }
-        data.instanceOffsets[i] = glm::vec4(offset, 0.0f);
+        const bool active = i < instanceCount;
+        const glm::vec3 offset = active ? instanceOffsets[i] : glm::vec3(0.0f);
+        const glm::vec4 rotationVec = active ? instanceRotations[i] : glm::vec4(0.0f);
+        gpuData[i].offset = glm::vec4(offset, 0.0f);
+        gpuData[i].rotation = rotationVec;
     }
-    return data;
+    instanceTransformsDirty = false;
 }
 
 void Primitive::updateDescriptorSet()
@@ -480,7 +544,7 @@ void Primitive::updateDescriptorSet()
     }
 
     // Fill descriptor writes for UBO and sampler
-    std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+    std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
     // Binding 0: Uniform Buffer Object
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -508,6 +572,19 @@ void Primitive::updateDescriptorSet()
     descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[2].descriptorCount = 1;
     descriptorWrites[2].pImageInfo = &chromaInfo;
+
+    VkDescriptorBufferInfo instanceTransformBufferInfo{};
+    instanceTransformBufferInfo.buffer = instanceDataBuffer;
+    instanceTransformBufferInfo.offset = 0;
+    instanceTransformBufferInfo.range = instanceDataBufferSize;
+
+    descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[3].dstSet = primitiveDescriptorSet;
+    descriptorWrites[3].dstBinding = 3;
+    descriptorWrites[3].dstArrayElement = 0;
+    descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[3].descriptorCount = 1;
+    descriptorWrites[3].pBufferInfo = &instanceTransformBufferInfo;
 
     vkUpdateDescriptorSets(engine->logicalDevice,
                            static_cast<uint32_t>(descriptorWrites.size()),
