@@ -747,6 +747,7 @@ namespace
 int main(int argc, char *argv[])
 {
     const auto options = parseCommandLineArgs(argc, argv);
+    const bool obeliskShowcaseMode = options.forceObeliskLayout && options.disableCulling;
     if (options.testDecode)
     {
         return runDecodeBenchmark(kVideoPath) ? 0 : 1;
@@ -758,7 +759,15 @@ int main(int argc, char *argv[])
     Light sceneLight(glm::vec3(0.0f, 0.0f, 1.0f),
                      glm::vec3(0.1f),
                      glm::vec3(0.9f));
-    sceneLight.setDiffuse(glm::vec3(1.0f, 0.95f, 0.9f));
+    if (obeliskShowcaseMode)
+    {
+        sceneLight.setAmbient(glm::vec3(1.0f));
+        sceneLight.setDiffuse(glm::vec3(0.0f));
+    }
+    else
+    {
+        sceneLight.setDiffuse(glm::vec3(1.0f, 0.95f, 0.9f));
+    }
     engine->setLight(sceneLight);
 
     glm::vec3 defaultCameraPos(0.0f, 0.0f, 3.0f);
