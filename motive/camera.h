@@ -67,7 +67,7 @@ public:
 
     // Descriptor set management
     void allocateDescriptorSet();
-    void setOrthographicProjection(float width, float height, float nearPlane = -1.0f, float farPlane = 1.0f);
+    void setOrthographicProjection(float width, float height, float nearPlane = 0.1f, float farPlane = 100.0f);
     void setPerspectiveProjection();
     void setControlsEnabled(bool enabled);
 
@@ -83,10 +83,10 @@ private:
     void registerWindowCallbacks();
 
     bool useOrthoProjection = false;
-    float orthoWidth = 2.0f;
-    float orthoHeight = 2.0f;
-    float orthoNear = -1.0f;
-    float orthoFar = 1.0f;
+    float orthoWidth = 10.0f;
+    float orthoHeight = 10.0f;
+    float orthoNear = 0.1f;
+    float orthoFar = 100.0f;
     bool controlsEnabled = true;
     bool fullscreenViewportEnabled = false;
     float fullscreenPercentX = 1.0f;
