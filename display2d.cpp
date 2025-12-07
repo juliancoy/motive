@@ -272,18 +272,29 @@ void Display2D::createComputeResources()
 {
     // Descriptor set layout
     std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
+    // 0: swapchain storage image
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    for (uint32_t i = 1; i < bindings.size(); ++i)
-    {
-        bindings[i].binding = i;
-        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[i].descriptorCount = 1;
-        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
+    // 1: overlay
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 2: luma
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 3: chroma
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -480,6 +491,7 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
     overlayInfo.sampler = videoPrimitive->textureSampler;
 
     std::array<VkWriteDescriptorSet, 4> writes{};
+    // 0: storage (swapchain)
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptorSets[imageIndex];
     writes[0].dstBinding = 0;
@@ -487,26 +499,29 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
     writes[0].descriptorCount = 1;
     writes[0].pImageInfo = &storageInfo;
 
+    // 1: overlay
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[1].dstSet = descriptorSets[imageIndex];
     writes[1].dstBinding = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[1].descriptorCount = 1;
-    writes[1].pImageInfo = &lumaInfo;
+    writes[1].pImageInfo = &overlayInfo;
 
+    // 2: luma
     writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[2].dstSet = descriptorSets[imageIndex];
     writes[2].dstBinding = 2;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[2].descriptorCount = 1;
-    writes[2].pImageInfo = &chromaInfo;
+    writes[2].pImageInfo = &lumaInfo;
 
+    // 3: chroma
     writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[3].dstSet = descriptorSets[imageIndex];
     writes[3].dstBinding = 3;
     writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[3].descriptorCount = 1;
-    writes[3].pImageInfo = &overlayInfo;
+    writes[3].pImageInfo = &chromaInfo;
 
     vkUpdateDescriptorSets(engine->logicalDevice, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
@@ -553,6 +568,14 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
     int32_t clampedY = std::clamp(overlayOffset.y, 0, static_cast<int32_t>(maxOverlayH - clampedOverlayH));
 
     push.overlayEnabled = (overlayPrimitive && overlayPrimitive->textureImageView && clampedOverlayW > 0 && clampedOverlayH > 0) ? 1u : 0u;
+    // Debug
+    static int debugFrame = 0;
+    if (debugFrame++ % 60 == 0) {
+        std::cout << "[Display2D] overlayEnabled=" << push.overlayEnabled 
+                  << ", textureImageView=" << (overlayPrimitive ? overlayPrimitive->textureImageView : 0)
+                  << ", clampedOverlay=" << clampedOverlayW << "x" << clampedOverlayH
+                  << ", origin=" << clampedX << "," << clampedY << std::endl;
+    }
     push.overlayOrigin = glm::vec2(static_cast<float>(clampedX), static_cast<float>(clampedY));
     push.overlaySize = glm::vec2(static_cast<float>(clampedOverlayW), static_cast<float>(clampedOverlayH));
 

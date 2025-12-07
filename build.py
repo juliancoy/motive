@@ -8,8 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Paths
 this_dir = os.path.dirname(__file__)
-vulkan_sdk_superpath = os.path.abspath(os.path.join(this_dir, "../Vulkan-Headers/"))
-vulkan_sdk_path = vulkan_sdk_superpath
+vulkan_sdk_path = os.path.abspath(os.path.join(this_dir, "Vulkan-Headers"))
 shader_dir = os.path.abspath(os.path.join(this_dir, "shaders"))
 
 # Source and object files
@@ -24,22 +23,22 @@ main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
 # Include and library paths
 include_paths = [
     os.path.join(vulkan_sdk_path, "include"),
-    os.path.abspath(os.path.join(this_dir, "../glfw/include")),
-    os.path.abspath(os.path.join(this_dir, "../tinygltf")),
-    os.path.abspath(os.path.join(this_dir, "../glm")),
-    os.path.abspath(os.path.join(this_dir, "../FFmpeg/.ffmpeg/include")),
-    os.path.abspath(os.path.join(this_dir, "../freetype/include")),
-    os.path.abspath(os.path.join(this_dir, "../freetype/build/include")),
-    os.path.abspath(os.path.join(this_dir, "../freetype/build/include/freetype2")),
+    os.path.abspath(os.path.join(this_dir, "glfw/include")),
+    os.path.abspath(os.path.join(this_dir, "tinygltf")),
+    os.path.abspath(os.path.join(this_dir, "glm")),
+    os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/include")),
+    os.path.abspath(os.path.join(this_dir, "freetype/include")),
+    os.path.abspath(os.path.join(this_dir, "freetype/build/include")),
+    os.path.abspath(os.path.join(this_dir, "freetype/build/include/freetype2")),
 ]
-ffmpeg_lib_dir = os.path.abspath(os.path.join(this_dir, "../FFmpeg/.ffmpeg/lib"))
+ffmpeg_lib_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/lib"))
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
-    os.path.abspath(os.path.join(this_dir, "../glfw/build/src")),
+    os.path.abspath(os.path.join(this_dir, "glfw/build/src")),
     ffmpeg_lib_dir,
-    os.path.abspath(os.path.join(this_dir, "../freetype/build")),
-    os.path.abspath(os.path.join(this_dir, "../FFmpeg/.ffmpeg/lib")),
-    os.path.abspath(os.path.join(this_dir, "../")),
+    os.path.abspath(os.path.join(this_dir, "freetype/build")),
+    os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/lib")),
+    os.path.abspath(os.path.join(this_dir, ".")),
 ]
 core_libraries = [
     "glfw3",

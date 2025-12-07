@@ -31,7 +31,8 @@ extern "C" {
 
 namespace
 {
-const std::filesystem::path kVideoPath = std::filesystem::path("..") / "P1090533_main8_hevc_fast.mkv";
+// Look for the sample video in the current directory (files were moved up).
+const std::filesystem::path kVideoPath = std::filesystem::path("P1090533_main8_hevc_fast.mkv");
 constexpr uint32_t kScrubberWidth = 512;
 constexpr uint32_t kScrubberHeight = 64;
 
@@ -79,6 +80,13 @@ struct ScrubberCompute
 };
 
 void destroyScrubberCompute(ScrubberCompute& compute);
+
+// Scroll handling for rectangle sizing
+static double g_scrollDelta = 0.0;
+static void onScroll(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset)
+{
+    g_scrollDelta += yoffset;
+}
 
 std::vector<Vertex> buildOverlayQuad(float width, float height)
 {
@@ -588,6 +596,7 @@ int main()
     Display2D* display = new Display2D(engine, 1280, 720, "Motive Video 2D");
     const float screenWidth = static_cast<float>(std::max(1, display->width));
     const float screenHeight = static_cast<float>(std::max(1, display->height));
+    glfwSetScrollCallback(display->window, onScroll);
 
     Light sceneLight(glm::vec3(0.0f, 0.0f, 1.0f),
                      glm::vec3(0.1f),
@@ -619,6 +628,8 @@ int main()
     const float bottomMargin = 20.0f;
     overlayPrimitive->transform = glm::mat4(1.0f);
     overlayPrimitive->transform = glm::translate(overlayPrimitive->transform, glm::vec3(0.0f, 0.0f, 0.02f));
+    // Enable double buffering for overlay texture to ensure descriptor set updates
+    overlayPrimitive->enableTextureDoubleBuffering();
     engine->addModel(std::move(overlayModel));
 
     ScrubberCompute scrubberCompute{};
@@ -637,6 +648,10 @@ int main()
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
+    // Rectangle state
+    float rectHeight = screenHeight;
+    float rectWidth = rectHeight * (9.0f / 16.0f);
+    glm::vec2 rectCenter(screenWidth * 0.5f, screenHeight * 0.5f);
 
     while (!display->shouldClose())
     {
@@ -646,6 +661,11 @@ int main()
             playing = !playing;
         }
         spaceHeld = spaceDown;
+
+        if (glfwGetKey(display->window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        {
+            glfwSetWindowShouldClose(display->window, GLFW_TRUE);
+        }
 
         int mouseState = glfwGetMouseButton(display->window, GLFW_MOUSE_BUTTON_LEFT);
         if (mouseState == GLFW_PRESS && !mouseHeld)
@@ -657,8 +677,22 @@ int main()
             {
                 playing = !playing;
             }
+            else
+            {
+                rectCenter = glm::vec2(static_cast<float>(cursorX), static_cast<float>(cursorY));
+            }
         }
         mouseHeld = (mouseState == GLFW_PRESS);
+
+        // Scroll to resize rectangle
+        double scrollDelta = g_scrollDelta;
+        g_scrollDelta = 0.0;
+        if (std::abs(scrollDelta) > 0.0)
+        {
+            float scale = 1.0f + static_cast<float>(scrollDelta) * 0.05f;
+            rectHeight = std::clamp(rectHeight * scale, 50.0f, screenHeight);
+            rectWidth = rectHeight * (9.0f / 16.0f);
+        }
 
         double playbackSeconds = advancePlayback(playbackState, playing);
         double normalizedProgress = videoDurationSeconds > 0.0
@@ -682,16 +716,6 @@ int main()
             scrubberPixels[i * 4 + 3] = static_cast<uint8_t>(scrubberSrc[i * 4 + 3]);
         }
 
-        if (overlayPrimitive)
-        {
-            overlayPrimitive->updateTextureFromPixelData(
-                scrubberPixels.data(),
-                scrubberPixels.size(),
-                scrubberCompute.width,
-                scrubberCompute.height,
-                VK_FORMAT_R8G8B8A8_UNORM);
-        }
-
         // FPS tracking
         fpsFrameCounter++;
         auto now = std::chrono::steady_clock::now();
@@ -709,17 +733,31 @@ int main()
             static_cast<uint32_t>(screenHeight),
             currentFps);
 
-        const uint32_t overlayWidth = std::max<uint32_t>(kScrubberWidth, fpsBitmap.width);
-        const uint32_t overlayHeight = kScrubberHeight + (fpsBitmap.height > 0 ? fpsBitmap.height + 8u : 0u);
+        // Debug: print FPS and bitmap dimensions
+        static int debugFrameCount = 0;
+        if (debugFrameCount++ % 60 == 0) {
+            std::cout << "[FPS Overlay] FPS: " << currentFps 
+                      << ", bitmap: " << fpsBitmap.width << "x" << fpsBitmap.height
+                      << ", offset: " << fpsBitmap.offsetX << "," << fpsBitmap.offsetY << std::endl;
+        }
+
+        const uint32_t overlayWidth = static_cast<uint32_t>(screenWidth);
+        const uint32_t overlayHeight = static_cast<uint32_t>(screenHeight);
         const uint32_t overlayBytes = overlayWidth * overlayHeight * 4;
         if (overlayPixels.size() < overlayBytes)
         {
             overlayPixels.resize(overlayBytes, 0);
         }
-        std::fill(overlayPixels.begin(), overlayPixels.begin() + overlayBytes, 0);
+        // TEST: Fill entire overlay with semi-transparent green to see if overlay works
+        for (size_t i = 0; i < overlayBytes; i += 4) {
+            overlayPixels[i + 0] = 0;     // R
+            overlayPixels[i + 1] = 255;   // G
+            overlayPixels[i + 2] = 0;     // B
+            overlayPixels[i + 3] = 128;   // A (50% transparent)
+        }
 
         // Copy scrubber output into overlay buffer at the bottom
-        const uint32_t scrubberYOffset = overlayHeight > kScrubberHeight ? (overlayHeight - kScrubberHeight) : 0;
+        const uint32_t scrubberYOffset = overlayHeight > kScrubberHeight ? (overlayHeight - kScrubberHeight - 20) : 0;
         const uint32_t scrubberXOffset = (overlayWidth > kScrubberWidth) ? (overlayWidth - kScrubberWidth) / 2 : 0;
         for (uint32_t row = 0; row < kScrubberHeight; ++row)
         {
@@ -729,11 +767,11 @@ int main()
             std::memcpy(&overlayPixels[dstIndex], scrubberPixels.data() + srcIndex, kScrubberWidth * 4);
         }
 
-        // Blend FPS bitmap near the top-left of the overlay
+        // Blend FPS bitmap using its computed offset (top-left with margin)
         if (fpsBitmap.width > 0 && fpsBitmap.height > 0 && fpsBitmap.pixels.size() >= fpsBitmap.width * fpsBitmap.height * 4)
         {
-            const uint32_t fpsX = 8;
-            const uint32_t fpsY = 8;
+            const uint32_t fpsX = fpsBitmap.offsetX;
+            const uint32_t fpsY = fpsBitmap.offsetY;
             for (uint32_t y = 0; y < fpsBitmap.height; ++y)
             {
                 if (fpsY + y >= overlayHeight)
@@ -758,6 +796,58 @@ int main()
             }
         }
 
+        // Draw the 9x16 rectangle (semi-transparent)
+        float halfW = rectWidth * 0.5f;
+        float halfH = rectHeight * 0.5f;
+        int x0 = static_cast<int>(std::round(rectCenter.x - halfW));
+        int y0 = static_cast<int>(std::round(rectCenter.y - halfH));
+        int x1 = static_cast<int>(std::round(rectCenter.x + halfW));
+        int y1 = static_cast<int>(std::round(rectCenter.y + halfH));
+        x0 = std::clamp(x0, 0, static_cast<int>(overlayWidth) - 1);
+        y0 = std::clamp(y0, 0, static_cast<int>(overlayHeight) - 1);
+        x1 = std::clamp(x1, x0 + 1, static_cast<int>(overlayWidth));
+        y1 = std::clamp(y1, y0 + 1, static_cast<int>(overlayHeight));
+
+        const uint8_t rectColor[4] = {255, 80, 60, 255};
+        const uint8_t outlineColor[4] = {0, 0, 0, 255};
+        const int outlineThickness = 4;
+        for (int y = y0; y < y1; ++y)
+        {
+            uint8_t* rowPtr = overlayPixels.data() + static_cast<size_t>(y * overlayWidth * 4);
+            for (int x = x0; x < x1; ++x)
+            {
+                uint8_t* dst = rowPtr + x * 4;
+                const uint8_t* srcCol = rectColor;
+                // Draw outline near the border
+                if (x - x0 < outlineThickness || x1 - x <= outlineThickness ||
+                    y - y0 < outlineThickness || y1 - y <= outlineThickness)
+                {
+                    srcCol = outlineColor;
+                }
+                // Alpha blend rect over existing overlay pixel
+                float srcA = srcCol[3] / 255.0f;
+                for (int c = 0; c < 4; ++c)
+                {
+                    float dstC = dst[c] / 255.0f;
+                    float srcC = srcCol[c] / 255.0f;
+                    float out = srcC * srcA + dstC * (1.0f - srcA);
+                    dst[c] = static_cast<uint8_t>(std::clamp(out, 0.0f, 1.0f) * 255.0f);
+                }
+            }
+        }
+
+        // Debug pixel in the center to ensure overlay is visible
+        const uint32_t centerX = overlayWidth / 2;
+        const uint32_t centerY = overlayHeight / 2;
+        size_t centerIdx = static_cast<size_t>((centerY * overlayWidth + centerX) * 4);
+        if (centerIdx + 3 < overlayPixels.size())
+        {
+            overlayPixels[centerIdx + 0] = 0;
+            overlayPixels[centerIdx + 1] = 255;
+            overlayPixels[centerIdx + 2] = 255;
+            overlayPixels[centerIdx + 3] = 255;
+        }
+
         // Upload combined overlay texture
         overlayPrimitive->updateTextureFromPixelData(
             overlayPixels.data(),
@@ -767,10 +857,7 @@ int main()
             VK_FORMAT_R8G8B8A8_UNORM);
 
         VkExtent2D overlayExtent{overlayWidth, overlayHeight};
-        const float bottomMarginPx = 20.0f;
-        VkOffset2D overlayOffset{
-            static_cast<int32_t>((screenWidth - overlayWidth) * 0.5f),
-            static_cast<int32_t>(screenHeight - overlayHeight - bottomMarginPx)};
+        VkOffset2D overlayOffset{0, 0};
 
         display->renderFrame(playbackState.videoPrimitive,
                              overlayPrimitive,

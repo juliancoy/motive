@@ -1,7 +1,0 @@
-*.o
-*.so
-*.rdc
-.vscode
-result.txt
-main
-renderdoc*
