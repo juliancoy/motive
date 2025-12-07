@@ -3,4 +3,7 @@ libtinygltf.a
 main
 motive/main
 P1090533*
-LandReform
+LandReform# Built motive binaries - do not commit
+motive/motive2d
+motive/motive3d
+motive/libengine.a
