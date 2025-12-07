@@ -1,4 +1,7 @@
 #pragma once
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <stdexcept>
@@ -17,7 +20,12 @@ class Camera;
 class Display
 {
 public:
-    Display(Engine* engine, int width = 800, int height = 600, const char* title = "Motive", bool disableCulling = false);
+    Display(Engine* engine,
+            int width = 800,
+            int height = 600,
+            const char* title = "Motive",
+            bool disableCulling = false,
+            bool use2DPipeline = false);
     ~Display();
     void createSwapchain();
     void createWindow(const char *title);
@@ -82,6 +90,7 @@ public:
     bool framebufferResized = false;
     float currentFps = 0.0f;
     bool cullingDisabled = false;
+    bool use2DPipeline = false;
 
     // Camera instance
     std::vector<Camera*> cameras;

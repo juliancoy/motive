@@ -52,7 +52,7 @@ public:
     void renderLoop();
     void addModel(std::unique_ptr<Model> model);
     void addCamera();
-    Display* createWindow(int width, int height, const char* title, bool disableCulling = false);
+    Display* createWindow(int width, int height, const char* title, bool disableCulling = false, bool use2DPipeline = false);
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     void nameVulkanObject(uint64_t handle, VkObjectType type, const char* name);

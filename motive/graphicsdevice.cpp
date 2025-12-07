@@ -1,5 +1,6 @@
 #include "graphicsdevice.h"
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <cstdlib>
@@ -40,7 +41,9 @@ PFN_vkDestroyDebugUtilsMessengerEXT loadDestroyMessenger(VkInstance instance)
 } // namespace
 
 RenderDevice::RenderDevice()
-    : instance(VK_NULL_HANDLE),
+    : validationLayersEnabled(false),
+      debugUtilsEnabled(false),
+      instance(VK_NULL_HANDLE),
       logicalDevice(VK_NULL_HANDLE),
       physicalDevice(VK_NULL_HANDLE),
       graphicsQueue(VK_NULL_HANDLE),
@@ -265,13 +268,28 @@ VkPhysicalDeviceFeatures &RenderDevice::getDeviceFeatures() { return features; }
 
 void RenderDevice::createInstance()
 {
+    validationLayersEnabled = false;
+    debugUtilsEnabled = false;
+
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = "Vulkan Renderer";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Motive";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    uint32_t loaderApiVersion = VK_API_VERSION_1_0;
+    auto enumerateInstanceVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+        vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+    if (enumerateInstanceVersion && enumerateInstanceVersion(&loaderApiVersion) != VK_SUCCESS)
+    {
+        loaderApiVersion = VK_API_VERSION_1_0;
+    }
+    const uint32_t requestedApiVersion = std::min(loaderApiVersion, VK_API_VERSION_1_2);
+    appInfo.apiVersion = requestedApiVersion;
+    std::cout << "[RenderDevice] Using Vulkan API "
+              << VK_VERSION_MAJOR(requestedApiVersion) << "."
+              << VK_VERSION_MINOR(requestedApiVersion) << "."
+              << VK_VERSION_PATCH(requestedApiVersion) << std::endl;
 
     const std::vector<const char *> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
@@ -283,47 +301,78 @@ void RenderDevice::createInstance()
         throw std::runtime_error("Failed to get required GLFW extensions");
     }
     std::vector<const char *> requiredExtensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    requiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+    uint32_t availableLayerCount = 0;
+    vkEnumerateInstanceLayerProperties(&availableLayerCount, nullptr);
+    std::vector<VkLayerProperties> availableLayers(availableLayerCount);
+    vkEnumerateInstanceLayerProperties(&availableLayerCount, availableLayers.data());
+
+    const auto layerSupported = [&availableLayers](const char *name) {
+        return std::any_of(
+            availableLayers.begin(), availableLayers.end(),
+            [name](const VkLayerProperties &layer) { return strcmp(layer.layerName, name) == 0; });
+    };
+
+    if (layerSupported("VK_LAYER_KHRONOS_validation"))
+    {
+        validationLayersEnabled = true;
+    }
+    else
+    {
+        std::cerr << "[RenderDevice] Validation layer VK_LAYER_KHRONOS_validation not available. "
+                  << "Continuing without validation layers." << std::endl;
+    }
 
     VkInstanceCreateInfo instanceCreateInfo{};
     instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceCreateInfo.pApplicationInfo = &appInfo;
-    instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
-    instanceCreateInfo.ppEnabledExtensionNames = requiredExtensions.data();
-    instanceCreateInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-    instanceCreateInfo.ppEnabledLayerNames = validationLayers.data();
+    instanceCreateInfo.enabledLayerCount = validationLayersEnabled ? static_cast<uint32_t>(validationLayers.size()) : 0;
+    instanceCreateInfo.ppEnabledLayerNames = validationLayersEnabled ? validationLayers.data() : nullptr;
 
     uint32_t extensionCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
     std::vector<VkExtensionProperties> extensions(extensionCount);
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
 
-    for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+    const auto extensionSupported = [&extensions](const char *name) {
+        return std::any_of(
+            extensions.begin(), extensions.end(),
+            [name](const VkExtensionProperties &ext) { return strcmp(ext.extensionName, name) == 0; });
+    };
+
+    if (validationLayersEnabled && extensionSupported(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
     {
-        bool found = false;
-        for (const auto &ext : extensions)
+        requiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        debugUtilsEnabled = true;
+    }
+    else if (validationLayersEnabled)
+    {
+        std::cerr << "[RenderDevice] VK_EXT_debug_utils not available. "
+                  << "Validation layers will run without debug utils callbacks." << std::endl;
+    }
+
+    for (const auto *required : requiredExtensions)
+    {
+        if (!extensionSupported(required))
         {
-            if (strcmp(ext.extensionName, glfwExtensions[i]) == 0)
-            {
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-        {
-            throw std::runtime_error(std::string("Missing required extension: ") + glfwExtensions[i]);
+            throw std::runtime_error(std::string("Missing required extension: ") + required);
         }
     }
 
-    if (vkCreateInstance(&instanceCreateInfo, nullptr, &instance) != VK_SUCCESS)
+    instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
+    instanceCreateInfo.ppEnabledExtensionNames = requiredExtensions.data();
+
+    VkResult instanceResult = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
+    if (instanceResult != VK_SUCCESS)
     {
+        std::cerr << "[RenderDevice] vkCreateInstance failed with code " << instanceResult << std::endl;
         throw std::runtime_error("Failed to create Vulkan instance");
     }
 }
 
 void RenderDevice::setupDebugMessenger()
 {
-    if (instance == VK_NULL_HANDLE)
+    if (!debugUtilsEnabled || instance == VK_NULL_HANDLE)
     {
         return;
     }
@@ -348,7 +397,7 @@ void RenderDevice::setupDebugMessenger()
 
 void RenderDevice::destroyDebugMessenger()
 {
-    if (debugMessenger == VK_NULL_HANDLE || instance == VK_NULL_HANDLE)
+    if (!debugUtilsEnabled || debugMessenger == VK_NULL_HANDLE || instance == VK_NULL_HANDLE)
     {
         return;
     }

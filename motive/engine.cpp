@@ -98,9 +98,9 @@ void Engine::addModel(std::unique_ptr<Model> model)
     models.push_back(std::move(model));
 }
 
-Display *Engine::createWindow(int width, int height, const char *title, bool disableCulling)
+Display *Engine::createWindow(int width, int height, const char *title, bool disableCulling, bool use2DPipeline)
 {
-    Display *display = new Display(this, width, height, title, disableCulling);
+    Display *display = new Display(this, width, height, title, disableCulling, use2DPipeline);
     displays.push_back(display);
     return display;
 }

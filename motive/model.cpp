@@ -1,3 +1,6 @@
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include "model.h"
 #include "engine.h"
 #include <glm/glm.hpp>

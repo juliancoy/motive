@@ -44,6 +44,8 @@ private:
     void destroyDebugMessenger();
     void pickPhysicalDevice();
     void createLogicalDevice();
+    bool validationLayersEnabled;
+    bool debugUtilsEnabled;
 
     VkInstance instance;
     VkDevice logicalDevice;

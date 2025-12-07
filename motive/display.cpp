@@ -34,11 +34,12 @@ void Display::createCommandPool()
 }
 
 
-Display::Display(Engine* engine, int width, int height, const char* title, bool disableCulling){
+Display::Display(Engine* engine, int width, int height, const char* title, bool disableCulling, bool use2DPipeline){
     this->engine = engine;
     this->width = width;
     this->height = height;
     this->cullingDisabled = disableCulling;
+    this->use2DPipeline = use2DPipeline;
     fpsLastSampleTime = std::chrono::steady_clock::now();
     currentFps = 0.0f;
     fpsFrameCounter = 0;
@@ -1193,8 +1194,8 @@ void Display::render()
 void Display::createGraphicsPipeline()
 {
     // Load compiled SPIR-V shaders
-    std::string vertPath = "shaders/mainforward.vert.spv";
-    std::string fragPath = "shaders/mainforward.frag.spv";
+    std::string vertPath = use2DPipeline ? "shaders/flat2d.vert.spv" : "shaders/mainforward.vert.spv";
+    std::string fragPath = use2DPipeline ? "shaders/flat2d.frag.spv" : "shaders/mainforward.frag.spv";
 
     auto vertShaderCode = readSPIRVFile(vertPath);
     auto fragShaderCode = readSPIRVFile(fragPath);
@@ -1274,16 +1275,16 @@ void Display::createGraphicsPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = cullingDisabled ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = (cullingDisabled || use2DPipeline) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     // Depth stencil state
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthTestEnable = use2DPipeline ? VK_FALSE : VK_TRUE;
+    depthStencil.depthWriteEnable = use2DPipeline ? VK_FALSE : VK_TRUE;
+    depthStencil.depthCompareOp = use2DPipeline ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.minDepthBounds = 0.0f;
     depthStencil.maxDepthBounds = 1.0f;
