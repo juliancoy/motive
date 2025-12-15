@@ -487,8 +487,16 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
 
     VkDescriptorImageInfo overlayInfo{};
     overlayInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    overlayInfo.imageView = (overlayPrimitive && overlayPrimitive->textureImageView) ? overlayPrimitive->textureImageView : videoPrimitive->textureImageView;
-    overlayInfo.sampler = videoPrimitive->textureSampler;
+    if (overlayPrimitive && overlayPrimitive->textureImageView)
+    {
+        overlayInfo.imageView = overlayPrimitive->textureImageView;
+        overlayInfo.sampler = overlayPrimitive->textureSampler;
+    }
+    else
+    {
+        overlayInfo.imageView = videoPrimitive->textureImageView;
+        overlayInfo.sampler = videoPrimitive->textureSampler;
+    }
 
     std::array<VkWriteDescriptorSet, 4> writes{};
     // 0: storage (swapchain)
