@@ -368,21 +368,45 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
 {
     if (decoder.finished.load())
     {
+        std::cout << "[Video] decodeNextFrame: decoder finished, returning false" << std::endl;
         return false;
     }
 
+    static int callCount = 0;
+    callCount++;
+    auto decodeStart = std::chrono::steady_clock::now();
+    
     while (true)
     {
         if (!decoder.draining)
         {
+            auto readStart = std::chrono::steady_clock::now();
             int readResult = av_read_frame(decoder.formatCtx, decoder.packet);
+            auto readEnd = std::chrono::steady_clock::now();
+            auto readDuration = std::chrono::duration_cast<std::chrono::milliseconds>(readEnd - readStart);
+            
+            if (readDuration.count() > 100 && callCount % 10 == 0)
+            {
+                std::cout << "[Video] decodeNextFrame: av_read_frame took " << readDuration.count() 
+                          << " ms (call " << callCount << ")" << std::endl;
+            }
+            
             if (readResult >= 0)
             {
                 if (decoder.packet->stream_index == decoder.videoStreamIndex)
                 {
+                    auto sendStart = std::chrono::steady_clock::now();
                     if (avcodec_send_packet(decoder.codecCtx, decoder.packet) < 0)
                     {
                         std::cerr << "[Video] Failed to send packet to decoder." << std::endl;
+                    }
+                    auto sendEnd = std::chrono::steady_clock::now();
+                    auto sendDuration = std::chrono::duration_cast<std::chrono::milliseconds>(sendEnd - sendStart);
+                    
+                    if (sendDuration.count() > 50 && callCount % 10 == 0)
+                    {
+                        std::cout << "[Video] decodeNextFrame: avcodec_send_packet took " 
+                                  << sendDuration.count() << " ms" << std::endl;
                     }
                 }
                 av_packet_unref(decoder.packet);
@@ -391,11 +415,23 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
             {
                 av_packet_unref(decoder.packet);
                 decoder.draining = true;
+                std::cout << "[Video] decodeNextFrame: starting drain mode" << std::endl;
                 avcodec_send_packet(decoder.codecCtx, nullptr);
             }
         }
 
+        auto receiveStart = std::chrono::steady_clock::now();
         int receiveResult = avcodec_receive_frame(decoder.codecCtx, decoder.frame);
+        auto receiveEnd = std::chrono::steady_clock::now();
+        auto receiveDuration = std::chrono::duration_cast<std::chrono::milliseconds>(receiveEnd - receiveStart);
+        
+        if (receiveDuration.count() > 100 && callCount % 10 == 0)
+        {
+            std::cout << "[Video] decodeNextFrame: avcodec_receive_frame took " 
+                      << receiveDuration.count() << " ms, result=" << receiveResult 
+                      << " (call " << callCount << ")" << std::endl;
+        }
+        
         if (receiveResult == 0)
         {
             AVFrame* workingFrame = decoder.frame;
@@ -463,6 +499,15 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
             decodedFrame.ptsSeconds = ptsSeconds;
 
             av_frame_unref(decoder.frame);
+            
+            auto decodeEnd = std::chrono::steady_clock::now();
+            auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
+            if (totalDuration.count() > 200 && callCount % 5 == 0)
+            {
+                std::cout << "[Video] decodeNextFrame: successfully decoded frame " << callCount 
+                          << " in " << totalDuration.count() << " ms total" << std::endl;
+            }
+            
             return true;
         }
         else if (receiveResult == AVERROR(EAGAIN))
@@ -471,6 +516,7 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
         }
         else if (receiveResult == AVERROR_EOF)
         {
+            std::cout << "[Video] decodeNextFrame: EOF reached after " << callCount << " calls" << std::endl;
             decoder.finished.store(true);
             return false;
         }
@@ -486,22 +532,56 @@ namespace
 {
 void asyncDecodeLoop(VideoDecoder* decoder)
 {
+    std::cout << "[Video] asyncDecodeLoop started, stopRequested=" << decoder->stopRequested.load() 
+              << ", bufferSize=" << decoder->bufferSize << std::endl;
+    
     video::DecodedFrame localFrame;
     localFrame.buffer.reserve(decoder->bufferSize);
+    int frameCount = 0;
+    auto loopStartTime = std::chrono::steady_clock::now();
+    
     while (!decoder->stopRequested.load())
     {
-        if (!video::decodeNextFrame(*decoder, localFrame))
+        frameCount++;
+        auto decodeStart = std::chrono::steady_clock::now();
+        bool decodeSuccess = video::decodeNextFrame(*decoder, localFrame);
+        auto decodeEnd = std::chrono::steady_clock::now();
+        auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
+        
+        if (!decodeSuccess)
         {
+            std::cout << "[Video] asyncDecodeLoop: decodeNextFrame returned false at frame " 
+                      << frameCount << ", finished=" << decoder->finished.load() 
+                      << ", decode took " << decodeDuration.count() << " ms" << std::endl;
             break;
+        }
+        
+        if (frameCount % 30 == 0)
+        {
+            std::cout << "[Video] asyncDecodeLoop: decoded frame " << frameCount 
+                      << ", pts=" << localFrame.ptsSeconds 
+                      << "s, decode took " << decodeDuration.count() << " ms" << std::endl;
         }
 
         std::unique_lock<std::mutex> lock(decoder->frameMutex);
+        auto waitStart = std::chrono::steady_clock::now();
         decoder->frameCond.wait(lock, [decoder]() {
             return decoder->stopRequested.load() || decoder->frameQueue.size() < decoder->maxBufferedFrames;
         });
+        auto waitEnd = std::chrono::steady_clock::now();
+        auto waitDuration = std::chrono::duration_cast<std::chrono::milliseconds>(waitEnd - waitStart);
+        
+        if (waitDuration.count() > 10 && frameCount % 10 == 0 && false)
+        {
+            std::cout << "[Video] asyncDecodeLoop: waited " << waitDuration.count() 
+                      << " ms for frame queue, size=" << decoder->frameQueue.size() 
+                      << "/" << decoder->maxBufferedFrames << std::endl;
+        }
 
         if (decoder->stopRequested.load())
         {
+            std::cout << "[Video] asyncDecodeLoop: stopRequested detected, breaking loop at frame " 
+                      << frameCount << std::endl;
             break;
         }
 
@@ -512,6 +592,13 @@ void asyncDecodeLoop(VideoDecoder* decoder)
         localFrame.buffer.reserve(decoder->bufferSize);
     }
 
+    auto loopEndTime = std::chrono::steady_clock::now();
+    auto loopDuration = std::chrono::duration_cast<std::chrono::milliseconds>(loopEndTime - loopStartTime);
+    
+    std::cout << "[Video] asyncDecodeLoop exiting after " << frameCount << " frames, " 
+              << loopDuration.count() << " ms, stopRequested=" << decoder->stopRequested.load() 
+              << ", threadRunning=" << decoder->threadRunning.load() << std::endl;
+    
     decoder->threadRunning.store(false);
     decoder->frameCond.notify_all();
 }
@@ -562,26 +649,50 @@ bool acquireDecodedFrame(VideoDecoder& decoder, DecodedFrame& outFrame)
 
 void stopAsyncDecoding(VideoDecoder& decoder)
 {
+    std::cout << "[Video] stopAsyncDecoding called, asyncDecoding=" << decoder.asyncDecoding 
+              << ", threadRunning=" << decoder.threadRunning.load() 
+              << ", stopRequested=" << decoder.stopRequested.load() << std::endl;
+    
     if (!decoder.asyncDecoding)
     {
+        std::cout << "[Video] stopAsyncDecoding: not async decoding, returning early" << std::endl;
         return;
     }
 
+    auto startTime = std::chrono::steady_clock::now();
+    
     {
         std::lock_guard<std::mutex> lock(decoder.frameMutex);
         decoder.stopRequested.store(true);
+        std::cout << "[Video] stopAsyncDecoding: set stopRequested=true, frameQueue size=" 
+                  << decoder.frameQueue.size() << std::endl;
     }
     decoder.frameCond.notify_all();
+    std::cout << "[Video] stopAsyncDecoding: notified condition variable" << std::endl;
 
     if (decoder.decodeThread.joinable())
     {
+        std::cout << "[Video] stopAsyncDecoding: joining decode thread..." << std::endl;
+        auto joinStart = std::chrono::steady_clock::now();
         decoder.decodeThread.join();
+        auto joinEnd = std::chrono::steady_clock::now();
+        auto joinDuration = std::chrono::duration_cast<std::chrono::milliseconds>(joinEnd - joinStart);
+        std::cout << "[Video] stopAsyncDecoding: decode thread joined after " 
+                  << joinDuration.count() << " ms" << std::endl;
+    }
+    else
+    {
+        std::cout << "[Video] stopAsyncDecoding: decode thread not joinable" << std::endl;
     }
 
     decoder.frameQueue.clear();
     decoder.asyncDecoding = false;
     decoder.threadRunning.store(false);
     decoder.stopRequested.store(false);
+    
+    auto endTime = std::chrono::steady_clock::now();
+    auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    std::cout << "[Video] stopAsyncDecoding completed in " << totalDuration.count() << " ms" << std::endl;
 }
 
 void cleanupVideoDecoder(VideoDecoder& decoder)

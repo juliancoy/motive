@@ -6,7 +6,30 @@
 #include "video.h"
 
 class Engine;
-class Primitive;
+
+struct ImageViewSampler
+{
+    VkImageView view = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+};
+
+struct VideoImageSet
+{
+    ImageViewSampler luma;
+    ImageViewSampler chroma;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t chromaDivX = 1;
+    uint32_t chromaDivY = 1;
+};
+
+struct OverlayImageInfo
+{
+    ImageViewSampler overlay;
+    VkExtent2D extent{0, 0};
+    VkOffset2D offset{0, 0};
+    bool enabled = false;
+};
 
 class Display2D
 {
@@ -14,13 +37,13 @@ public:
     Display2D(Engine* engine, int width = 800, int height = 600, const char* title = "Motive 2D");
     ~Display2D();
 
-    void renderFrame(Primitive* videoPrimitive,
-                     Primitive* overlayPrimitive,
+    void renderFrame(const VideoImageSet& videoImages,
+                     const OverlayImageInfo& overlayInfo,
+                     const OverlayImageInfo& fpsOverlayInfo,
                      const video::VideoColorInfo& colorInfo,
-                     uint32_t videoWidth,
-                     uint32_t videoHeight,
-                     VkExtent2D overlaySize,
-                     VkOffset2D overlayOffset);
+                     float scrubProgress,
+                     float scrubPlaying);
+    void shutdown();
     bool shouldClose() const;
     void pollEvents() const;
 
@@ -59,4 +82,5 @@ private:
     void createCommandResources();
     void createComputeResources();
     void recreateSwapchain();
+    bool shutdownPerformed = false;
 };

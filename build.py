@@ -4,12 +4,15 @@ import re
 import subprocess
 import sys
 import shutil
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 # Paths
 this_dir = os.path.dirname(__file__)
 vulkan_sdk_path = os.path.abspath(os.path.join(this_dir, "Vulkan-Headers"))
 shader_dir = os.path.abspath(os.path.join(this_dir, "shaders"))
+manifest_path = os.path.join(this_dir, ".build_manifest.json")
+ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
 so_sources = []
@@ -26,18 +29,17 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "glfw/include")),
     os.path.abspath(os.path.join(this_dir, "tinygltf")),
     os.path.abspath(os.path.join(this_dir, "glm")),
-    os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/include")),
+    os.path.join(ffmpeg_install_dir, "include"),
     os.path.abspath(os.path.join(this_dir, "freetype/include")),
     os.path.abspath(os.path.join(this_dir, "freetype/build/include")),
     os.path.abspath(os.path.join(this_dir, "freetype/build/include/freetype2")),
 ]
-ffmpeg_lib_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/lib"))
+ffmpeg_lib_dir = os.path.join(ffmpeg_install_dir, "lib")
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
     os.path.abspath(os.path.join(this_dir, "glfw/build/src")),
     ffmpeg_lib_dir,
     os.path.abspath(os.path.join(this_dir, "freetype/build")),
-    os.path.abspath(os.path.join(this_dir, "FFmpeg/.ffmpeg/lib")),
     os.path.abspath(os.path.join(this_dir, ".")),
 ]
 core_libraries = [
@@ -158,6 +160,23 @@ def collect_link_args(required_libs, optional_libs):
 
 library_link_args = collect_link_args(core_libraries, optional_libraries)
 
+# Manifest helpers
+def load_manifest():
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_manifest(manifest):
+    tmp_path = manifest_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, manifest_path)
+
 # Flags
 debug_flags = "-g -O0"
 DEBUG_MODE = "NONE"
@@ -170,51 +189,97 @@ lib_flags = " ".join(f"-L{p}" for p in lib_paths)
 lib_links = " ".join(library_link_args)
 
 # Compile shaders
-print("Compiling shaders...")
+manifest = load_manifest()
+manifest.setdefault("shaders", {})
+manifest.setdefault("objects", {})
+manifest.setdefault("build_py_mtime", 0)
+
+# Recompile shaders only if source is newer than spv
+print("Compiling shaders (incremental)...")
+shader_exts = {"vert", "frag", "comp"}
 for shaderFilename in os.listdir(shader_dir):
-    if shaderFilename.split(".")[-1] not in ["vert", "frag", "comp"]:
+    if shaderFilename.split(".")[-1] not in shader_exts:
         continue
     src = os.path.join(shader_dir, shaderFilename)
     dst = os.path.join(shader_dir, f"{shaderFilename}.spv")
+    src_mtime = os.path.getmtime(src)
+    dst_mtime = os.path.getmtime(dst) if os.path.exists(dst) else -1
+    if src_mtime <= dst_mtime:
+        continue
     cmd = f"glslangValidator -V {src} -o {dst}"
     print(f"Running: {cmd}")
     result = subprocess.run(cmd, shell=True)
     if result.returncode != 0:
         print(f"❌ Failed to compile shader: {shaderFilename}", file=sys.stderr)
         sys.exit(result.returncode)
-print("✅ Shaders compiled successfully!\n")
+    manifest["shaders"][shaderFilename] = src_mtime
+print("✅ Shader check complete.\n")
 
 
 def compile_cpp_to_o(src_file):
     obj_file = f"{os.path.splitext(src_file)[0]}.o"
+    src_mtime = os.path.getmtime(src_file)
+    build_py_mtime = os.path.getmtime(__file__)
+    if os.path.exists(obj_file):
+        obj_mtime = os.path.getmtime(obj_file)
+        if obj_mtime >= src_mtime and obj_mtime >= build_py_mtime:
+            # Skip unchanged
+            return False
     cmd = f"g++ -std=c++17 {debug_flags} {sanitize_flags} -fPIC -c {include_flags} {src_file} -o {obj_file}"
     print(f"Compiling {src_file}...")
     result = subprocess.run(cmd, shell=True)
     if result.returncode != 0:
         print(f"❌ Failed to compile: {src_file}", file=sys.stderr)
         sys.exit(result.returncode)
+    manifest["objects"][obj_file] = src_mtime
+    return True
 
 
 all_sources = so_sources + main_sources
 with ThreadPoolExecutor() as executor:
-    executor.map(compile_cpp_to_o, all_sources)
+    changed_list = list(executor.map(compile_cpp_to_o, all_sources))
 
-# Link static library
-so_link_cmd = f"ar rcs libengine.a {' '.join(so_objects)}"
-print(f"\nLinking static library:\n{so_link_cmd}")
-so_link_result = subprocess.run(so_link_cmd, shell=True)
-if so_link_result.returncode != 0:
-    print("❌ Failed to link static library.", file=sys.stderr)
-    sys.exit(so_link_result.returncode)
+# Link static library only when needed
+need_link_so = not os.path.exists("libengine.a")
+if not need_link_so:
+    so_mtime = os.path.getmtime("libengine.a")
+    for obj in so_objects:
+        if os.path.exists(obj) and os.path.getmtime(obj) > so_mtime:
+            need_link_so = True
+            break
 
-# Link main executables
+if need_link_so or any(changed_list):
+    so_link_cmd = f"ar rcs libengine.a {' '.join(so_objects)}"
+    print(f"\nLinking static library:\n{so_link_cmd}")
+    so_link_result = subprocess.run(so_link_cmd, shell=True)
+    if so_link_result.returncode != 0:
+        print("❌ Failed to link static library.", file=sys.stderr)
+        sys.exit(so_link_result.returncode)
+else:
+    print("\nStatic library up to date.")
+
+# Link main executables when needed
 for src, obj in zip(main_sources, main_objects):
     binary_name = os.path.splitext(src)[0]
+    need_link = not os.path.exists(binary_name)
+    if not need_link:
+        bin_mtime = os.path.getmtime(binary_name)
+        deps = [obj, "libengine.a"]
+        for dep in deps:
+            if os.path.exists(dep) and os.path.getmtime(dep) > bin_mtime:
+                need_link = True
+                break
+    if not need_link:
+        print(f"\nExecutable {binary_name} up to date.")
+        continue
     main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
     print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
     main_link_result = subprocess.run(main_link_cmd, shell=True)
     if main_link_result.returncode != 0:
         print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
         sys.exit(main_link_result.returncode)
+
+manifest["build_py_mtime"] = os.path.getmtime(__file__)
+save_manifest(manifest)
 
 print("\n✅ Build successful!")

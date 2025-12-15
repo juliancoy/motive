@@ -24,10 +24,20 @@ constexpr uint32_t kMinimumFontSize = 12;
 
 std::filesystem::path locateFont()
 {
+    // Expanded list of candidate fonts and paths
     const std::vector<std::filesystem::path> candidates = {
-        std::filesystem::path("nofile.ttf"),
-        std::filesystem::path("../nofile.ttf"),
-        std::filesystem::path("../../nofile.ttf"),
+        // Common system font paths
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "C:/Windows/Fonts/Arial.ttf",
+        // Relative paths from executable
+        "fonts/DejaVuSans.ttf",
+        "../fonts/DejaVuSans.ttf",
+        "../../fonts/DejaVuSans.ttf",
+        // Placeholder
+        "nofile.ttf",
+        "../nofile.ttf",
+        "../../nofile.ttf",
     };
 
     for (const auto &candidate : candidates)
@@ -35,9 +45,12 @@ std::filesystem::path locateFont()
         std::error_code ec;
         if (std::filesystem::exists(candidate, ec))
         {
+            std::cout << "[Fonts] Found font at: " << std::filesystem::absolute(candidate, ec) << std::endl;
             return std::filesystem::absolute(candidate, ec);
         }
     }
+
+    std::cerr << "[Fonts] No suitable font file found in candidate paths." << std::endl;
     return {};
 }
 

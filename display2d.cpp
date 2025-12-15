@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <chrono>
 #include <glm/glm.hpp>
 
 namespace
@@ -21,9 +23,17 @@ struct ComputePushConstants
     uint32_t colorSpace;
     uint32_t colorRange;
     uint32_t overlayEnabled;
+    uint32_t fpsOverlayEnabled;
     glm::vec2 overlayOrigin;
     glm::vec2 overlaySize;
+    glm::vec2 fpsOverlayOrigin;
+    glm::vec2 fpsOverlaySize;
+    float scrubProgress;
+    float scrubPlaying;
 };
+static_assert(sizeof(ComputePushConstants) == 96, "Compute push constants must match shader layout");
+static_assert(offsetof(ComputePushConstants, overlayOrigin) == 56, "overlayOrigin offset mismatch with shader");
+static_assert(offsetof(ComputePushConstants, fpsOverlayOrigin) == 72, "fpsOverlayOrigin offset mismatch with shader");
 
 VkExtent2D chooseSwapExtent(GLFWwindow* window, const VkSurfaceCapabilitiesKHR& capabilities)
 {
@@ -65,39 +75,90 @@ Display2D::Display2D(Engine* engine, int width, int height, const char* title)
 
 Display2D::~Display2D()
 {
+    shutdown();
+}
+
+void Display2D::shutdown()
+{
+    if (shutdownPerformed)
+    {
+        return;
+    }
+
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+
+    // Wait for any in-flight frame work to complete before tearing down swapchain-dependent resources.
+    if (!inFlightFences.empty() && engine && engine->logicalDevice != VK_NULL_HANDLE)
+    {
+        vkWaitForFences(engine->logicalDevice,
+                        static_cast<uint32_t>(inFlightFences.size()),
+                        inFlightFences.data(),
+                        VK_TRUE,
+                        UINT64_MAX);
+    }
+    if (graphicsQueue != VK_NULL_HANDLE)
+    {
+        vkQueueWaitIdle(graphicsQueue);
+    }
     if (engine && engine->logicalDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(engine->logicalDevice);
     }
+    auto tWait = clock::now();
+
     cleanupSwapchain();
+    auto tSwapchain = clock::now();
+
     if (descriptorPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(engine->logicalDevice, descriptorPool, nullptr);
+        descriptorPool = VK_NULL_HANDLE;
     }
     if (computePipeline != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(engine->logicalDevice, computePipeline, nullptr);
+        computePipeline = VK_NULL_HANDLE;
     }
     if (pipelineLayout != VK_NULL_HANDLE)
     {
         vkDestroyPipelineLayout(engine->logicalDevice, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
     }
     if (descriptorSetLayout != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(engine->logicalDevice, descriptorSetLayout, nullptr);
+        descriptorSetLayout = VK_NULL_HANDLE;
     }
     if (commandPool != VK_NULL_HANDLE)
     {
         vkDestroyCommandPool(engine->logicalDevice, commandPool, nullptr);
+        commandPool = VK_NULL_HANDLE;
     }
+    auto tGpuObjects = clock::now();
+
     if (surface != VK_NULL_HANDLE)
     {
         vkDestroySurfaceKHR(engine->instance, surface, nullptr);
+        surface = VK_NULL_HANDLE;
     }
     if (window)
     {
         glfwDestroyWindow(window);
+        window = nullptr;
     }
+    auto tEnd = clock::now();
+
+    auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(tWait - t0).count();
+    auto swapchainMs = std::chrono::duration_cast<std::chrono::milliseconds>(tSwapchain - tWait).count();
+    auto gpuObjectsMs = std::chrono::duration_cast<std::chrono::milliseconds>(tGpuObjects - tSwapchain).count();
+    auto windowMs = std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tGpuObjects).count();
+    std::cout << "[Display2D] teardown timing: waitAll=" << waitMs
+              << " ms, swapchain=" << swapchainMs
+              << " ms, gpuObjects=" << gpuObjectsMs
+              << " ms, window=" << windowMs << " ms" << std::endl;
+
+    shutdownPerformed = true;
 }
 
 void Display2D::createWindow(const char* title)
@@ -215,10 +276,14 @@ void Display2D::createSwapchain()
 
 void Display2D::cleanupSwapchain()
 {
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+
     for (auto view : swapchainImageViews)
     {
         vkDestroyImageView(engine->logicalDevice, view, nullptr);
     }
+    auto tViews = clock::now();
     swapchainImageViews.clear();
     swapchainImages.clear();
 
@@ -226,14 +291,17 @@ void Display2D::cleanupSwapchain()
     {
         vkDestroyFence(engine->logicalDevice, fence, nullptr);
     }
+    auto tFences = clock::now();
     for (auto sem : imageAvailableSemaphores)
     {
         vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
     }
+    auto tImageSems = clock::now();
     for (auto sem : renderFinishedSemaphores)
     {
         vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
     }
+    auto tRenderSems = clock::now();
 
     imageAvailableSemaphores.clear();
     renderFinishedSemaphores.clear();
@@ -244,6 +312,18 @@ void Display2D::cleanupSwapchain()
         vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;
     }
+    auto tSwapchain = clock::now();
+
+    auto viewsMs = std::chrono::duration_cast<std::chrono::milliseconds>(tViews - t0).count();
+    auto fencesMs = std::chrono::duration_cast<std::chrono::milliseconds>(tFences - tViews).count();
+    auto semAvailMs = std::chrono::duration_cast<std::chrono::milliseconds>(tImageSems - tFences).count();
+    auto semRenderMs = std::chrono::duration_cast<std::chrono::milliseconds>(tRenderSems - tImageSems).count();
+    auto swapchainMs = std::chrono::duration_cast<std::chrono::milliseconds>(tSwapchain - tRenderSems).count();
+    std::cout << "[Display2D] cleanupSwapchain timing: views=" << viewsMs
+              << " ms, fences=" << fencesMs
+              << " ms, sem(ap)=" << semAvailMs
+              << " ms, sem(render)=" << semRenderMs
+              << " ms, swapchain=" << swapchainMs << " ms" << std::endl;
 }
 
 void Display2D::createCommandResources()
@@ -271,30 +351,36 @@ void Display2D::createCommandResources()
 void Display2D::createComputeResources()
 {
     // Descriptor set layout
-    std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
     // 0: swapchain storage image
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 1: overlay
+    // 1: overlay (rectangle)
     bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 2: luma
+    // 2: fps overlay (text)
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 3: chroma
+    // 2: luma
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 3: chroma
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -348,7 +434,7 @@ void Display2D::createComputeResources()
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(swapchainImages.size());
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapchainImages.size()) * 3;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapchainImages.size()) * 4;
 
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
@@ -412,15 +498,14 @@ void Display2D::pollEvents() const
     glfwPollEvents();
 }
 
-void Display2D::renderFrame(Primitive* videoPrimitive,
-                            Primitive* overlayPrimitive,
+void Display2D::renderFrame(const VideoImageSet& videoImages,
+                            const OverlayImageInfo& overlayInfo,
+                            const OverlayImageInfo& fpsOverlayInfo,
                             const video::VideoColorInfo& colorInfo,
-                            uint32_t videoWidth,
-                            uint32_t videoHeight,
-                            VkExtent2D overlaySize,
-                            VkOffset2D overlayOffset)
+                            float scrubProgress,
+                            float scrubPlaying)
 {
-    if (!videoPrimitive || swapchainImages.empty())
+    if (swapchainImages.empty() || videoImages.luma.view == VK_NULL_HANDLE || videoImages.luma.sampler == VK_NULL_HANDLE)
     {
         return;
     }
@@ -470,35 +555,57 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
                          0, nullptr,
                          1, &toGeneral);
 
+    VkImageMemoryBarrier toRead{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toRead.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.image = swapImage;
+    toRead.subresourceRange = toGeneral.subresourceRange;
+    toRead.srcAccessMask = 0;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(commandBuffer,
+                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0,
+                         0, nullptr,
+                         0, nullptr,
+                         1, &toRead);
+
     // Update descriptor set for this image
     VkDescriptorImageInfo storageInfo{};
     storageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     storageInfo.imageView = swapchainImageViews[imageIndex];
 
-    VkDescriptorImageInfo lumaInfo{};
-    lumaInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    lumaInfo.imageView = videoPrimitive->textureImageView;
-    lumaInfo.sampler = videoPrimitive->textureSampler;
-
-    VkDescriptorImageInfo chromaInfo{};
-    chromaInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    chromaInfo.imageView = videoPrimitive->chromaImageView ? videoPrimitive->chromaImageView : videoPrimitive->textureImageView;
-    chromaInfo.sampler = videoPrimitive->textureSampler;
-
-    VkDescriptorImageInfo overlayInfo{};
-    overlayInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    if (overlayPrimitive && overlayPrimitive->textureImageView)
+    VkDescriptorImageInfo overlayImageInfo{};
+    overlayImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    if (overlayInfo.enabled && overlayInfo.overlay.view != VK_NULL_HANDLE && overlayInfo.overlay.sampler != VK_NULL_HANDLE)
     {
-        overlayInfo.imageView = overlayPrimitive->textureImageView;
-        overlayInfo.sampler = overlayPrimitive->textureSampler;
+        overlayImageInfo.imageView = overlayInfo.overlay.view;
+        overlayImageInfo.sampler = overlayInfo.overlay.sampler;
     }
     else
     {
-        overlayInfo.imageView = videoPrimitive->textureImageView;
-        overlayInfo.sampler = videoPrimitive->textureSampler;
+        overlayImageInfo.imageView = videoImages.luma.view;
+        overlayImageInfo.sampler = videoImages.luma.sampler;
     }
+    VkDescriptorImageInfo fpsOverlayImageInfo{};
+    fpsOverlayImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    fpsOverlayImageInfo.imageView = (fpsOverlayInfo.overlay.view != VK_NULL_HANDLE) ? fpsOverlayInfo.overlay.view : overlayImageInfo.imageView;
+    fpsOverlayImageInfo.sampler = (fpsOverlayInfo.overlay.sampler != VK_NULL_HANDLE) ? fpsOverlayInfo.overlay.sampler : overlayImageInfo.sampler;
 
-    std::array<VkWriteDescriptorSet, 4> writes{};
+    VkDescriptorImageInfo lumaInfo{};
+    lumaInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    lumaInfo.imageView = videoImages.luma.view;
+    lumaInfo.sampler = videoImages.luma.sampler;
+
+    VkDescriptorImageInfo chromaInfo{};
+    chromaInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    chromaInfo.imageView = videoImages.chroma.view ? videoImages.chroma.view : videoImages.luma.view;
+    chromaInfo.sampler = videoImages.chroma.sampler ? videoImages.chroma.sampler : videoImages.luma.sampler;
+
+    std::array<VkWriteDescriptorSet, 5> writes{};
     // 0: storage (swapchain)
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptorSets[imageIndex];
@@ -513,23 +620,31 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
     writes[1].dstBinding = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[1].descriptorCount = 1;
-    writes[1].pImageInfo = &overlayInfo;
+    writes[1].pImageInfo = &overlayImageInfo;
 
-    // 2: luma
+    // 2: fps overlay
     writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[2].dstSet = descriptorSets[imageIndex];
     writes[2].dstBinding = 2;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[2].descriptorCount = 1;
-    writes[2].pImageInfo = &lumaInfo;
+    writes[2].pImageInfo = &fpsOverlayImageInfo;
 
-    // 3: chroma
+    // 3: luma
     writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[3].dstSet = descriptorSets[imageIndex];
     writes[3].dstBinding = 3;
     writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[3].descriptorCount = 1;
-    writes[3].pImageInfo = &chromaInfo;
+    writes[3].pImageInfo = &lumaInfo;
+
+    // 4: chroma
+    writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[4].dstSet = descriptorSets[imageIndex];
+    writes[4].dstBinding = 4;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[4].descriptorCount = 1;
+    writes[4].pImageInfo = &chromaInfo;
 
     vkUpdateDescriptorSets(engine->logicalDevice, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
@@ -544,7 +659,7 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
                             nullptr);
 
     const float outputAspect = static_cast<float>(swapchainExtent.width) / std::max(1u, swapchainExtent.height);
-    const float videoAspect = videoHeight > 0 ? static_cast<float>(videoWidth) / static_cast<float>(videoHeight) : 1.0f;
+    const float videoAspect = videoImages.height > 0 ? static_cast<float>(videoImages.width) / static_cast<float>(videoImages.height) : 1.0f;
     float targetWidth = static_cast<float>(swapchainExtent.width);
     float targetHeight = static_cast<float>(swapchainExtent.height);
     if (videoAspect > outputAspect)
@@ -560,32 +675,42 @@ void Display2D::renderFrame(Primitive* videoPrimitive,
 
     ComputePushConstants push{};
     push.outputSize = glm::vec2(static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height));
-    push.videoSize = glm::vec2(static_cast<float>(videoWidth), static_cast<float>(videoHeight));
+    push.videoSize = glm::vec2(static_cast<float>(videoImages.width), static_cast<float>(videoImages.height));
     push.targetOrigin = glm::vec2(originX, originY);
     push.targetSize = glm::vec2(targetWidth, targetHeight);
-    push.chromaDiv = glm::vec2(static_cast<float>(videoPrimitive->yuvChromaDivX),
-                               static_cast<float>(videoPrimitive->yuvChromaDivY));
+    push.chromaDiv = glm::vec2(static_cast<float>(videoImages.chromaDivX),
+                               static_cast<float>(videoImages.chromaDivY));
     push.colorSpace = static_cast<uint32_t>(colorInfo.colorSpace);
     push.colorRange = static_cast<uint32_t>(colorInfo.colorRange);
     // Clamp overlay placement to the current output extent to avoid off-screen coordinates
     uint32_t maxOverlayW = std::max(1u, swapchainExtent.width);
     uint32_t maxOverlayH = std::max(1u, swapchainExtent.height);
-    uint32_t clampedOverlayW = std::min(overlaySize.width, maxOverlayW);
-    uint32_t clampedOverlayH = std::min(overlaySize.height, maxOverlayH);
-    int32_t clampedX = std::clamp(overlayOffset.x, 0, static_cast<int32_t>(maxOverlayW - clampedOverlayW));
-    int32_t clampedY = std::clamp(overlayOffset.y, 0, static_cast<int32_t>(maxOverlayH - clampedOverlayH));
+    uint32_t clampedOverlayW = std::min(overlayInfo.extent.width, maxOverlayW);
+    uint32_t clampedOverlayH = std::min(overlayInfo.extent.height, maxOverlayH);
+    int32_t clampedX = std::clamp(overlayInfo.offset.x, 0, static_cast<int32_t>(maxOverlayW - clampedOverlayW));
+    int32_t clampedY = std::clamp(overlayInfo.offset.y, 0, static_cast<int32_t>(maxOverlayH - clampedOverlayH));
 
-    push.overlayEnabled = (overlayPrimitive && overlayPrimitive->textureImageView && clampedOverlayW > 0 && clampedOverlayH > 0) ? 1u : 0u;
-    // Debug
-    static int debugFrame = 0;
-    if (debugFrame++ % 60 == 0) {
-        std::cout << "[Display2D] overlayEnabled=" << push.overlayEnabled 
-                  << ", textureImageView=" << (overlayPrimitive ? overlayPrimitive->textureImageView : 0)
-                  << ", clampedOverlay=" << clampedOverlayW << "x" << clampedOverlayH
-                  << ", origin=" << clampedX << "," << clampedY << std::endl;
-    }
+    uint32_t clampedFpsW = std::min(fpsOverlayInfo.extent.width, maxOverlayW);
+    uint32_t clampedFpsH = std::min(fpsOverlayInfo.extent.height, maxOverlayH);
+    int32_t clampedFpsX = std::clamp(fpsOverlayInfo.offset.x, 0, static_cast<int32_t>(maxOverlayW - clampedFpsW));
+    int32_t clampedFpsY = std::clamp(fpsOverlayInfo.offset.y, 0, static_cast<int32_t>(maxOverlayH - clampedFpsH));
+
+    const bool overlayValid = overlayInfo.enabled &&
+                              overlayInfo.overlay.view != VK_NULL_HANDLE &&
+                              overlayInfo.overlay.sampler != VK_NULL_HANDLE &&
+                              clampedOverlayW > 0 && clampedOverlayH > 0;
+    const bool fpsOverlayValid = fpsOverlayInfo.enabled &&
+                                 fpsOverlayInfo.overlay.view != VK_NULL_HANDLE &&
+                                 fpsOverlayInfo.overlay.sampler != VK_NULL_HANDLE &&
+                                 clampedFpsW > 0 && clampedFpsH > 0;
+    push.overlayEnabled = overlayValid ? 1u : 0u;
+    push.fpsOverlayEnabled = fpsOverlayValid ? 1u : 0u;
+    push.scrubProgress = scrubProgress;
+    push.scrubPlaying = scrubPlaying;
     push.overlayOrigin = glm::vec2(static_cast<float>(clampedX), static_cast<float>(clampedY));
     push.overlaySize = glm::vec2(static_cast<float>(clampedOverlayW), static_cast<float>(clampedOverlayH));
+    push.fpsOverlayOrigin = glm::vec2(static_cast<float>(clampedFpsX), static_cast<float>(clampedFpsY));
+    push.fpsOverlaySize = glm::vec2(static_cast<float>(clampedFpsW), static_cast<float>(clampedFpsH));
 
     vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &push);
 

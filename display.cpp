@@ -762,6 +762,12 @@ void Display::destroyOverlayBuffer()
     overlayResources.height = 0;
 }
 
+void logBitmap(const glyph::OverlayBitmap& bitmap) {
+    std::cout << "[Display] Overlay bitmap generated. "
+              << "Width: " << bitmap.width << ", Height: " << bitmap.height
+              << ", Pixels empty: " << (bitmap.pixels.empty() ? "yes" : "no") << std::endl;
+}
+
 void Display::updateOverlayBitmap(float fps)
 {
     const uint32_t referenceWidth = static_cast<uint32_t>(std::max(1, width));
@@ -770,6 +776,7 @@ void Display::updateOverlayBitmap(float fps)
 
     if (bitmap.width == 0 || bitmap.height == 0 || bitmap.pixels.empty())
     {
+        logBitmap(bitmap);
         overlayResources.width = 0;
         overlayResources.height = 0;
         return;
@@ -789,6 +796,7 @@ void Display::updateOverlayBitmap(float fps)
         return;
     }
 
+    logBitmap(bitmap);
     std::memcpy(overlayResources.mapped, bitmap.pixels.data(), static_cast<size_t>(requiredSize));
     overlayResources.width = bitmap.width;
     overlayResources.height = bitmap.height;

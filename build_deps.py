@@ -98,6 +98,31 @@ def ensure_exists_or_exit(directory):
         print("    git submodule update --init --recursive")
         sys.exit(1)
 
+def ensure_pkg_with_apt(pkg_config_name, apt_packages, description, extra_check=None):
+    """
+    Ensure a dependency is available via pkg-config, installing via apt-get if
+    possible. Exits with guidance if the dependency is still missing.
+    """
+    check_fn = extra_check or (lambda: pkg_config_exists(pkg_config_name))
+
+    if check_fn():
+        return
+
+    pkg_list = " ".join(apt_packages)
+    print(f"{description} not found via pkg-config ({pkg_config_name}).")
+    if shutil.which("apt-get"):
+        print(f"Attempting to install {description} via apt-get: {pkg_list}")
+        run_command(f"sudo apt-get update && sudo apt-get install -y {pkg_list}")
+        if check_fn():
+            print(f"{description} installed.")
+            return
+        print(f"{description} still not found after installation attempt.")
+    else:
+        print("apt-get not available to auto-install dependencies.")
+
+    print(f"Please install {description} and re-run build_deps.py. Suggested packages: {pkg_list}")
+    sys.exit(1)
+
 def is_detached_head(directory):
     """Return True if the git repo at directory is in detached HEAD state."""
     result = subprocess.run(
@@ -302,7 +327,7 @@ def setup_ffmpeg():
     print("Configuring and building FFmpeg with static libraries...")
     build_dir = ffmpeg_dir / ".build"
     build_dir.mkdir(parents=True, exist_ok=True)
-    install_prefix = (ffmpeg_dir / ".ffmpeg").resolve()
+    install_prefix = (build_dir / "install").resolve()
     install_prefix.mkdir(parents=True, exist_ok=True)
     hwaccel_options = determine_hwaccel_flags()
     if hwaccel_options["flags"]:
@@ -337,6 +362,44 @@ def setup_freetype():
         print("Cloning FreeType repository...")
         run_command("git clone https://github.com/freetype/freetype.git freetype")
         print("FreeType repository cloned.")
+
+    # Ensure system build deps exist before configuring FreeType.
+    ensure_pkg_with_apt("zlib", ["zlib1g-dev"], "zlib development files")
+    ensure_pkg_with_apt("libpng", ["libpng-dev"], "libpng development files")
+
+    # The bzip2 package on Debian/Ubuntu does not ship a pkg-config file.
+    # Accept either pkg-config or presence of headers/libs.
+    def bzip2_available():
+        if pkg_config_exists("bzip2"):
+            return True
+        header = Path("/usr/include/bzlib.h")
+        lib_candidates = [
+            "/usr/lib/x86_64-linux-gnu/libbz2.so",
+            "/usr/local/lib/libbz2.so",
+        ]
+        if header.exists() and any(Path(p).exists() for p in lib_candidates):
+            return True
+        return False
+
+    ensure_pkg_with_apt(
+        "bzip2",
+        ["libbz2-dev"],
+        "bzip2 development files",
+        extra_check=bzip2_available,
+    )
+
+    # Brotli is optional in FreeType but required when WOFF2 is enabled.
+    def brotli_available():
+        if pkg_config_exists("libbrotlidec"):
+            return True
+        return Path("/usr/include/brotli/decode.h").exists()
+
+    ensure_pkg_with_apt(
+        "libbrotlidec",
+        ["libbrotli-dev"],
+        "Brotli development files",
+        extra_check=brotli_available,
+    )
 
     build_dir = freetype_dir / "build"
     install_dir = build_dir / "install"
