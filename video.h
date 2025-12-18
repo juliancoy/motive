@@ -67,6 +67,7 @@ struct VideoDecoder {
     std::string implementationName = "Software";
     PrimitiveYuvFormat outputFormat = PrimitiveYuvFormat::NV12;
     bool planarYuv = false;
+    bool swapChromaUV = false;
     bool chromaInterleaved = false;
     uint32_t chromaDivX = 2;
     uint32_t chromaDivY = 2;
@@ -88,18 +89,22 @@ struct VideoDecoder {
     bool asyncDecoding = false;
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> threadRunning{false};
+    std::atomic<int64_t> seekTargetMicroseconds{-1};
 };
 
 std::optional<std::filesystem::path> locateVideoFile(const std::string& filename);
 bool initializeVideoDecoder(const std::filesystem::path& videoPath,
                             VideoDecoder& decoder,
                             const DecoderInitParams& initParams = DecoderInitParams{});
+bool seekVideoDecoder(VideoDecoder& decoder, double targetSeconds);
 struct DecodedFrame {
     std::vector<uint8_t> buffer;
     double ptsSeconds = 0.0;
 };
 
-bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame);
+bool decodeNextFrame(VideoDecoder& decoder,
+                     DecodedFrame& decodedFrame,
+                     bool copyFrameBuffer = true);
 bool startAsyncDecoding(VideoDecoder& decoder, size_t maxBufferedFrames = 12);
 bool acquireDecodedFrame(VideoDecoder& decoder, DecodedFrame& outFrame);
 void stopAsyncDecoding(VideoDecoder& decoder);

@@ -15,11 +15,11 @@ manifest_path = os.path.join(this_dir, ".build_manifest.json")
 ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
+main_sources = ["motive3d.cpp", "motive2d.cpp"]
 so_sources = []
 for file in os.listdir(this_dir):
-    if file.endswith(".cpp") and "main" not in file:
+    if file.endswith(".cpp") and file not in main_sources:
         so_sources.append(file)
-main_sources = ["motive3d.cpp", "motive2d.cpp"]
 so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
 

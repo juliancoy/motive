@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <chrono>
+#include <glm/vec2.hpp>
 #include "video.h"
 
 class Engine;
@@ -31,6 +32,30 @@ struct OverlayImageInfo
     bool enabled = false;
 };
 
+struct RenderOverrides
+{
+    // Optional: override where the video is placed in the output framebuffer (in pixels)
+    bool useTargetOverride = false;
+    glm::vec2 targetOrigin{0.0f, 0.0f};
+    glm::vec2 targetSize{0.0f, 0.0f};
+    // Optional: crop region in normalized video UVs (0-1)
+    bool useCrop = false;
+    glm::vec2 cropOrigin{0.0f, 0.0f};
+    glm::vec2 cropSize{1.0f, 1.0f};
+    // Optional: hide scrubber/play controls
+    bool hideScrubber = false;
+};
+
+struct ColorAdjustments
+{
+    float exposure = 0.0f;
+    float contrast = 1.0f;
+    float saturation = 1.0f;
+    glm::vec3 shadows{1.0f};
+    glm::vec3 midtones{1.0f};
+    glm::vec3 highlights{1.0f};
+};
+
 class Display2D
 {
 public:
@@ -42,7 +67,9 @@ public:
                      const OverlayImageInfo& fpsOverlayInfo,
                      const video::VideoColorInfo& colorInfo,
                      float scrubProgress,
-                     float scrubPlaying);
+                     float scrubPlaying,
+                     const RenderOverrides* overrides = nullptr,
+                     const ColorAdjustments* adjustments = nullptr);
     void shutdown();
     bool shouldClose() const;
     void pollEvents() const;

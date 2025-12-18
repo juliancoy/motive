@@ -19,6 +19,8 @@ struct ComputePushConstants
     glm::vec2 videoSize;
     glm::vec2 targetOrigin;
     glm::vec2 targetSize;
+    glm::vec2 cropOrigin;
+    glm::vec2 cropSize;
     glm::vec2 chromaDiv;
     uint32_t colorSpace;
     uint32_t colorRange;
@@ -30,10 +32,18 @@ struct ComputePushConstants
     glm::vec2 fpsOverlaySize;
     float scrubProgress;
     float scrubPlaying;
+    uint32_t scrubberEnabled;
+    uint32_t _padScrub0;
+    uint32_t _padScrub1;
+    uint32_t _padScrub2;
+    glm::vec4 grading;    // exposure (x), contrast (y), saturation (z)
+    glm::vec4 shadows;    // rgb, w unused
+    glm::vec4 midtones;   // rgb, w unused
+    glm::vec4 highlights; // rgb, w unused
 };
-static_assert(sizeof(ComputePushConstants) == 96, "Compute push constants must match shader layout");
-static_assert(offsetof(ComputePushConstants, overlayOrigin) == 56, "overlayOrigin offset mismatch with shader");
-static_assert(offsetof(ComputePushConstants, fpsOverlayOrigin) == 72, "fpsOverlayOrigin offset mismatch with shader");
+static_assert(sizeof(ComputePushConstants) == 192, "Compute push constants must match shader layout");
+static_assert(offsetof(ComputePushConstants, overlayOrigin) == 72, "overlayOrigin offset mismatch with shader");
+static_assert(offsetof(ComputePushConstants, fpsOverlayOrigin) == 88, "fpsOverlayOrigin offset mismatch with shader");
 
 VkExtent2D chooseSwapExtent(GLFWwindow* window, const VkSurfaceCapabilitiesKHR& capabilities)
 {
@@ -503,7 +513,9 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
                             const OverlayImageInfo& fpsOverlayInfo,
                             const video::VideoColorInfo& colorInfo,
                             float scrubProgress,
-                            float scrubPlaying)
+                            float scrubPlaying,
+                            const RenderOverrides* overrides,
+                            const ColorAdjustments* adjustments)
 {
     if (swapchainImages.empty() || videoImages.luma.view == VK_NULL_HANDLE || videoImages.luma.sampler == VK_NULL_HANDLE)
     {
@@ -662,22 +674,44 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     const float videoAspect = videoImages.height > 0 ? static_cast<float>(videoImages.width) / static_cast<float>(videoImages.height) : 1.0f;
     float targetWidth = static_cast<float>(swapchainExtent.width);
     float targetHeight = static_cast<float>(swapchainExtent.height);
-    if (videoAspect > outputAspect)
+    if (!overrides || !overrides->useTargetOverride)
     {
-        targetHeight = targetWidth / videoAspect;
+        if (videoAspect > outputAspect)
+        {
+            targetHeight = targetWidth / videoAspect;
+        }
+        else
+        {
+            targetWidth = targetHeight * videoAspect;
+        }
     }
     else
     {
-        targetWidth = targetHeight * videoAspect;
+        targetWidth = overrides->targetSize.x;
+        targetHeight = overrides->targetSize.y;
     }
-    const float originX = (static_cast<float>(swapchainExtent.width) - targetWidth) * 0.5f;
-    const float originY = (static_cast<float>(swapchainExtent.height) - targetHeight) * 0.5f;
+    const float originX = (overrides && overrides->useTargetOverride)
+                              ? overrides->targetOrigin.x
+                              : (static_cast<float>(swapchainExtent.width) - targetWidth) * 0.5f;
+    const float originY = (overrides && overrides->useTargetOverride)
+                              ? overrides->targetOrigin.y
+                              : (static_cast<float>(swapchainExtent.height) - targetHeight) * 0.5f;
 
     ComputePushConstants push{};
     push.outputSize = glm::vec2(static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height));
     push.videoSize = glm::vec2(static_cast<float>(videoImages.width), static_cast<float>(videoImages.height));
     push.targetOrigin = glm::vec2(originX, originY);
     push.targetSize = glm::vec2(targetWidth, targetHeight);
+    if (overrides && overrides->useCrop)
+    {
+        push.cropOrigin = overrides->cropOrigin;
+        push.cropSize = overrides->cropSize;
+    }
+    else
+    {
+        push.cropOrigin = glm::vec2(0.0f, 0.0f);
+        push.cropSize = glm::vec2(1.0f, 1.0f);
+    }
     push.chromaDiv = glm::vec2(static_cast<float>(videoImages.chromaDivX),
                                static_cast<float>(videoImages.chromaDivY));
     push.colorSpace = static_cast<uint32_t>(colorInfo.colorSpace);
@@ -707,6 +741,22 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     push.fpsOverlayEnabled = fpsOverlayValid ? 1u : 0u;
     push.scrubProgress = scrubProgress;
     push.scrubPlaying = scrubPlaying;
+    push.scrubberEnabled = (overrides && overrides->hideScrubber) ? 0u : 1u;
+    push._padScrub0 = push._padScrub1 = push._padScrub2 = 0;
+    if (adjustments)
+    {
+        push.grading = glm::vec4(adjustments->exposure, adjustments->contrast, adjustments->saturation, 0.0f);
+        push.shadows = glm::vec4(adjustments->shadows, 0.0f);
+        push.midtones = glm::vec4(adjustments->midtones, 0.0f);
+        push.highlights = glm::vec4(adjustments->highlights, 0.0f);
+    }
+    else
+    {
+        push.grading = glm::vec4(0.0f, 1.0f, 1.0f, 0.0f);
+        push.shadows = glm::vec4(1.0f);
+        push.midtones = glm::vec4(1.0f);
+        push.highlights = glm::vec4(1.0f);
+    }
     push.overlayOrigin = glm::vec2(static_cast<float>(clampedX), static_cast<float>(clampedY));
     push.overlaySize = glm::vec2(static_cast<float>(clampedOverlayW), static_cast<float>(clampedOverlayH));
     push.fpsOverlayOrigin = glm::vec2(static_cast<float>(clampedFpsX), static_cast<float>(clampedFpsY));

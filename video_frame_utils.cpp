@@ -43,7 +43,11 @@ constexpr PlanarFormatConfig kPlanarFormats[] = {
 
 bool configureNv12Format(VideoDecoder& decoder, AVPixelFormat format)
 {
-    if (format != AV_PIX_FMT_NV12) {
+    if (format != AV_PIX_FMT_NV12
+#if defined(AV_PIX_FMT_NV21)
+        && format != AV_PIX_FMT_NV21
+#endif
+    ) {
         return false;
     }
     decoder.planarYuv = false;
@@ -51,6 +55,12 @@ bool configureNv12Format(VideoDecoder& decoder, AVPixelFormat format)
     decoder.outputFormat = PrimitiveYuvFormat::NV12;
     decoder.bytesPerComponent = 1;
     decoder.bitDepth = 8;
+    decoder.swapChromaUV =
+#if defined(AV_PIX_FMT_NV21)
+        (format == AV_PIX_FMT_NV21);
+#else
+        false;
+#endif
     decoder.chromaDivX = 2;
     decoder.chromaDivY = 2;
     decoder.chromaWidth = std::max<uint32_t>(1u, (decoder.width + decoder.chromaDivX - 1) / decoder.chromaDivX);
@@ -74,6 +84,7 @@ bool configurePlanarFormat(VideoDecoder& decoder, AVPixelFormat pixFormat)
         }
 
         decoder.planarYuv = true;
+        decoder.swapChromaUV = false;
         decoder.outputFormat = config.outputFormat;
         decoder.chromaDivX = config.chromaDivX;
         decoder.chromaDivY = config.chromaDivY;
@@ -111,7 +122,8 @@ void copyNv12Plane(uint8_t* dst,
 void copyNv12FrameToBuffer(const AVFrame* frame,
                            std::vector<uint8_t>& buffer,
                            int width,
-                           int height)
+                           int height,
+                           bool swapChromaUV)
 {
     const size_t yPlaneSize = static_cast<size_t>(width) * height;
     const size_t uvPlaneSize = yPlaneSize / 2;
@@ -124,6 +136,11 @@ void copyNv12FrameToBuffer(const AVFrame* frame,
     uint8_t* dstUV = buffer.data() + yPlaneSize;
     copyNv12Plane(dstY, frame->data[0], width, height, width, frame->linesize[0]);
     copyNv12Plane(dstUV, frame->data[1], width, height / 2, width, frame->linesize[1]);
+    if (swapChromaUV) {
+        for (size_t i = 0; i + 1 < uvPlaneSize; i += 2) {
+            std::swap(dstUV[i], dstUV[i + 1]);
+        }
+    }
 }
 
 void copyPlanarFrameToBuffer(const VideoDecoder& decoder,
@@ -146,14 +163,15 @@ void copyPlanarFrameToBuffer(const VideoDecoder& decoder,
 
     uint8_t* dstY = buffer.data();
     const size_t lumaRowBytes = static_cast<size_t>(width) * bytesPerComponent;
+    const bool interleaved = decoder.chromaInterleaved;
+    const uint32_t bitDepth = decoder.bitDepth > 0 ? decoder.bitDepth : 8;
+    const uint32_t shift = (interleaved || bitDepth >= 16) ? 0u : 16u - bitDepth;
     if (bytesPerComponent == 1) {
         for (uint32_t row = 0; row < height; ++row) {
             const uint8_t* srcRow = frame->data[0] + static_cast<size_t>(row) * frame->linesize[0];
             std::memcpy(dstY + static_cast<size_t>(row) * lumaRowBytes, srcRow, lumaRowBytes);
         }
     } else {
-        const uint32_t bitDepth = decoder.bitDepth > 0 ? decoder.bitDepth : 8;
-        const uint32_t shift = bitDepth >= 16 ? 0u : 16u - bitDepth;
         uint16_t* dstY16 = reinterpret_cast<uint16_t*>(dstY);
         for (uint32_t row = 0; row < height; ++row) {
             const uint16_t* srcRow = reinterpret_cast<const uint16_t*>(frame->data[0] + static_cast<size_t>(row) * frame->linesize[0]);
@@ -166,7 +184,6 @@ void copyPlanarFrameToBuffer(const VideoDecoder& decoder,
     }
 
     uint8_t* dstUv = buffer.data() + decoder.yPlaneBytes;
-    const bool interleaved = decoder.chromaInterleaved;
     if (bytesPerComponent == 1) {
         if (!interleaved) {
             for (uint32_t row = 0; row < chromaHeight; ++row) {
@@ -183,12 +200,17 @@ void copyPlanarFrameToBuffer(const VideoDecoder& decoder,
             for (uint32_t row = 0; row < chromaHeight; ++row) {
                 const uint8_t* srcRow = frame->data[1] + static_cast<size_t>(row) * frame->linesize[1];
                 uint8_t* dstRow = dstUv + static_cast<size_t>(row) * chromaRowBytes;
-                std::memcpy(dstRow, srcRow, chromaRowBytes);
+                if (decoder.swapChromaUV) {
+                    for (uint32_t col = 0; col < chromaWidth; ++col) {
+                        dstRow[col * 2 + 0] = srcRow[col * 2 + 1];
+                        dstRow[col * 2 + 1] = srcRow[col * 2 + 0];
+                    }
+                } else {
+                    std::memcpy(dstRow, srcRow, chromaRowBytes);
+                }
             }
         }
     } else {
-        const uint32_t bitDepth = decoder.bitDepth > 0 ? decoder.bitDepth : 8;
-        const uint32_t shift = bitDepth >= 16 ? 0u : 16u - bitDepth;
         uint16_t* dstUv16 = reinterpret_cast<uint16_t*>(dstUv);
         for (uint32_t row = 0; row < chromaHeight; ++row) {
             uint16_t* dstRow = dstUv16 + static_cast<size_t>(row) * chromaWidth * 2;
@@ -210,8 +232,13 @@ void copyPlanarFrameToBuffer(const VideoDecoder& decoder,
                         uVal = static_cast<uint16_t>(uVal << shift);
                         vVal = static_cast<uint16_t>(vVal << shift);
                     }
-                    dstRow[col * 2 + 0] = uVal;
-                    dstRow[col * 2 + 1] = vVal;
+                    if (decoder.swapChromaUV) {
+                        dstRow[col * 2 + 0] = vVal;
+                        dstRow[col * 2 + 1] = uVal;
+                    } else {
+                        dstRow[col * 2 + 0] = uVal;
+                        dstRow[col * 2 + 1] = vVal;
+                    }
                 }
             }
         }
@@ -243,7 +270,7 @@ void copyDecodedFrameToBuffer(const VideoDecoder& decoder,
     if (decoder.planarYuv) {
         copyPlanarFrameToBuffer(decoder, frame, buffer);
     } else {
-        copyNv12FrameToBuffer(frame, buffer, decoder.width, decoder.height);
+        copyNv12FrameToBuffer(frame, buffer, decoder.width, decoder.height, decoder.swapChromaUV);
     }
 }
 

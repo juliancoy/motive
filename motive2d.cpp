@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iostream>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <memory>
 #include <utility>
@@ -19,8 +20,9 @@
 
 #include "display2d.h"
 #include "engine.h"
-#include "glyph.h"
 #include "light.h"
+#include "overlay.hpp"
+#include "grading.hpp"
 #include "utils.h"
 #include "video.h"
 
@@ -32,19 +34,20 @@ extern "C" {
 namespace
 {
 // Look for the sample video in the current directory (files were moved up).
-const std::filesystem::path kVideoPath = std::filesystem::path("P1090533_main8_hevc_fast.mkv");
+const std::filesystem::path kDefaultVideoPath = std::filesystem::path("P1090533_main8_hevc_fast.mkv");
 constexpr uint32_t kScrubberWidth = 512;
 constexpr uint32_t kScrubberHeight = 64;
 
-struct ImageResource
-{
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    uint32_t width = 0;
-    uint32_t height = 0;
-};
+using overlay::FpsOverlayResources;
+using overlay::ImageResource;
+using overlay::OverlayCompute;
+using overlay::OverlayResources;
+using overlay::destroyImageResource;
+using overlay::destroyOverlayCompute;
+using overlay::initializeOverlayCompute;
+using overlay::runOverlayCompute;
+using overlay::updateFpsOverlay;
+using overlay::uploadImageData;
 
 struct VideoResources
 {
@@ -52,38 +55,6 @@ struct VideoResources
     ImageResource lumaImage;
     ImageResource chromaImage;
     VkSampler sampler = VK_NULL_HANDLE;
-};
-
-struct OverlayResources
-{
-    OverlayImageInfo info;
-    ImageResource image;
-    VkSampler sampler = VK_NULL_HANDLE;
-};
-
-struct FpsOverlayResources
-{
-    OverlayImageInfo info;
-    ImageResource image;
-    float lastFpsValue = -1.0f;
-    uint32_t lastRefWidth = 0;
-    uint32_t lastRefHeight = 0;
-};
-
-struct OverlayCompute
-{
-    VkDevice device = VK_NULL_HANDLE;
-    VkQueue queue = VK_NULL_HANDLE;
-    VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-    VkCommandPool commandPool = VK_NULL_HANDLE;
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-    VkFence fence = VK_NULL_HANDLE;
-    uint32_t width = 0;
-    uint32_t height = 0;
 };
 
 struct VideoPlaybackState
@@ -156,109 +127,141 @@ void parseDebugFlags(int argc, char** argv)
     }
 }
 
+bool isDebugArg(const std::string& arg)
+{
+    return arg == "--debugDecode" || arg == "--debugCleanup" || arg == "--debugOverlay" || arg == "--debugAll";
+}
+
+struct CliOptions
+{
+    std::filesystem::path videoPath;
+    std::optional<bool> swapUV;
+    bool decodeOnly = false;
+};
+
+CliOptions parseCliOptions(int argc, char** argv)
+{
+    std::filesystem::path videoPath = kDefaultVideoPath;
+    std::optional<bool> swapUV;
+    bool decodeOnly = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string arg(argv[i] ? argv[i] : "");
+        if (arg.empty())
+        {
+            continue;
+        }
+        if (isDebugArg(arg))
+        {
+            continue;
+        }
+
+        if (arg == "--video" && i + 1 < argc)
+        {
+            std::string nextArg(argv[i + 1] ? argv[i + 1] : "");
+            if (!nextArg.empty() && nextArg[0] != '-')
+            {
+                videoPath = std::filesystem::path(nextArg);
+                ++i;
+            }
+            continue;
+        }
+        if (arg.rfind("--video=", 0) == 0)
+        {
+            videoPath = std::filesystem::path(arg.substr(std::string("--video=").size()));
+            continue;
+        }
+        if (arg[0] != '-')
+        {
+            videoPath = std::filesystem::path(arg);
+        }
+        else if (arg == "--swapUV")
+        {
+            swapUV = true;
+        }
+        else if (arg == "--noSwapUV")
+        {
+            swapUV = false;
+        }
+        else if (arg == "--decodeOnly")
+        {
+            decodeOnly = true;
+        }
+    }
+    if (videoPath.empty())
+    {
+        videoPath = kDefaultVideoPath;
+    }
+    return CliOptions{videoPath, swapUV, decodeOnly};
+}
+
 bool uploadDecodedFrame(VideoResources& video,
                         Engine* engine,
                         const video::VideoDecoder& decoder,
                         const video::DecodedFrame& frame);
-bool uploadImageData(Engine* engine,
-                     ImageResource& res,
-                     const void* data,
-                     size_t dataSize,
-                     uint32_t width,
-                     uint32_t height,
-                     VkFormat format);
 
-void updateFpsOverlay(VideoPlaybackState& state, float fpsValue, uint32_t fbWidth, uint32_t fbHeight)
+int runDecodeOnlyBenchmark(const std::filesystem::path& videoPath, const std::optional<bool>& swapUvOverride)
 {
-    state.fpsOverlay.lastFpsValue = fpsValue;
-    state.fpsOverlay.lastRefWidth = fbWidth;
-    state.fpsOverlay.lastRefHeight = fbHeight;
-
-    glyph::OverlayBitmap bitmap = glyph::buildFrameRateOverlay(fbWidth, fbHeight, fpsValue);
-    if (bitmap.width == 0 || bitmap.height == 0 || bitmap.pixels.empty())
+    constexpr double kBenchmarkSeconds = 5.0; // default window to measure decode speed
+    if (!std::filesystem::exists(videoPath))
     {
-        state.fpsOverlay.info.enabled = false;
-        return;
+        std::cerr << "[DecodeOnly] Missing video file: " << videoPath << std::endl;
+        return 1;
     }
 
-    if (!uploadImageData(state.engine,
-                         state.fpsOverlay.image,
-                         bitmap.pixels.data(),
-                         bitmap.pixels.size(),
-                         bitmap.width,
-                         bitmap.height,
-                         VK_FORMAT_R8G8B8A8_UNORM))
+    video::VideoDecoder decoder;
+    video::DecoderInitParams params{};
+    params.implementation = video::DecodeImplementation::Vulkan;
+
+    if (!video::initializeVideoDecoder(videoPath, decoder, params))
     {
-        std::cerr << "[Video2D] Failed to upload FPS overlay image." << std::endl;
-        state.fpsOverlay.info.enabled = false;
-        return;
+        std::cerr << "[DecodeOnly] Vulkan decode unavailable, falling back to software." << std::endl;
+        params.implementation = video::DecodeImplementation::Software;
+        if (!video::initializeVideoDecoder(videoPath, decoder, params))
+        {
+            std::cerr << "[DecodeOnly] Failed to initialize decoder." << std::endl;
+            return 1;
+        }
     }
 
-    state.fpsOverlay.info.overlay.view = state.fpsOverlay.image.view;
-    state.fpsOverlay.info.overlay.sampler = (state.overlay.sampler != VK_NULL_HANDLE) ? state.overlay.sampler : state.video.sampler;
-    state.fpsOverlay.info.extent = {bitmap.width, bitmap.height};
-    state.fpsOverlay.info.offset = {static_cast<int32_t>(bitmap.offsetX), static_cast<int32_t>(bitmap.offsetY)};
-    state.fpsOverlay.info.enabled = true;
-}
+    if (swapUvOverride.has_value())
+    {
+        decoder.swapChromaUV = swapUvOverride.value();
+    }
 
-void destroyOverlayCompute(OverlayCompute& comp)
-{
-    if (comp.fence != VK_NULL_HANDLE)
-    {
-        vkDestroyFence(comp.device, comp.fence, nullptr);
-        comp.fence = VK_NULL_HANDLE;
-    }
-    if (comp.commandPool != VK_NULL_HANDLE)
-    {
-        vkDestroyCommandPool(comp.device, comp.commandPool, nullptr);
-        comp.commandPool = VK_NULL_HANDLE;
-    }
-    if (comp.descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(comp.device, comp.descriptorPool, nullptr);
-        comp.descriptorPool = VK_NULL_HANDLE;
-    }
-    if (comp.pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(comp.device, comp.pipeline, nullptr);
-        comp.pipeline = VK_NULL_HANDLE;
-    }
-    if (comp.pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(comp.device, comp.pipelineLayout, nullptr);
-        comp.pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (comp.descriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(comp.device, comp.descriptorSetLayout, nullptr);
-        comp.descriptorSetLayout = VK_NULL_HANDLE;
-    }
-}
+    video::DecodedFrame frame;
+    frame.buffer.reserve(static_cast<size_t>(decoder.bufferSize));
 
-void destroyImageResource(Engine* engine, ImageResource& res)
-{
-    if (!engine)
+    auto start = std::chrono::steady_clock::now();
+    size_t framesDecoded = 0;
+    double firstPts = -1.0;
+    while (video::decodeNextFrame(decoder, frame, /*copyFrameBuffer=*/false))
     {
-        return;
+        framesDecoded++;
+        if (firstPts < 0.0)
+        {
+            firstPts = frame.ptsSeconds;
+        }
+
+        // Stop after decoding the first kBenchmarkSeconds worth of video.
+        double elapsedPts = frame.ptsSeconds - (firstPts < 0.0 ? 0.0 : firstPts);
+        if (elapsedPts >= kBenchmarkSeconds)
+        {
+            break;
+        }
+
+        frame.buffer.clear();
     }
-    if (res.view != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(engine->logicalDevice, res.view, nullptr);
-        res.view = VK_NULL_HANDLE;
-    }
-    if (res.image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(engine->logicalDevice, res.image, nullptr);
-        res.image = VK_NULL_HANDLE;
-    }
-    if (res.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(engine->logicalDevice, res.memory, nullptr);
-        res.memory = VK_NULL_HANDLE;
-    }
-    res.format = VK_FORMAT_UNDEFINED;
-    res.width = 0;
-    res.height = 0;
+    auto end = std::chrono::steady_clock::now();
+    double seconds = std::chrono::duration<double>(end - start).count();
+    double fps = seconds > 0.0 ? static_cast<double>(framesDecoded) / seconds : 0.0;
+
+    std::cout << "[DecodeOnly] Decoded " << framesDecoded << " frames in " << seconds
+              << "s -> " << fps << " fps using " << decoder.implementationName
+              << " over ~" << kBenchmarkSeconds << "s of content" << std::endl;
+
+    video::cleanupVideoDecoder(decoder);
+    return 0;
 }
 
 VkSampler createLinearClampSampler(Engine* engine)
@@ -281,449 +284,6 @@ VkSampler createLinearClampSampler(Engine* engine)
         throw std::runtime_error("Failed to create sampler.");
     }
     return sampler;
-}
-
-bool ensureImageResource(Engine* engine,
-                         ImageResource& res,
-                         uint32_t width,
-                         uint32_t height,
-                         VkFormat format,
-                         bool& recreated,
-                         VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-{
-    recreated = false;
-    if (res.image != VK_NULL_HANDLE && res.width == width && res.height == height && res.format == format)
-    {
-        return true;
-    }
-
-    destroyImageResource(engine, res);
-    recreated = true;
-
-    if (width == 0 || height == 0 || format == VK_FORMAT_UNDEFINED)
-    {
-        return false;
-    }
-
-    VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = {width, height, 1};
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = format;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateImage(engine->logicalDevice, &imageInfo, nullptr, &res.image) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create image." << std::endl;
-        return false;
-    }
-
-    VkMemoryRequirements memReq{};
-    vkGetImageMemoryRequirements(engine->logicalDevice, res.image, &memReq);
-
-    VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = engine->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(engine->logicalDevice, &allocInfo, nullptr, &res.memory) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to allocate image memory." << std::endl;
-        vkDestroyImage(engine->logicalDevice, res.image, nullptr);
-        res.image = VK_NULL_HANDLE;
-        return false;
-    }
-
-    vkBindImageMemory(engine->logicalDevice, res.image, res.memory, 0);
-
-    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.image = res.image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = format;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(engine->logicalDevice, &viewInfo, nullptr, &res.view) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create image view." << std::endl;
-        destroyImageResource(engine, res);
-        return false;
-    }
-
-    res.format = format;
-    res.width = width;
-    res.height = height;
-    return true;
-}
-
-void copyBufferToImage(Engine* engine,
-                       VkBuffer stagingBuffer,
-                       VkImage targetImage,
-                       VkImageLayout currentLayout,
-                       uint32_t width,
-                       uint32_t height)
-{
-    VkCommandBuffer cmd = engine->beginSingleTimeCommands();
-
-    VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toTransfer.oldLayout = currentLayout;
-    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toTransfer.image = targetImage;
-    toTransfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    toTransfer.subresourceRange.baseMipLevel = 0;
-    toTransfer.subresourceRange.levelCount = 1;
-    toTransfer.subresourceRange.baseArrayLayer = 0;
-    toTransfer.subresourceRange.layerCount = 1;
-    toTransfer.srcAccessMask = (currentLayout == VK_IMAGE_LAYOUT_UNDEFINED) ? 0 : VK_ACCESS_SHADER_READ_BIT;
-    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    VkPipelineStageFlags srcStage = (currentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
-                                        ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-                                        : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-
-    vkCmdPipelineBarrier(cmd,
-                         srcStage,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         0, nullptr,
-                         0, nullptr,
-                         1, &toTransfer);
-
-    VkBufferImageCopy copy{};
-    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copy.imageSubresource.mipLevel = 0;
-    copy.imageSubresource.baseArrayLayer = 0;
-    copy.imageSubresource.layerCount = 1;
-    copy.imageExtent = {width, height, 1};
-
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, targetImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-
-    VkImageMemoryBarrier toShader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    toShader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toShader.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toShader.image = targetImage;
-    toShader.subresourceRange = toTransfer.subresourceRange;
-    toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         0, nullptr,
-                         0, nullptr,
-                         1, &toShader);
-
-    engine->endSingleTimeCommands(cmd);
-}
-
-bool uploadImageData(Engine* engine,
-                     ImageResource& res,
-                     const void* data,
-                     size_t dataSize,
-                     uint32_t width,
-                     uint32_t height,
-                     VkFormat format)
-{
-    if (!data || dataSize == 0 || width == 0 || height == 0)
-    {
-        return false;
-    }
-
-    bool recreated = false;
-    if (!ensureImageResource(engine, res, width, height, format, recreated))
-    {
-        return false;   
-    }
-
-    VkBuffer staging = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    engine->createBuffer(static_cast<VkDeviceSize>(dataSize),
-                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                         staging,
-                         stagingMemory);
-
-    void* mapped = nullptr;
-    vkMapMemory(engine->logicalDevice, stagingMemory, 0, static_cast<VkDeviceSize>(dataSize), 0, &mapped);
-    std::memcpy(mapped, data, dataSize);
-    vkUnmapMemory(engine->logicalDevice, stagingMemory);
-
-    VkImageLayout oldLayout = (!recreated && res.view != VK_NULL_HANDLE)
-                                  ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                  : VK_IMAGE_LAYOUT_UNDEFINED;
-    copyBufferToImage(engine, staging, res.image, oldLayout, width, height);
-
-    vkDestroyBuffer(engine->logicalDevice, staging, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
-    return true;
-}
-
-void runOverlayCompute(Engine* engine,
-                       OverlayCompute& comp,
-                       ImageResource& target,
-                       uint32_t width,
-                       uint32_t height,
-                       const glm::vec2& rectCenter,
-                       const glm::vec2& rectSize,
-                       float outerThickness,
-                       float innerThickness)
-{
-    // Ensure storage-capable overlay image
-    bool recreated = false;
-    if (!ensureImageResource(engine, target, width, height, VK_FORMAT_R8G8B8A8_UNORM, recreated,
-                             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
-    {
-        return;
-    }
-
-    comp.width = width;
-    comp.height = height;
-
-    VkDescriptorImageInfo storageInfo{};
-    storageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    storageInfo.imageView = target.view;
-
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = comp.descriptorSet;
-    write.dstBinding = 0;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    write.descriptorCount = 1;
-    write.pImageInfo = &storageInfo;
-    vkUpdateDescriptorSets(comp.device, 1, &write, 0, nullptr);
-
-    vkResetCommandBuffer(comp.commandBuffer, 0);
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(comp.commandBuffer, &beginInfo);
-
-    struct OverlayPush {
-        glm::vec2 outputSize;
-        glm::vec2 rectCenter;
-        glm::vec2 rectSize;
-        float outerThickness;
-        float innerThickness;
-    } push{glm::vec2(static_cast<float>(width), static_cast<float>(height)), rectCenter, rectSize, outerThickness, innerThickness};
-
-    const VkImageLayout initialLayout = recreated ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    // Transition to GENERAL for storage write
-    VkImageMemoryBarrier toGeneralBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toGeneralBarrier.oldLayout = initialLayout;
-    toGeneralBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    toGeneralBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toGeneralBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toGeneralBarrier.image = target.image;
-    toGeneralBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    toGeneralBarrier.subresourceRange.baseMipLevel = 0;
-    toGeneralBarrier.subresourceRange.levelCount = 1;
-    toGeneralBarrier.subresourceRange.baseArrayLayer = 0;
-    toGeneralBarrier.subresourceRange.layerCount = 1;
-    toGeneralBarrier.srcAccessMask = (initialLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                                         ? VK_ACCESS_SHADER_READ_BIT
-                                         : 0;
-    toGeneralBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-
-    VkPipelineStageFlags srcStage = (initialLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                                        ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                                        : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-
-    vkCmdPipelineBarrier(comp.commandBuffer,
-                         srcStage,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         0, nullptr,
-                         0, nullptr,
-                         1, &toGeneralBarrier);
-
-    vkCmdBindPipeline(comp.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, comp.pipeline);
-    vkCmdBindDescriptorSets(comp.commandBuffer,
-                            VK_PIPELINE_BIND_POINT_COMPUTE,
-                            comp.pipelineLayout,
-                            0,
-                            1,
-                            &comp.descriptorSet,
-                            0,
-                            nullptr);
-    vkCmdPushConstants(comp.commandBuffer,
-                       comp.pipelineLayout,
-                       VK_SHADER_STAGE_COMPUTE_BIT,
-                       0,
-                       sizeof(OverlayPush),
-                       &push);
-
-    const uint32_t groupX = (width + 15) / 16;
-    const uint32_t groupY = (height + 15) / 16;
-    vkCmdDispatch(comp.commandBuffer, groupX, groupY, 1);
-
-    // Transition to SHADER_READ_ONLY for sampling in main pass
-    VkImageMemoryBarrier toReadBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toReadBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    toReadBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    toReadBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toReadBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toReadBarrier.image = target.image;
-    toReadBarrier.subresourceRange = toGeneralBarrier.subresourceRange;
-    toReadBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    toReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(comp.commandBuffer,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         0, nullptr,
-                         0, nullptr,
-                         1, &toReadBarrier);
-
-    vkEndCommandBuffer(comp.commandBuffer);
-
-    vkResetFences(comp.device, 1, &comp.fence);
-    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &comp.commandBuffer;
-    vkQueueSubmit(engine->graphicsQueue, 1, &submitInfo, comp.fence);
-    vkWaitForFences(comp.device, 1, &comp.fence, VK_TRUE, UINT64_MAX);
-}
-bool initializeOverlayCompute(Engine* engine, OverlayCompute& comp)
-{
-    comp.device = engine->logicalDevice;
-    comp.queue = engine->graphicsQueue;
-
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
-    if (vkCreateDescriptorSetLayout(comp.device, &layoutInfo, nullptr, &comp.descriptorSetLayout) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay descriptor set layout" << std::endl;
-        return false;
-    }
-
-    std::vector<char> shaderCode;
-    try
-    {
-        shaderCode = readSPIRVFile("shaders/overlay_rect.comp.spv");
-    }
-    catch (const std::exception& ex)
-    {
-        std::cerr << "[Video2D] " << ex.what() << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkShaderModule shaderModule = engine->createShaderModule(shaderCode);
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(glm::vec2) * 3 + sizeof(float) * 2; // outputSize, rectCenter, rectSize, outer, inner
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &comp.descriptorSetLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
-
-    if (vkCreatePipelineLayout(comp.device, &pipelineLayoutInfo, nullptr, &comp.pipelineLayout) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay pipeline layout" << std::endl;
-        vkDestroyShaderModule(comp.device, shaderModule, nullptr);
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkPipelineShaderStageCreateInfo stageInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageInfo.module = shaderModule;
-    stageInfo.pName = "main";
-
-    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    pipelineInfo.stage = stageInfo;
-    pipelineInfo.layout = comp.pipelineLayout;
-
-    if (vkCreateComputePipelines(comp.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &comp.pipeline) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay compute pipeline" << std::endl;
-        vkDestroyShaderModule(comp.device, shaderModule, nullptr);
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    vkDestroyShaderModule(comp.device, shaderModule, nullptr);
-
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSize.descriptorCount = 1;
-
-    VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-
-    if (vkCreateDescriptorPool(comp.device, &poolInfo, nullptr, &comp.descriptorPool) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay descriptor pool" << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.descriptorPool = comp.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &comp.descriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(comp.device, &allocInfo, &comp.descriptorSet) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to allocate overlay descriptor set" << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkCommandPoolCreateInfo poolCreateInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    poolCreateInfo.queueFamilyIndex = engine->graphicsQueueFamilyIndex;
-    poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    if (vkCreateCommandPool(comp.device, &poolCreateInfo, nullptr, &comp.commandPool) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay command pool" << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkCommandBufferAllocateInfo cmdAllocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cmdAllocInfo.commandPool = comp.commandPool;
-    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAllocInfo.commandBufferCount = 1;
-    if (vkAllocateCommandBuffers(comp.device, &cmdAllocInfo, &comp.commandBuffer) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to allocate overlay command buffer" << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if (vkCreateFence(comp.device, &fenceInfo, nullptr, &comp.fence) != VK_SUCCESS)
-    {
-        std::cerr << "[Video2D] Failed to create overlay fence" << std::endl;
-        destroyOverlayCompute(comp);
-        return false;
-    }
-
-    return true;
 }
 
 // Scroll handling for rectangle sizing
@@ -749,7 +309,8 @@ static void onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int
 bool initializeVideoPlayback(const std::filesystem::path& videoPath,
                              Engine* engine,
                              VideoPlaybackState& state,
-                             double& durationSeconds)
+                             double& durationSeconds,
+                             const std::optional<bool>& swapUvOverride = std::nullopt)
 {
     state.engine = engine;
     if (!std::filesystem::exists(videoPath))
@@ -884,6 +445,13 @@ bool initializeVideoPlayback(const std::filesystem::path& videoPath,
         std::cout << "[Video2D] Loaded video " << videoPath
                   << " (" << state.decoder.width << "x" << state.decoder.height
                   << "), fps=" << state.decoder.fps << std::endl;
+    }
+
+    if (swapUvOverride.has_value())
+    {
+        state.decoder.swapChromaUV = swapUvOverride.value();
+        std::cout << "[Video2D] Forcing UV swap to "
+                  << (state.decoder.swapChromaUV ? "ON" : "OFF") << std::endl;
     }
 
     state.stagingFrame.buffer.reserve(static_cast<size_t>(state.decoder.bufferSize));
@@ -1068,17 +636,39 @@ bool cursorInScrubber(double x, double y, int windowWidth, int windowHeight)
 int main(int argc, char** argv)
 {
     parseDebugFlags(argc, argv);
+    CliOptions cli = parseCliOptions(argc, argv);
+
+    if (cli.decodeOnly)
+    {
+        std::cout << "[DecodeOnly] Running decode benchmark for " << cli.videoPath << std::endl;
+        return runDecodeOnlyBenchmark(cli.videoPath, cli.swapUV);
+    }
 
     Engine* engine = nullptr;
     Display2D* display = nullptr;
+    Display2D* cropDisplay = nullptr;
+    Display2D* gradingDisplay = nullptr;
     try {
         engine = new Engine();
         std::cout << "[Video2D] Initializing display..." << std::endl;
         display = new Display2D(engine, 1280, 720, "Motive Video 2D");
         std::cout << "[Video2D] Display initialized successfully." << std::endl;
+        cropDisplay = new Display2D(engine, 360, 640, "Region View");
+        gradingDisplay = new Display2D(engine, 420, 520, "Grading");
     } catch (const std::exception& ex) {
         std::cerr << "[Video2D] FATAL: Exception during engine or display initialization: " << ex.what() << std::endl;
-        delete display;
+        if (display)
+        {
+            delete display;
+        }
+        if (cropDisplay)
+        {
+            delete cropDisplay;
+        }
+        if (gradingDisplay)
+        {
+            delete gradingDisplay;
+        }
         delete engine;
         return 1;
     }
@@ -1100,7 +690,8 @@ int main(int argc, char** argv)
 
     VideoPlaybackState playbackState;
     double videoDurationSeconds = 0.0;
-    if (!initializeVideoPlayback(kVideoPath, engine, playbackState, videoDurationSeconds))
+    std::cout << "[Video2D] Using video file: " << cli.videoPath << std::endl;
+    if (!initializeVideoPlayback(cli.videoPath, engine, playbackState, videoDurationSeconds, cli.swapUV))
     {
         delete engine;
         return 1;
@@ -1114,9 +705,61 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    VkSampler blackSampler = VK_NULL_HANDLE;
+    // Black dummy video for overlay-only window
+    overlay::ImageResource blackLuma;
+    overlay::ImageResource blackChroma;
+    VideoImageSet blackVideo{};
+
+    // Prepare black dummy video resources (1x1) for grading-only window
+    {
+        uint8_t luma = 0;
+        uint8_t chroma[2] = {128, 128};
+        overlay::uploadImageData(engine, blackLuma, &luma, sizeof(luma), 1, 1, VK_FORMAT_R8_UNORM);
+        overlay::uploadImageData(engine, blackChroma, chroma, sizeof(chroma), 1, 1, VK_FORMAT_R8G8_UNORM);
+        try
+        {
+            blackSampler = createLinearClampSampler(engine);
+        }
+        catch (const std::exception&)
+        {
+            blackSampler = playbackState.overlay.sampler;
+        }
+        blackVideo.width = 1;
+        blackVideo.height = 1;
+        blackVideo.chromaDivX = 1;
+        blackVideo.chromaDivY = 1;
+        blackVideo.luma.view = blackLuma.view;
+        blackVideo.luma.sampler = blackSampler;
+        blackVideo.chroma.view = blackChroma.view;
+        blackVideo.chroma.sampler = blackSampler;
+    }
+
     bool playing = true;
     bool spaceHeld = false;
     bool mouseHeld = false;
+    bool scrubDragging = false;
+    double scrubDragStartX = 0.0;
+    float scrubDragStartProgress = 0.0f;
+    double scrubProgressUi = 0.0;
+    GradingSettings gradingSettings{};
+    grading::setGradingDefaults(gradingSettings);
+    const std::filesystem::path gradingConfigPath("blit_settings.json");
+    bool gradingLoaded = grading::loadGradingSettings(gradingConfigPath, gradingSettings);
+    if (!gradingLoaded && std::filesystem::exists(gradingConfigPath))
+    {
+        std::cerr << "[Video2D] Failed to parse grading settings from " << gradingConfigPath << ", using defaults.\n";
+    }
+    overlay::ImageResource gradingOverlayImage;
+    OverlayImageInfo gradingOverlayInfo{};
+    grading::SliderLayout gradingLayout{};
+    bool gradingOverlayDirty = true;
+    uint32_t gradingFbWidth = 0;
+    uint32_t gradingFbHeight = 0;
+    bool gradingMouseHeld = false;
+    int lastGradingSlider = -1;
+    auto lastGradingClickTime = std::chrono::steady_clock::time_point{};
+    bool gradingPreviewEnabled = true;
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
@@ -1128,11 +771,35 @@ int main(int argc, char** argv)
     while (true)
     {
         display->pollEvents();
+        cropDisplay->pollEvents();
+        gradingDisplay->pollEvents();
+        // Update framebuffer/window sizes for both windows
         glfwGetFramebufferSize(display->window, &fbWidth, &fbHeight);
+        int cropFbWidth = 0;
+        int cropFbHeight = 0;
+        glfwGetFramebufferSize(cropDisplay->window, &cropFbWidth, &cropFbHeight);
+        int gradingFbWidthInt = 0;
+        int gradingFbHeightInt = 0;
+        glfwGetFramebufferSize(gradingDisplay->window, &gradingFbWidthInt, &gradingFbHeightInt);
+        uint32_t prevGradingFbW = gradingFbWidth;
+        uint32_t prevGradingFbH = gradingFbHeight;
+        glfwGetWindowSize(display->window, &display->width, &display->height);
+        glfwGetWindowSize(cropDisplay->window, &cropDisplay->width, &cropDisplay->height);
+        glfwGetWindowSize(gradingDisplay->window, &gradingDisplay->width, &gradingDisplay->height);
         fbWidth = std::max(1, fbWidth);
         fbHeight = std::max(1, fbHeight);
+        cropFbWidth = std::max(1, cropFbWidth);
+        cropFbHeight = std::max(1, cropFbHeight);
+        gradingFbWidth = std::max(1, gradingFbWidthInt);
+        gradingFbHeight = std::max(1, gradingFbHeightInt);
+        if (gradingFbWidth != prevGradingFbW || gradingFbHeight != prevGradingFbH)
+        {
+            gradingOverlayDirty = true;
+        }
         fbWidthF = static_cast<float>(fbWidth);
         fbHeightF = static_cast<float>(fbHeight);
+        display->width = std::max(1, display->width);
+        display->height = std::max(1, display->height);
         float windowWidthF = static_cast<float>(std::max(1, display->width));
         float windowHeightF = static_cast<float>(std::max(1, display->height));
         float cursorScaleX = fbWidthF / windowWidthF;
@@ -1147,7 +814,13 @@ int main(int argc, char** argv)
              playbackState.fpsOverlay.lastRefHeight != fbHeightU) &&
             playbackState.fpsOverlay.lastFpsValue >= 0.0f)
         {
-            updateFpsOverlay(playbackState, playbackState.fpsOverlay.lastFpsValue, fbWidthU, fbHeightU);
+            updateFpsOverlay(engine,
+                             playbackState.fpsOverlay,
+                             playbackState.overlay.sampler,
+                             playbackState.video.sampler,
+                             playbackState.fpsOverlay.lastFpsValue,
+                             fbWidthU,
+                             fbHeightU);
         }
 
         if (glfwGetKey(display->window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -1157,7 +830,7 @@ int main(int argc, char** argv)
             break;
         }
 
-        if (display->shouldClose())
+        if (display->shouldClose() || cropDisplay->shouldClose() || gradingDisplay->shouldClose())
         {
             break;
         }
@@ -1177,7 +850,10 @@ int main(int argc, char** argv)
             glfwGetCursorPos(display->window, &cursorX, &cursorY);
             if (cursorInScrubber(cursorX, cursorY, display->width, display->height))
             {
-                playing = !playing;
+                scrubDragging = true;
+                scrubDragStartX = cursorX;
+                scrubDragStartProgress = static_cast<float>(scrubProgressUi);
+                playing = false; // pause while dragging
             }
             else
             {
@@ -1190,7 +866,162 @@ int main(int argc, char** argv)
                 }
             }
         }
+        else if (mouseState == GLFW_PRESS && scrubDragging)
+        {
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetCursorPos(display->window, &cursorX, &cursorY);
+            double deltaX = cursorX - scrubDragStartX;
+            double scrubberWidth = static_cast<double>(kScrubberWidth);
+            float deltaProgress = static_cast<float>(deltaX / scrubberWidth);
+            float newProgress = std::clamp(scrubDragStartProgress + deltaProgress, 0.0f, 1.0f);
+            scrubProgressUi = newProgress;
+        }
+        else if (mouseState == GLFW_RELEASE && scrubDragging)
+        {
+            scrubDragging = false;
+            if (videoDurationSeconds > 0.0)
+            {
+                playbackState.lastDisplayedSeconds = scrubProgressUi * videoDurationSeconds;
+                double targetSeekSeconds = playbackState.lastDisplayedSeconds;
+
+                // Stop async decoding, seek, then restart
+                video::stopAsyncDecoding(playbackState.decoder);
+                if (!video::seekVideoDecoder(playbackState.decoder, targetSeekSeconds))
+                {
+                    std::cerr << "[Video2D] Failed to seek video decoder." << std::endl;
+                }
+
+                // After seeking, the next frames decoded might have different dimensions,
+                // which will trigger re-creation of the backing image resources. To avoid
+                // destroying an image that is still in-flight on the GPU, we must wait
+                // for the device to be idle before proceeding. A more sophisticated solution
+                // would use multiple image buffers or a deferred destruction queue.
+                vkDeviceWaitIdle(engine->logicalDevice);
+
+                // Clear pending frames as they are now invalid after seeking
+                playbackState.pendingFrames.clear();
+                playbackState.playbackClockInitialized = false; // Re-initialize clock after seek
+                // The lastDisplayedSeconds, basePtsSeconds, lastFramePtsSeconds will be set by the first frame after seek
+                video::startAsyncDecoding(playbackState.decoder, 12); // Restart async decoding
+            }
+        }
         mouseHeld = (mouseState == GLFW_PRESS);
+
+        // Grading window slider interaction (supports double-click to reset that slider)
+        int gradingMouseState = glfwGetMouseButton(gradingDisplay->window, GLFW_MOUSE_BUTTON_LEFT);
+        if (gradingMouseState == GLFW_PRESS && !gradingMouseHeld)
+        {
+            double gx = 0.0;
+            double gy = 0.0;
+            glfwGetCursorPos(gradingDisplay->window, &gx, &gy);
+
+            auto classifyHit = [&](double x, double y) -> int {
+                const double relX = x - static_cast<double>(gradingLayout.offset.x);
+                const double relY = y - static_cast<double>(gradingLayout.offset.y);
+                if (relX < 0.0 || relY < 0.0 || relX >= gradingLayout.width || relY >= gradingLayout.height)
+                {
+                    return -1;
+                }
+                if (relX >= gradingLayout.resetX0 && relX <= gradingLayout.resetX1 &&
+                    relY >= gradingLayout.resetY0 && relY <= gradingLayout.resetY1)
+                {
+                    return -2; // reset button
+                }
+                if (relX >= gradingLayout.saveX0 && relX <= gradingLayout.saveX1 &&
+                    relY >= gradingLayout.saveY0 && relY <= gradingLayout.saveY1)
+                {
+                    return -3; // save button
+                }
+                if (relX >= gradingLayout.previewX0 && relX <= gradingLayout.previewX1 &&
+                    relY >= gradingLayout.previewY0 && relY <= gradingLayout.previewY1)
+                {
+                    return -4; // preview toggle
+                }
+                const uint32_t padding = 12;
+                const uint32_t barWidth = gradingLayout.width - padding * 2;
+                const uint32_t barYStart = gradingLayout.barYStart;
+                const uint32_t rowHeight = gradingLayout.barHeight + gradingLayout.rowSpacing;
+                int sliderIndex = static_cast<int>((relY - barYStart) / rowHeight);
+                if (sliderIndex < 0 || sliderIndex >= 12)
+                {
+                    return -1;
+                }
+                const double localX = relX - padding;
+                if (localX < 0.0 || localX > static_cast<double>(barWidth))
+                {
+                    return -1;
+                }
+                return sliderIndex;
+            };
+
+            int hitIndex = classifyHit(gx, gy);
+            auto now = std::chrono::steady_clock::now();
+            bool doubleClick = false;
+            constexpr auto kDoubleClickWindow = std::chrono::milliseconds(300);
+            if (hitIndex >= 0 &&
+                hitIndex == lastGradingSlider &&
+                lastGradingClickTime.time_since_epoch().count() > 0 &&
+                (now - lastGradingClickTime) <= kDoubleClickWindow)
+            {
+                doubleClick = true;
+            }
+
+            bool saveRequested = false;
+            bool previewToggle = false;
+            if (grading::handleOverlayClick(gradingLayout,
+                                            gx,
+                                            gy,
+                                            gradingSettings,
+                                            doubleClick,
+                                            &saveRequested,
+                                            &previewToggle))
+            {
+                gradingOverlayDirty = true;
+                if (saveRequested)
+                {
+                    if (!grading::saveGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to save grading settings to " << gradingConfigPath << "\n";
+                    }
+                }
+                if (previewToggle)
+                {
+                    gradingPreviewEnabled = !gradingPreviewEnabled;
+                }
+            }
+
+            lastGradingSlider = hitIndex;
+            lastGradingClickTime = now;
+            gradingMouseHeld = true;
+        }
+        else if (gradingMouseState == GLFW_PRESS && gradingMouseHeld)
+        {
+            double gx = 0.0;
+            double gy = 0.0;
+            glfwGetCursorPos(gradingDisplay->window, &gx, &gy);
+            bool saveRequested = false;
+            bool previewToggle = false;
+            if (grading::handleOverlayClick(gradingLayout, gx, gy, gradingSettings, false, &saveRequested, &previewToggle))
+            {
+                gradingOverlayDirty = true;
+                if (saveRequested)
+                {
+                    if (!grading::saveGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to save grading settings to " << gradingConfigPath << "\n";
+                    }
+                }
+                if (previewToggle)
+                {
+                    gradingPreviewEnabled = !gradingPreviewEnabled;
+                }
+            }
+        }
+        else if (gradingMouseState == GLFW_RELEASE)
+        {
+            gradingMouseHeld = false;
+        }
 
         // Scroll to resize rectangle
         double scrollDelta = g_scrollDelta;
@@ -1202,10 +1033,40 @@ int main(int argc, char** argv)
             rectWidth = rectHeight * (9.0f / 16.0f);
         }
 
-        double playbackSeconds = advancePlayback(playbackState, playing);
+        double playbackSeconds = advancePlayback(playbackState, playing && !scrubDragging);
         double normalizedProgress = videoDurationSeconds > 0.0
                                         ? std::clamp(playbackSeconds / videoDurationSeconds, 0.0, 1.0)
                                         : 0.0;
+        if (!scrubDragging)
+        {
+            scrubProgressUi = normalizedProgress;
+        }
+        const float displayProgress = static_cast<float>(scrubProgressUi);
+
+        // Rebuild grading overlay if needed or size changed
+        if (gradingOverlayDirty)
+        {
+            gradingOverlayDirty = grading::buildGradingOverlay(engine,
+                                                               gradingSettings,
+                                                               gradingOverlayImage,
+                                                               gradingOverlayInfo,
+                                                               gradingFbWidth,
+                                                               gradingFbHeight,
+                                                               gradingLayout,
+                                                               gradingPreviewEnabled);
+            gradingOverlayInfo.overlay.sampler = playbackState.overlay.sampler;
+        }
+        const ColorAdjustments* activeAdjustments = gradingPreviewEnabled
+                                                        ? reinterpret_cast<ColorAdjustments*>(&gradingSettings)
+                                                        : nullptr;
+        display->renderFrame(playbackState.video.descriptors,
+                             playbackState.overlay.info,
+                             playbackState.fpsOverlay.info,
+                             playbackState.colorInfo,
+                             displayProgress,
+                             playing ? 1.0f : 0.0f,
+                             nullptr,
+                             activeAdjustments);
         // FPS tracking
         fpsFrameCounter++;
         auto now = std::chrono::steady_clock::now();
@@ -1215,7 +1076,13 @@ int main(int argc, char** argv)
             currentFps = static_cast<float>(fpsFrameCounter) * 1000.0f / static_cast<float>(elapsed);
             fpsFrameCounter = 0;
             fpsLastSample = now;
-            updateFpsOverlay(playbackState, currentFps, fbWidthU, fbHeightU);
+            updateFpsOverlay(engine,
+                             playbackState.fpsOverlay,
+                             playbackState.overlay.sampler,
+                             playbackState.video.sampler,
+                             currentFps,
+                             fbWidthU,
+                             fbHeightU);
         }
 
         // Draw overlay (rectangle) via GPU compute into overlay image
@@ -1234,12 +1101,82 @@ int main(int argc, char** argv)
         playbackState.overlay.info.offset = {0, 0};
         playbackState.overlay.info.enabled = true;
 
-        display->renderFrame(playbackState.video.descriptors,
-                             playbackState.overlay.info,
-                             playbackState.fpsOverlay.info,
-                             playbackState.colorInfo,
-                             static_cast<float>(normalizedProgress),
-                             playing ? 1.0f : 0.0f);
+        // Render cropped region in secondary window
+                RenderOverrides overrides{};
+                const uint32_t vidW = playbackState.video.descriptors.width;
+                const uint32_t vidH = playbackState.video.descriptors.height;
+        if (vidW > 0 && vidH > 0)
+        {
+            const float outputAspect = fbWidthF / fbHeightF;
+            const float videoAspect = static_cast<float>(vidW) / static_cast<float>(vidH);
+            float targetW = fbWidthF;
+            float targetH = fbHeightF;
+            if (videoAspect > outputAspect)
+            {
+                targetH = targetW / videoAspect;
+            }
+            else
+            {
+                targetW = targetH * videoAspect;
+            }
+            const float targetX = (fbWidthF - targetW) * 0.5f;
+            const float targetY = (fbHeightF - targetH) * 0.5f;
+
+            const float rectLeft = rectCenter.x - rectWidth * 0.5f;
+            const float rectRight = rectCenter.x + rectWidth * 0.5f;
+            const float rectTop = rectCenter.y - rectHeight * 0.5f;
+            const float rectBottom = rectCenter.y + rectHeight * 0.5f;
+
+            const float cropLeft = std::clamp(rectLeft, targetX, targetX + targetW);
+            const float cropRight = std::clamp(rectRight, targetX, targetX + targetW);
+            const float cropTop = std::clamp(rectTop, targetY, targetY + targetH);
+            const float cropBottom = std::clamp(rectBottom, targetY, targetY + targetH);
+
+            const float cropW = std::max(0.0f, cropRight - cropLeft);
+            const float cropH = std::max(0.0f, cropBottom - cropTop);
+            if (cropW > 1.0f && cropH > 1.0f)
+            {
+                const float u0 = (cropLeft - targetX) / targetW;
+                const float v0 = (cropTop - targetY) / targetH;
+                const float u1 = (cropRight - targetX) / targetW;
+                const float v1 = (cropBottom - targetY) / targetH;
+
+                overrides.useTargetOverride = true;
+                overrides.targetOrigin = glm::vec2(0.0f, 0.0f);
+                overrides.targetSize = glm::vec2(static_cast<float>(cropFbWidth),
+                                                 static_cast<float>(cropFbHeight));
+                overrides.useCrop = true;
+                overrides.cropOrigin = glm::vec2(u0, v0);
+                overrides.cropSize = glm::vec2(u1 - u0, v1 - v0);
+                overrides.hideScrubber = true;
+
+                OverlayImageInfo disabledOverlay{};
+                OverlayImageInfo disabledFps{};
+                cropDisplay->renderFrame(playbackState.video.descriptors,
+                                         disabledOverlay,
+                                         disabledFps,
+                                         playbackState.colorInfo,
+                                         0.0f,
+                                         0.0f,
+                                         &overrides,
+                                         activeAdjustments);
+            }
+        }
+
+        // Grading preview window with sliders overlay (no video)
+        OverlayImageInfo gradingOverlay = gradingOverlayInfo;
+        gradingOverlay.overlay.sampler = playbackState.overlay.sampler;
+        OverlayImageInfo disabledFps{};
+        RenderOverrides gradingOverrides{};
+        gradingOverrides.hideScrubber = true;
+        gradingDisplay->renderFrame(blackVideo,
+                                    gradingOverlay,
+                                    disabledFps,
+                                    playbackState.colorInfo,
+                                    0.0f,
+                                    0.0f,
+                                    &gradingOverrides,
+                                    activeAdjustments);
     }
 
     const bool logCleanup = isDebugEnabled(DebugCategory::Cleanup);
@@ -1354,6 +1291,26 @@ int main(int argc, char** argv)
         delete display;
         display = nullptr;
     }
+    if (cropDisplay)
+    {
+        cropDisplay->shutdown();
+        delete cropDisplay;
+        cropDisplay = nullptr;
+    }
+    if (gradingDisplay)
+    {
+        gradingDisplay->shutdown();
+        delete gradingDisplay;
+        gradingDisplay = nullptr;
+    }
+    destroyImageResource(engine, blackLuma);
+    destroyImageResource(engine, blackChroma);
+    if (blackSampler != VK_NULL_HANDLE && blackSampler != playbackState.overlay.sampler)
+    {
+        vkDestroySampler(engine->logicalDevice, blackSampler, nullptr);
+    }
+    destroyImageResource(engine, blackLuma);
+    destroyImageResource(engine, blackChroma);
     auto end10 = std::chrono::steady_clock::now();
     if (logCleanup)
     {

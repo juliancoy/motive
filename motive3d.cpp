@@ -530,7 +530,7 @@ namespace
 
         while (framesDecoded < targetFrames)
         {
-            if (!video::decodeNextFrame(decoder, decodedFrame))
+            if (!video::decodeNextFrame(decoder, decodedFrame, /*copyFrameBuffer=*/true))
             {
                 break;
             }

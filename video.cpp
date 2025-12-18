@@ -74,11 +74,53 @@ const char* pixelFormatName(AVPixelFormat fmt)
     return name ? name : "unknown";
 }
 
+int interrupt_callback(void* opaque)
+{
+    auto* decoder = reinterpret_cast<VideoDecoder*>(opaque);
+    if (!decoder)
+    {
+        return 0;
+    }
+    return decoder->stopRequested.load() ? 1 : 0;
+}
+
 std::string pixelFormatDescription(AVPixelFormat fmt)
 {
     std::ostringstream oss;
     oss << pixelFormatName(fmt) << " (" << static_cast<int>(fmt) << ")";
     return oss.str();
+}
+
+const char* colorRangeName(AVColorRange range)
+{
+    switch (range)
+    {
+    case AVCOL_RANGE_JPEG:
+        return "Full";
+    case AVCOL_RANGE_MPEG:
+        return "Limited";
+    default:
+        return "Unspecified";
+    }
+}
+
+const char* colorSpaceName(AVColorSpace cs)
+{
+    switch (cs)
+    {
+    case AVCOL_SPC_BT709:
+        return "BT.709";
+    case AVCOL_SPC_BT470BG:
+        return "BT.470BG";
+    case AVCOL_SPC_SMPTE170M:
+        return "SMPTE170M/BT.601";
+    case AVCOL_SPC_BT2020_CL:
+        return "BT.2020_CL";
+    case AVCOL_SPC_BT2020_NCL:
+        return "BT.2020_NCL";
+    default:
+        return "Unspecified";
+    }
 }
 
 int determineStreamBitDepth(const AVStream* videoStream, const AVCodecContext* codecCtx)
@@ -238,11 +280,15 @@ bool initializeVideoDecoder(const std::filesystem::path& videoPath,
                             VideoDecoder& decoder,
                             const DecoderInitParams& initParams)
 {
+    decoder.seekTargetMicroseconds.store(-1);
     if (avformat_open_input(&decoder.formatCtx, videoPath.string().c_str(), nullptr, nullptr) < 0)
     {
         std::cerr << "[Video] Failed to open file: " << videoPath << std::endl;
         return false;
     }
+
+    decoder.formatCtx->interrupt_callback.callback = interrupt_callback;
+    decoder.formatCtx->interrupt_callback.opaque = &decoder;
 
     if (avformat_find_stream_info(decoder.formatCtx, nullptr) < 0)
     {
@@ -347,6 +393,17 @@ bool initializeVideoDecoder(const std::filesystem::path& videoPath,
         return false;
     }
 
+    std::cout << "[Video] Stream pixel format: " << pixelFormatDescription(decoder.sourcePixelFormat)
+              << " -> outputFormat=" << static_cast<int>(decoder.outputFormat)
+              << " chromaDiv=" << decoder.chromaDivX << "x" << decoder.chromaDivY
+              << " bytesPerComponent=" << decoder.bytesPerComponent
+              << " bitDepth=" << decoder.bitDepth
+              << " swapUV=" << (decoder.swapChromaUV ? "yes" : "no")
+              << " colorSpace=" << colorSpaceName(decoder.colorSpace)
+              << " colorRange=" << colorRangeName(decoder.colorRange)
+              << " implementation=" << decoder.implementationName
+              << std::endl;
+
     AVRational frameRate = av_guess_frame_rate(decoder.formatCtx, videoStream, nullptr);
     double fps = (frameRate.num != 0 && frameRate.den != 0) ? av_q2d(frameRate) : 30.0;
     decoder.fps = fps > 0.0 ? fps : 30.0;
@@ -364,7 +421,79 @@ bool initializeVideoDecoder(const std::filesystem::path& videoPath,
     return true;
 }
 
-bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
+bool seekVideoDecoder(VideoDecoder& decoder, double targetSeconds)
+{
+    if (!decoder.formatCtx || !decoder.codecCtx)
+    {
+        return false;
+    }
+
+    // Clear any stale frames before performing the seek.
+    {
+        std::lock_guard<std::mutex> lock(decoder.frameMutex);
+        decoder.frameQueue.clear();
+    }
+
+    // For async decoders, we need to stop the background thread, seek, then restart.
+    bool wasAsync = decoder.asyncDecoding;
+    if (wasAsync)
+    {
+        stopAsyncDecoding(decoder);
+    }
+
+    std::cout << "[Video] Seeking to " << targetSeconds << "s..." << std::endl;
+    decoder.seekTargetMicroseconds.store(static_cast<int64_t>(targetSeconds * 1000000.0));
+
+    // Convert target seconds to the stream's timebase
+    AVStream* videoStream = decoder.formatCtx->streams[decoder.videoStreamIndex];
+    const int64_t targetTimestamp =
+        av_rescale_q(static_cast<int64_t>(targetSeconds * AV_TIME_BASE),
+                     AV_TIME_BASE_Q,
+                     videoStream->time_base);
+
+    // Seek to the nearest keyframe before the target timestamp
+    int ret = avformat_seek_file(decoder.formatCtx,
+                                 decoder.videoStreamIndex,
+                                 std::numeric_limits<int64_t>::min(),
+                                 targetTimestamp,
+                                 targetTimestamp,
+                                 AVSEEK_FLAG_BACKWARD);
+    if (ret < 0)
+    {
+        std::cerr << "[Video] Failed to seek: " << ffmpegErrorString(ret) << std::endl;
+        decoder.seekTargetMicroseconds.store(-1);
+        // Even if seek fails, we might need to restart the async thread
+        if (wasAsync)
+        {
+            startAsyncDecoding(decoder, decoder.maxBufferedFrames);
+        }
+        return false;
+    }
+
+    // Flush the decoder buffers
+    avcodec_flush_buffers(decoder.codecCtx);
+    avformat_flush(decoder.formatCtx);
+
+    // Reset decoder state
+    decoder.finished.store(false);
+    decoder.draining = false;
+    decoder.fallbackPtsSeconds = targetSeconds;
+    decoder.framesDecoded = 0;
+
+    // Restart async decoding if it was active
+    if (wasAsync)
+    {
+        if (!startAsyncDecoding(decoder, decoder.maxBufferedFrames))
+        {
+            std::cerr << "[Video] Failed to restart async decoding after seek." << std::endl;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame, bool copyFrameBuffer)
 {
     if (decoder.finished.load())
     {
@@ -434,51 +563,60 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame)
         
         if (receiveResult == 0)
         {
-            AVFrame* workingFrame = decoder.frame;
-            if (decoder.implementation != DecodeImplementation::Software &&
-                decoder.frame->format == decoder.hwPixelFormat)
+            const AVFrame* ptsFrame = decoder.frame;
+            if (copyFrameBuffer)
             {
-                if (!decoder.swFrame)
+                AVFrame* workingFrame = decoder.frame;
+                if (decoder.implementation != DecodeImplementation::Software &&
+                    decoder.frame->format == decoder.hwPixelFormat)
                 {
-                    decoder.swFrame = av_frame_alloc();
                     if (!decoder.swFrame)
                     {
-                        std::cerr << "[Video] Failed to allocate sw transfer frame." << std::endl;
+                        decoder.swFrame = av_frame_alloc();
+                        if (!decoder.swFrame)
+                        {
+                            std::cerr << "[Video] Failed to allocate sw transfer frame." << std::endl;
+                            return false;
+                        }
+                    }
+                    av_frame_unref(decoder.swFrame);
+                    int transferResult = av_hwframe_transfer_data(decoder.swFrame, decoder.frame, 0);
+                    if (transferResult < 0)
+                    {
+                        std::cerr << "[Video] Failed to transfer hardware frame: "
+                                  << ffmpegErrorString(transferResult) << std::endl;
                         return false;
                     }
+                    workingFrame = decoder.swFrame;
                 }
-                av_frame_unref(decoder.swFrame);
-                int transferResult = av_hwframe_transfer_data(decoder.swFrame, decoder.frame, 0);
-                if (transferResult < 0)
-                {
-                    std::cerr << "[Video] Failed to transfer hardware frame: "
-                              << ffmpegErrorString(transferResult) << std::endl;
-                    return false;
-                }
-                workingFrame = decoder.swFrame;
-            }
 
-            const AVPixelFormat frameFormat = static_cast<AVPixelFormat>(workingFrame->format);
-            if (decoder.width != workingFrame->width || decoder.height != workingFrame->height ||
-                frameFormat != decoder.sourcePixelFormat)
-            {
-                decoder.width = workingFrame->width;
-                decoder.height = workingFrame->height;
-                if (!configureFormatForPixelFormat(decoder, frameFormat))
+                const AVPixelFormat frameFormat = static_cast<AVPixelFormat>(workingFrame->format);
+                if (decoder.width != workingFrame->width || decoder.height != workingFrame->height ||
+                    frameFormat != decoder.sourcePixelFormat)
                 {
-                    std::cerr << "[Video] Unsupported pixel format during decode: "
+                    decoder.width = workingFrame->width;
+                    decoder.height = workingFrame->height;
+                    if (!configureFormatForPixelFormat(decoder, frameFormat))
+                    {
+                        std::cerr << "[Video] Unsupported pixel format during decode: "
+                                  << pixelFormatDescription(frameFormat) << std::endl;
+                        return false;
+                    }
+
+                    std::cout << "[Video] Decoder output pixel format changed to "
                               << pixelFormatDescription(frameFormat) << std::endl;
-                    return false;
                 }
 
-                std::cout << "[Video] Decoder output pixel format changed to "
-                          << pixelFormatDescription(frameFormat) << std::endl;
+                copyDecodedFrameToBuffer(decoder, workingFrame, decodedFrame.buffer);
+                ptsFrame = workingFrame;
             }
-
-            copyDecodedFrameToBuffer(decoder, workingFrame, decodedFrame.buffer);
+            else
+            {
+                decodedFrame.buffer.clear();
+            }
 
             double ptsSeconds = decoder.fallbackPtsSeconds;
-            const int64_t bestTimestamp = workingFrame->best_effort_timestamp;
+            const int64_t bestTimestamp = ptsFrame->best_effort_timestamp;
             if (bestTimestamp != AV_NOPTS_VALUE)
             {
                 const double timeBase = decoder.streamTimeBase.den != 0
@@ -554,6 +692,24 @@ void asyncDecodeLoop(VideoDecoder* decoder)
                       << frameCount << ", finished=" << decoder->finished.load() 
                       << ", decode took " << decodeDuration.count() << " ms" << std::endl;
             break;
+        }
+
+        int64_t currentSeekTarget = decoder->seekTargetMicroseconds.load();
+        if (currentSeekTarget >= 0)
+        {
+            std::cout << "[Video] Post-seek decode: PTS " << localFrame.ptsSeconds << "s (target " << (double)currentSeekTarget / 1000000.0 << "s)" << std::endl;
+            const int64_t frameMicros = static_cast<int64_t>(localFrame.ptsSeconds * 1000000.0);
+            if (frameMicros < currentSeekTarget)
+            {
+                // Drop frames prior to the seek target so we don't stall filling the queue
+                // with early data.
+                continue;
+            }
+            if (frameMicros >= currentSeekTarget)
+            {
+                decoder->seekTargetMicroseconds.store(-1);
+                std::cout << "[Video] Seek target reached." << std::endl;
+            }
         }
         
         if (frameCount % 30 == 0)
