@@ -7,11 +7,30 @@
 #include <array>
 #include <cstddef>
 #include <chrono>
+#include <cstring>
 #include <glm/glm.hpp>
 
 namespace
 {
 constexpr int kMaxFramesInFlight = 2;
+constexpr uint32_t kCurveLutSize = 256;
+constexpr float kScrubberMargin = 20.0f;
+constexpr float kScrubberHeight = 64.0f;
+constexpr float kScrubberMinWidth = 200.0f;
+constexpr float kPlayIconSize = 28.0f;
+
+const std::array<float, kCurveLutSize>& identityCurveLut()
+{
+    static std::array<float, kCurveLutSize> lut = [] {
+        std::array<float, kCurveLutSize> arr{};
+        for (uint32_t i = 0; i < kCurveLutSize; ++i)
+        {
+            arr[i] = static_cast<float>(i) / static_cast<float>(kCurveLutSize - 1);
+        }
+        return arr;
+    }();
+    return lut;
+}
 
 struct ComputePushConstants
 {
@@ -135,6 +154,16 @@ void Display2D::shutdown()
         vkDestroyPipelineLayout(engine->logicalDevice, pipelineLayout, nullptr);
         pipelineLayout = VK_NULL_HANDLE;
     }
+    if (curveUBO != VK_NULL_HANDLE)
+    {
+        vkUnmapMemory(engine->logicalDevice, curveUBOMemory);
+        vkDestroyBuffer(engine->logicalDevice, curveUBO, nullptr);
+        vkFreeMemory(engine->logicalDevice, curveUBOMemory, nullptr);
+        curveUBO = VK_NULL_HANDLE;
+        curveUBOMemory = VK_NULL_HANDLE;
+        curveUBOMapped = nullptr;
+    }
+    curveUploaded = false;
     if (descriptorSetLayout != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(engine->logicalDevice, descriptorSetLayout, nullptr);
@@ -360,8 +389,18 @@ void Display2D::createCommandResources()
 
 void Display2D::createComputeResources()
 {
+    if (curveUBO != VK_NULL_HANDLE)
+    {
+        vkUnmapMemory(engine->logicalDevice, curveUBOMemory);
+        vkDestroyBuffer(engine->logicalDevice, curveUBO, nullptr);
+        vkFreeMemory(engine->logicalDevice, curveUBOMemory, nullptr);
+        curveUBO = VK_NULL_HANDLE;
+        curveUBOMemory = VK_NULL_HANDLE;
+        curveUBOMapped = nullptr;
+    }
+
     // Descriptor set layout
-    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
     // 0: swapchain storage image
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -380,17 +419,23 @@ void Display2D::createComputeResources()
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 2: luma
+    // 3: luma
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 3: chroma
+    // 4: chroma
     bindings[4].binding = 4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 5: curve LUT UBO
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -439,12 +484,38 @@ void Display2D::createComputeResources()
 
     vkDestroyShaderModule(engine->logicalDevice, shaderModule, nullptr);
 
+    // Curve UBO
+    engine->createBuffer(curveUBOSize,
+                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         curveUBO,
+                         curveUBOMemory);
+    vkMapMemory(engine->logicalDevice, curveUBOMemory, 0, curveUBOSize, 0, &curveUBOMapped);
+    if (curveUBOMapped)
+    {
+        const auto& idLut = identityCurveLut();
+        std::array<glm::vec4, 64> packed{};
+        for (size_t i = 0; i < 64; ++i)
+        {
+            packed[i] = glm::vec4(idLut[i * 4 + 0],
+                                  idLut[i * 4 + 1],
+                                  idLut[i * 4 + 2],
+                                  idLut[i * 4 + 3]);
+        }
+        std::memcpy(curveUBOMapped, packed.data(), curveUBOSize);
+        lastCurveLut = idLut;
+        lastCurveEnabled = false;
+        curveUploaded = true;
+    }
+
     // Descriptor pool and sets (one per swapchain image)
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(swapchainImages.size());
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(swapchainImages.size()) * 4;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[2].descriptorCount = static_cast<uint32_t>(swapchainImages.size());
 
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
@@ -520,6 +591,30 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     if (swapchainImages.empty() || videoImages.luma.view == VK_NULL_HANDLE || videoImages.luma.sampler == VK_NULL_HANDLE)
     {
         return;
+    }
+
+    const bool wantCurve = adjustments && adjustments->curveEnabled;
+    const std::array<float, kCurveLutSize>& curveData = wantCurve ? adjustments->curveLut : identityCurveLut();
+    if (curveUBOMapped)
+    {
+        bool needsUpload = !curveUploaded ||
+                           (wantCurve != lastCurveEnabled) ||
+                           (std::memcmp(lastCurveLut.data(), curveData.data(), sizeof(float) * kCurveLutSize) != 0);
+        if (needsUpload)
+        {
+            std::array<glm::vec4, 64> packed{};
+            for (size_t i = 0; i < 64; ++i)
+            {
+                packed[i] = glm::vec4(curveData[i * 4 + 0],
+                                      curveData[i * 4 + 1],
+                                      curveData[i * 4 + 2],
+                                      curveData[i * 4 + 3]);
+            }
+            std::memcpy(curveUBOMapped, packed.data(), curveUBOSize);
+            lastCurveLut = curveData;
+            lastCurveEnabled = wantCurve;
+            curveUploaded = true;
+        }
     }
 
     vkWaitForFences(engine->logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
@@ -617,7 +712,12 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     chromaInfo.imageView = videoImages.chroma.view ? videoImages.chroma.view : videoImages.luma.view;
     chromaInfo.sampler = videoImages.chroma.sampler ? videoImages.chroma.sampler : videoImages.luma.sampler;
 
-    std::array<VkWriteDescriptorSet, 5> writes{};
+    VkDescriptorBufferInfo curveBufferInfo{};
+    curveBufferInfo.buffer = curveUBO;
+    curveBufferInfo.offset = 0;
+    curveBufferInfo.range = curveUBOSize;
+
+    std::array<VkWriteDescriptorSet, 6> writes{};
     // 0: storage (swapchain)
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptorSets[imageIndex];
@@ -658,6 +758,14 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     writes[4].descriptorCount = 1;
     writes[4].pImageInfo = &chromaInfo;
 
+    // 5: curve UBO
+    writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet = descriptorSets[imageIndex];
+    writes[5].dstBinding = 5;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[5].descriptorCount = 1;
+    writes[5].pBufferInfo = &curveBufferInfo;
+
     vkUpdateDescriptorSets(engine->logicalDevice, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
@@ -670,10 +778,12 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
                             0,
                             nullptr);
 
-    const float outputAspect = static_cast<float>(swapchainExtent.width) / std::max(1u, swapchainExtent.height);
+    const float reservedHeight = kScrubberHeight + kScrubberMargin * 2.0f;
+    const float availableHeight = std::max(1.0f, static_cast<float>(swapchainExtent.height) - reservedHeight);
+    const float outputAspect = static_cast<float>(swapchainExtent.width) / availableHeight;
     const float videoAspect = videoImages.height > 0 ? static_cast<float>(videoImages.width) / static_cast<float>(videoImages.height) : 1.0f;
     float targetWidth = static_cast<float>(swapchainExtent.width);
-    float targetHeight = static_cast<float>(swapchainExtent.height);
+    float targetHeight = availableHeight;
     if (!overrides || !overrides->useTargetOverride)
     {
         if (videoAspect > outputAspect)
@@ -695,7 +805,7 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
                               : (static_cast<float>(swapchainExtent.width) - targetWidth) * 0.5f;
     const float originY = (overrides && overrides->useTargetOverride)
                               ? overrides->targetOrigin.y
-                              : (static_cast<float>(swapchainExtent.height) - targetHeight) * 0.5f;
+                              : (kScrubberMargin + (availableHeight - targetHeight) * 0.5f);
 
     ComputePushConstants push{};
     push.outputSize = glm::vec2(static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height));

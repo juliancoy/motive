@@ -8,6 +8,9 @@ layout(set = 0, binding = 1) uniform sampler2D texOverlay;      // rectangle ove
 layout(set = 0, binding = 2) uniform sampler2D texFpsOverlay;   // text overlay
 layout(set = 0, binding = 3) uniform sampler2D texLuma;
 layout(set = 0, binding = 4) uniform sampler2D texChroma;
+layout(set = 0, binding = 5) uniform CurveUBO {
+    vec4 curve[64]; // 256 samples packed
+} curveUBO;
 
 layout(push_constant) uniform Push {
     vec2 outputSize;
@@ -100,6 +103,32 @@ void main() {
         vec2 uv = convertChroma(uvSample, pushC.colorRange);
         float y = convertLuma(ySample, pushC.colorRange);
         vec3 rgb = yuvToRgb(y, uv.x, uv.y, pushC.colorSpace);
+        // Curve LUT applied per channel (piecewise linear over 256 samples)
+        float lutCoordR = clamp(rgb.r, 0.0, 1.0) * 255.0;
+        float lutCoordG = clamp(rgb.g, 0.0, 1.0) * 255.0;
+        float lutCoordB = clamp(rgb.b, 0.0, 1.0) * 255.0;
+        int lutIdxR = int(floor(lutCoordR));
+        int lutIdxG = int(floor(lutCoordG));
+        int lutIdxB = int(floor(lutCoordB));
+        float lutFractR = fract(lutCoordR);
+        float lutFractG = fract(lutCoordG);
+        float lutFractB = fract(lutCoordB);
+        int blockR = lutIdxR >> 2;
+        int laneR = lutIdxR & 3;
+        int blockR1 = min((lutIdxR + 1) >> 2, 63);
+        int laneR1 = (lutIdxR + 1) & 3;
+        int blockG = lutIdxG >> 2;
+        int laneG = lutIdxG & 3;
+        int blockG1 = min((lutIdxG + 1) >> 2, 63);
+        int laneG1 = (lutIdxG + 1) & 3;
+        int blockB = lutIdxB >> 2;
+        int laneB = lutIdxB & 3;
+        int blockB1 = min((lutIdxB + 1) >> 2, 63);
+        int laneB1 = (lutIdxB + 1) & 3;
+        float lutR = mix(curveUBO.curve[blockR][laneR], curveUBO.curve[blockR1][laneR1], lutFractR);
+        float lutG = mix(curveUBO.curve[blockG][laneG], curveUBO.curve[blockG1][laneG1], lutFractG);
+        float lutB = mix(curveUBO.curve[blockB][laneB], curveUBO.curve[blockB1][laneB1], lutFractB);
+        rgb = vec3(lutR, lutG, lutB);
         // Apply grading: contrast then exposure, then saturation
         rgb = rgb * pushC.grading.y + vec3(pushC.grading.x);
         float luma = dot(rgb, vec3(0.299, 0.587, 0.114));
@@ -117,9 +146,14 @@ void main() {
 
     // Scrubber (optionally disabled)
     if (pushC.scrubberEnabled != 0u) {
-        vec2 scrubSize = vec2(512.0, 64.0);
         float margin = 20.0;
-        vec2 scrubOrigin = vec2((pushC.outputSize.x - scrubSize.x) * 0.5, pushC.outputSize.y - scrubSize.y - margin);
+        float iconSize = 28.0;
+        float minWidth = 200.0;
+        float scrubHeight = 64.0;
+        float scrubLeft = margin + iconSize + margin;
+        float scrubWidth = max(pushC.outputSize.x - (scrubLeft + margin), minWidth);
+        vec2 scrubSize = vec2(scrubWidth, scrubHeight);
+        vec2 scrubOrigin = vec2(scrubLeft, pushC.outputSize.y - scrubSize.y - margin);
         bool inScrub = frag.x >= scrubOrigin.x &&
                        frag.y >= scrubOrigin.y &&
                        frag.x <= (scrubOrigin.x + scrubSize.x) &&
@@ -153,14 +187,14 @@ void main() {
         }
 
         // Play/pause icon to the left of the scrubber
-        vec2 iconSize = vec2(28.0, 28.0);
-        vec2 iconOrigin = scrubOrigin + vec2(-36.0, (scrubSize.y - iconSize.y) * 0.5);
+        vec2 iconSizeV = vec2(iconSize, iconSize);
+        vec2 iconOrigin = vec2(margin, scrubOrigin.y + (scrubSize.y - iconSizeV.y) * 0.5);
         bool inIcon = frag.x >= iconOrigin.x &&
                       frag.y >= iconOrigin.y &&
-                      frag.x <= (iconOrigin.x + iconSize.x) &&
-                      frag.y <= (iconOrigin.y + iconSize.y);
+                      frag.x <= (iconOrigin.x + iconSizeV.x) &&
+                      frag.y <= (iconOrigin.y + iconSizeV.y);
         if (inIcon) {
-            vec2 uvIcon = (frag - iconOrigin) / iconSize;
+            vec2 uvIcon = (frag - iconOrigin) / iconSizeV;
             float alphaIcon = 0.0;
             if (pushC.scrubPlaying > 0.5) {
                 // Pause: two vertical bars

@@ -202,27 +202,6 @@ Engine (engine.h/engine.cpp)
 - **Separation of Concerns:** Clear division between rendering, camera management, model management, and resource management
 - **Event Forwarding:** Display forwards input events to Camera instances
 
-## In-Progress Plan: Zero-Copy Vulkan Video Path (opt-in)
-- Add CLI flag `--decodeZeroCopy` to gate an experimental Vulkan Video decode path; keep existing FFmpeg path as default.
-- Video module (`video.h/.cpp`): introduce Vulkan Video session creation (VK_KHR_video_queue + decode extensions), DPB/output image management for NV12/P010, and per-frame sync objects (timeline semaphores).
-- Engine/graphics device: allocate/import video decode images and wire decode queue/command buffers; handle layout transitions and queue ownership for decode→render.
-- motive2d: when flag is set, bind decoded Vulkan Video images directly to the blit shader (no CPU copy), and keep grading/crop windows active via updated descriptors.
-- Safeguards: feature probing/logging, fallback to current path on missing extensions or errors; staged integration to avoid regressions.
-
-## Directive: Zero-Copy via FFmpeg Vulkan HWAccel (preferred)
-- FFmpeg currently owns its own Vulkan device/instance; the renderer owns another. To consume `AVVkFrame` images zero-copy, we must build the FFmpeg Vulkan hwcontext on the existing `VkInstance`/`VkDevice` (via `AVVulkanDeviceContext`), otherwise the images are invalid for rendering.
-- Once shared, pass the `VkImage` handles and semaphores from FFmpeg into the render path, update descriptors, handle layout/queue ownership transitions, and gate with a CLI flag. This touches `video.*`, `engine/graphicsdevice`, `motive2d`, and descriptors. Grading/crop need a rebind on top.
-
-## Current state
-- Decoder init can now accept a `VulkanInteropContext` and build the FFmpeg Vulkan hwdevice on the engine’s Vulkan instance/device/queue. CPU copy path still in use; rendering still uses CPU-uploaded frames.
-- No zero-copy binding yet; AVVkFrame images are not propagated to render.
-- No CLI gate implemented; legacy path remains active.
-
-## Next steps (no gate)
-- In `video.*`, expose decoded AVVkFrame surfaces (VkImage + semaphores/layout/queue family) instead of copying to CPU buffers when Vulkan interop is active.
-- In `motive2d` (and descriptors), bind those VkImages directly to the blit shader, handle layout transitions and queue ownership, and wait/signal using the provided semaphores; allow grading/crop to be temporarily broken until the new descriptors are wired.
-- Keep the CPU path as fallback internally if Vulkan interop fails; remove the need for a CLI flag but avoid breaking playback entirely.
-
 ## Memory Management
 
 - **Engine:** Owns Vulkan device, descriptor pool, command pool
@@ -233,3 +212,13 @@ Engine (engine.h/engine.cpp)
 - **Texture:** Owns image resources and samplers
 
 This hierarchical structure allows for efficient resource management and clear separation of responsibilities while maintaining flexibility for future extensions. The separation of Camera into its own class enables better organization and potential multi-camera scenarios.
+
+## Directive: GPU Offscreen Blit Encode
+- Add a GPU-only offscreen render path and FFmpeg-based Vulkan encode that mirrors the existing Vulkan decode path; avoid CPU readbacks.
+- Build FFmpeg’s encoder hwcontext on the existing Vulkan instance/device, match source resolution/frame rate/colorspace, and write `<input>_blit.mp4`.
+- Introduce a CLI `--encode` mode that drives the offscreen render/encode pipeline without windows.
+
+## In-Progress Plan: Offscreen Encode Integration
+- Build an offscreen render target (Vulkan image) and reuse the video blit compute to render into it without a swapchain, keeping grading/crop applied.
+- Wire an FFmpeg Vulkan encoder pipeline that consumes the offscreen image (shared VkImages/semaphores), matching source properties, outputting `<input>_blit.mp4`.
+- Add CLI gating (`--encode`, `--windows=...`) to run headless encode; fall back gracefully if FFmpeg encode init fails.

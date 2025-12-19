@@ -16,3 +16,4 @@ LandReform
 nv-codec*
 *__pycache__
 *.MP4
+*.json

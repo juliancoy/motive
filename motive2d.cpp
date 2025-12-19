@@ -6,8 +6,10 @@
 #include <filesystem>
 #include <iostream>
 #include <cstring>
+#include <array>
 #include <optional>
 #include <string>
+#include <sstream>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -35,11 +37,10 @@ namespace
 {
 // Look for the sample video in the current directory (files were moved up).
 const std::filesystem::path kDefaultVideoPath = std::filesystem::path("P1090533_main8_hevc_fast.mkv");
-constexpr uint32_t kScrubberWidth = 512;
 constexpr uint32_t kScrubberHeight = 64;
+constexpr uint32_t kScrubberMinWidth = 200;
 constexpr double kScrubberMargin = 20.0;
 constexpr double kPlayIconSize = 28.0;
-constexpr double kPlayIconOffsetX = 36.0;
 
 using overlay::FpsOverlayResources;
 using overlay::ImageResource;
@@ -143,6 +144,10 @@ struct CliOptions
     std::filesystem::path videoPath;
     std::optional<bool> swapUV;
     bool decodeOnly = false;
+    bool encode = false;
+    bool showInput = true;
+    bool showRegion = true;
+    bool showGrading = true;
 };
 
 CliOptions parseCliOptions(int argc, char** argv)
@@ -150,6 +155,14 @@ CliOptions parseCliOptions(int argc, char** argv)
     std::filesystem::path videoPath = kDefaultVideoPath;
     std::optional<bool> swapUV;
     bool decodeOnly = false;
+    bool encode = false;
+    bool showInput = true;
+    bool showRegion = true;
+    bool showGrading = true;
+    bool windowsSpecified = false;
+    bool parsedInput = false;
+    bool parsedRegion = false;
+    bool parsedGrading = false;
     for (int i = 1; i < argc; ++i)
     {
         std::string arg(argv[i] ? argv[i] : "");
@@ -193,12 +206,77 @@ CliOptions parseCliOptions(int argc, char** argv)
         {
             decodeOnly = true;
         }
+        else if (arg == "--encode")
+        {
+            encode = true;
+        }
+        else if (arg.rfind("--windows", 0) == 0)
+        {
+            // Format: --windows=region,input,grading,none
+            std::string list;
+            if (arg == "--windows" && i + 1 < argc)
+            {
+                std::string nextArg(argv[i + 1] ? argv[i + 1] : "");
+                if (!nextArg.empty() && nextArg[0] != '-')
+                {
+                    list = nextArg;
+                    ++i;
+                }
+            }
+            else if (arg.rfind("--windows=", 0) == 0)
+            {
+                list = arg.substr(std::string("--windows=").size());
+            }
+
+            if (!list.empty())
+            {
+                windowsSpecified = true;
+                bool tmpInput = false;
+                bool tmpRegion = false;
+                bool tmpGrading = false;
+                std::stringstream ss(list);
+                std::string token;
+                while (std::getline(ss, token, ','))
+                {
+                    if (token == "none")
+                    {
+                        tmpInput = false;
+                        tmpRegion = false;
+                        tmpGrading = false;
+                        continue;
+                    }
+                    if (token == "input")
+                    {
+                        tmpInput = true;
+                        continue;
+                    }
+                    if (token == "region")
+                    {
+                        tmpRegion = true;
+                        continue;
+                    }
+                    if (token == "grading")
+                    {
+                        tmpGrading = true;
+                    }
+                }
+                parsedInput = tmpInput;
+                parsedRegion = tmpRegion;
+                parsedGrading = tmpGrading;
+            }
+        }
     }
     if (videoPath.empty())
     {
         videoPath = kDefaultVideoPath;
     }
-    return CliOptions{videoPath, swapUV, decodeOnly};
+    if (windowsSpecified)
+    {
+        showInput = parsedInput;
+        showRegion = parsedRegion;
+        showGrading = parsedGrading;
+    }
+    return CliOptions{videoPath, swapUV, decodeOnly, encode, showInput, showRegion, showGrading};
 }
 
 bool uploadDecodedFrame(VideoResources& video,
@@ -783,17 +861,20 @@ struct ScrubberUi
 ScrubberUi computeScrubberUi(int windowWidth, int windowHeight)
 {
     ScrubberUi ui{};
-    const double scrubberWidth = static_cast<double>(kScrubberWidth);
+    const double availableWidth = static_cast<double>(windowWidth);
+    const double scrubberWidth =
+        std::max(static_cast<double>(kScrubberMinWidth),
+                 availableWidth - (kPlayIconSize + kScrubberMargin * 3.0));
     const double scrubberHeight = static_cast<double>(kScrubberHeight);
-    ui.left = (static_cast<double>(windowWidth) - scrubberWidth) * 0.5;
-    ui.right = ui.left + scrubberWidth;
+    ui.iconLeft = kScrubberMargin;
+    ui.iconRight = ui.iconLeft + kPlayIconSize;
     ui.top = static_cast<double>(windowHeight) - scrubberHeight - kScrubberMargin;
     ui.bottom = ui.top + scrubberHeight;
-
-    ui.iconLeft = ui.left - kPlayIconOffsetX;
     ui.iconTop = ui.top + (scrubberHeight - kPlayIconSize) * 0.5;
-    ui.iconRight = ui.iconLeft + kPlayIconSize;
     ui.iconBottom = ui.iconTop + kPlayIconSize;
+
+    ui.left = ui.iconRight + kScrubberMargin;
+    ui.right = ui.left + scrubberWidth;
     return ui;
 }
 
@@ -825,13 +906,37 @@ int main(int argc, char** argv)
     Display2D* display = nullptr;
     Display2D* cropDisplay = nullptr;
     Display2D* gradingDisplay = nullptr;
+    if (!cli.showInput)
+    {
+        std::cout << "[Video2D] Windows disabled (--windows=none); running headless decode benchmark.\n";
+        if (cli.encode)
+        {
+            std::cerr << "[Video2D] --encode is not available in headless mode yet.\n";
+            return 1;
+        }
+        return runDecodeOnlyBenchmark(cli.videoPath, cli.swapUV);
+    }
+
     try {
         engine = new Engine();
         std::cout << "[Video2D] Initializing display..." << std::endl;
-        display = new Display2D(engine, 1280, 720, "Motive Video 2D");
-        std::cout << "[Video2D] Display initialized successfully." << std::endl;
-        cropDisplay = new Display2D(engine, 360, 640, "Region View");
-        gradingDisplay = new Display2D(engine, 420, 520, "Grading");
+        if (cli.showInput)
+        {
+            display = new Display2D(engine, 1280, 900, "Motive Video 2D");
+            std::cout << "[Video2D] Display initialized successfully." << std::endl;
+        }
+        else
+        {
+            std::cout << "[Video2D] Windows disabled (--windows=none); running headless.\n";
+        }
+        if (cli.showRegion)
+        {
+            cropDisplay = new Display2D(engine, 360, 640, "Region View");
+        }
+        if (cli.showGrading)
+        {
+            gradingDisplay = new Display2D(engine, 420, 880, "Grading");
+        }
     } catch (const std::exception& ex) {
         std::cerr << "[Video2D] FATAL: Exception during engine or display initialization: " << ex.what() << std::endl;
         if (display)
@@ -935,12 +1040,15 @@ int main(int argc, char** argv)
     uint32_t gradingFbWidth = 0;
     uint32_t gradingFbHeight = 0;
     bool gradingMouseHeld = false;
+    bool gradingRightHeld = false;
     int lastGradingSlider = -1;
     auto lastGradingClickTime = std::chrono::steady_clock::time_point{};
     bool gradingPreviewEnabled = true;
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
+    std::array<float, kCurveLutSize> curveLut{};
+    bool curveDirty = true;
     // Rectangle state
     float rectHeight = fbHeightF;
     float rectWidth = rectHeight * (9.0f / 16.0f);
@@ -948,22 +1056,46 @@ int main(int argc, char** argv)
 
     while (true)
     {
-        display->pollEvents();
-        cropDisplay->pollEvents();
-        gradingDisplay->pollEvents();
+        if (display)
+        {
+            display->pollEvents();
+        }
+        if (cropDisplay)
+        {
+            cropDisplay->pollEvents();
+        }
+        if (gradingDisplay)
+        {
+            gradingDisplay->pollEvents();
+        }
         // Update framebuffer/window sizes for both windows
-        glfwGetFramebufferSize(display->window, &fbWidth, &fbHeight);
+        if (display)
+        {
+            glfwGetFramebufferSize(display->window, &fbWidth, &fbHeight);
+            glfwGetWindowSize(display->window, &display->width, &display->height);
+        }
         int cropFbWidth = 0;
         int cropFbHeight = 0;
-        glfwGetFramebufferSize(cropDisplay->window, &cropFbWidth, &cropFbHeight);
+        if (cropDisplay)
+        {
+            glfwGetFramebufferSize(cropDisplay->window, &cropFbWidth, &cropFbHeight);
+        }
         int gradingFbWidthInt = 0;
         int gradingFbHeightInt = 0;
-        glfwGetFramebufferSize(gradingDisplay->window, &gradingFbWidthInt, &gradingFbHeightInt);
+        if (gradingDisplay)
+        {
+            glfwGetFramebufferSize(gradingDisplay->window, &gradingFbWidthInt, &gradingFbHeightInt);
+        }
         uint32_t prevGradingFbW = gradingFbWidth;
         uint32_t prevGradingFbH = gradingFbHeight;
-        glfwGetWindowSize(display->window, &display->width, &display->height);
-        glfwGetWindowSize(cropDisplay->window, &cropDisplay->width, &cropDisplay->height);
-        glfwGetWindowSize(gradingDisplay->window, &gradingDisplay->width, &gradingDisplay->height);
+        if (cropDisplay)
+        {
+            glfwGetWindowSize(cropDisplay->window, &cropDisplay->width, &cropDisplay->height);
+        }
+        if (gradingDisplay)
+        {
+            glfwGetWindowSize(gradingDisplay->window, &gradingDisplay->width, &gradingDisplay->height);
+        }
         fbWidth = std::max(1, fbWidth);
         fbHeight = std::max(1, fbHeight);
         cropFbWidth = std::max(1, cropFbWidth);
@@ -1008,7 +1140,9 @@ int main(int argc, char** argv)
             break;
         }
 
-        if (display->shouldClose() || cropDisplay->shouldClose() || gradingDisplay->shouldClose())
+        const bool regionClosed = cropDisplay ? cropDisplay->shouldClose() : false;
+        const bool gradingClosed = gradingDisplay ? gradingDisplay->shouldClose() : false;
+        if ((display && display->shouldClose()) || regionClosed || gradingClosed)
         {
             break;
         }
@@ -1026,11 +1160,11 @@ int main(int argc, char** argv)
             double cursorX = 0.0;
             double cursorY = 0.0;
             glfwGetCursorPos(display->window, &cursorX, &cursorY);
-            if (cursorInPlayButton(cursorX, cursorY, display->width, display->height))
-            {
-                playing = !playing;
-            }
-            else if (cursorInScrubber(cursorX, cursorY, display->width, display->height))
+        if (display && cursorInPlayButton(cursorX, cursorY, display->width, display->height))
+        {
+            playing = !playing;
+        }
+            else if (display && cursorInScrubber(cursorX, cursorY, display->width, display->height))
             {
                 scrubDragging = true;
                 scrubDragStartX = cursorX;
@@ -1055,7 +1189,8 @@ int main(int argc, char** argv)
             double cursorY = 0.0;
             glfwGetCursorPos(display->window, &cursorX, &cursorY);
             double deltaX = cursorX - scrubDragStartX;
-            double scrubberWidth = static_cast<double>(kScrubberWidth);
+            ScrubberUi ui = computeScrubberUi(display->width, display->height);
+            double scrubberWidth = std::max(1.0, ui.right - ui.left);
             float deltaProgress = static_cast<float>(deltaX / scrubberWidth);
             float newProgress = std::clamp(scrubDragStartProgress + deltaProgress, 0.0f, 1.0f);
             scrubProgressUi = newProgress;
@@ -1093,6 +1228,13 @@ int main(int argc, char** argv)
         }
         mouseHeld = (mouseState == GLFW_PRESS);
 
+        if (!gradingDisplay)
+        {
+            gradingMouseHeld = false;
+            gradingRightHeld = false;
+        }
+        else
+        {
         // Grading window slider interaction (supports double-click to reset that slider)
         int gradingMouseState = glfwGetMouseButton(gradingDisplay->window, GLFW_MOUSE_BUTTON_LEFT);
         if (gradingMouseState == GLFW_PRESS && !gradingMouseHeld)
@@ -1160,16 +1302,20 @@ int main(int argc, char** argv)
             bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
+            const bool rightClick = (gradingMouseState == GLFW_PRESS &&
+                                     glfwGetMouseButton(gradingDisplay->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
             if (grading::handleOverlayClick(gradingLayout,
                                             gx,
                                             gy,
                                             gradingSettings,
                                             doubleClick,
+                                            rightClick,
                                             &loadRequested,
                                             &saveRequested,
                                             &previewToggle))
             {
                 gradingOverlayDirty = true;
+                curveDirty = true;
                 if (loadRequested)
                 {
                     if (!grading::loadGradingSettings(gradingConfigPath, gradingSettings))
@@ -1187,6 +1333,7 @@ int main(int argc, char** argv)
                 if (previewToggle)
                 {
                     gradingPreviewEnabled = !gradingPreviewEnabled;
+                    curveDirty = true;
                 }
             }
 
@@ -1207,11 +1354,13 @@ int main(int argc, char** argv)
                                             gy,
                                             gradingSettings,
                                             false,
+                                            /*rightClick=*/false,
                                             &loadRequested,
                                             &saveRequested,
                                             &previewToggle))
             {
                 gradingOverlayDirty = true;
+                curveDirty = true;
                 if (loadRequested)
                 {
                     if (!grading::loadGradingSettings(gradingConfigPath, gradingSettings))
@@ -1237,6 +1386,55 @@ int main(int argc, char** argv)
             gradingMouseHeld = false;
         }
 
+        int gradingRightState = glfwGetMouseButton(gradingDisplay->window, GLFW_MOUSE_BUTTON_RIGHT);
+        if (gradingRightState == GLFW_PRESS && !gradingRightHeld)
+        {
+            double gx = 0.0;
+            double gy = 0.0;
+            glfwGetCursorPos(gradingDisplay->window, &gx, &gy);
+            bool loadRequested = false;
+            bool saveRequested = false;
+            bool previewToggle = false;
+            if (grading::handleOverlayClick(gradingLayout,
+                                            gx,
+                                            gy,
+                                            gradingSettings,
+                                            /*doubleClick=*/false,
+                                            /*rightClick=*/true,
+                                            &loadRequested,
+                                            &saveRequested,
+                                            &previewToggle))
+            {
+                gradingOverlayDirty = true;
+                curveDirty = true;
+                if (loadRequested)
+                {
+                    if (!grading::loadGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to load grading settings from " << gradingConfigPath << "\n";
+                    }
+                }
+                if (saveRequested)
+                {
+                    if (!grading::saveGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to save grading settings to " << gradingConfigPath << "\n";
+                    }
+                }
+                if (previewToggle)
+                {
+                    gradingPreviewEnabled = !gradingPreviewEnabled;
+                }
+            }
+            gradingRightHeld = true;
+        }
+        else if (gradingRightState == GLFW_RELEASE)
+        {
+            gradingRightHeld = false;
+        }
+        }
+
+
         // Scroll to resize rectangle
         double scrollDelta = g_scrollDelta;
         g_scrollDelta = 0.0;
@@ -1247,7 +1445,7 @@ int main(int argc, char** argv)
             rectWidth = rectHeight * (9.0f / 16.0f);
         }
 
-        double playbackSeconds = advancePlayback(playbackState, playing && !scrubDragging);
+        double playbackSeconds = advancePlayback(playbackState, display ? (playing && !scrubDragging) : false);
         double normalizedProgress = videoDurationSeconds > 0.0
                                         ? std::clamp(playbackSeconds / videoDurationSeconds, 0.0, 1.0)
                                         : 0.0;
@@ -1257,8 +1455,27 @@ int main(int argc, char** argv)
         }
         const float displayProgress = static_cast<float>(scrubProgressUi);
 
+        ColorAdjustments adjustments{};
+        if (gradingPreviewEnabled)
+        {
+            adjustments.exposure = gradingSettings.exposure;
+            adjustments.contrast = gradingSettings.contrast;
+            adjustments.saturation = gradingSettings.saturation;
+            adjustments.shadows = gradingSettings.shadows;
+            adjustments.midtones = gradingSettings.midtones;
+            adjustments.highlights = gradingSettings.highlights;
+            if (curveDirty)
+            {
+                grading::buildCurveLut(gradingSettings, curveLut);
+                curveDirty = false;
+            }
+            adjustments.curveLut = curveLut;
+            adjustments.curveEnabled = true;
+        }
+        const ColorAdjustments* activeAdjustments = gradingPreviewEnabled ? &adjustments : nullptr;
+
         // Rebuild grading overlay if needed or size changed
-        if (gradingOverlayDirty)
+        if (gradingDisplay && gradingOverlayDirty)
         {
             gradingOverlayDirty = grading::buildGradingOverlay(engine,
                                                                gradingSettings,
@@ -1270,17 +1487,17 @@ int main(int argc, char** argv)
                                                                gradingPreviewEnabled);
             gradingOverlayInfo.overlay.sampler = playbackState.overlay.sampler;
         }
-        const ColorAdjustments* activeAdjustments = gradingPreviewEnabled
-                                                        ? reinterpret_cast<ColorAdjustments*>(&gradingSettings)
-                                                        : nullptr;
-        display->renderFrame(playbackState.video.descriptors,
-                             playbackState.overlay.info,
-                             playbackState.fpsOverlay.info,
-                             playbackState.colorInfo,
-                             displayProgress,
-                             playing ? 1.0f : 0.0f,
-                             nullptr,
-                             activeAdjustments);
+        if (display)
+        {
+            display->renderFrame(playbackState.video.descriptors,
+                                 playbackState.overlay.info,
+                                 playbackState.fpsOverlay.info,
+                                 playbackState.colorInfo,
+                                 displayProgress,
+                                 playing ? 1.0f : 0.0f,
+                                 nullptr,
+                                 activeAdjustments);
+        }
         // FPS tracking
         fpsFrameCounter++;
         auto now = std::chrono::steady_clock::now();
@@ -1366,14 +1583,17 @@ int main(int argc, char** argv)
 
                 OverlayImageInfo disabledOverlay{};
                 OverlayImageInfo disabledFps{};
-                cropDisplay->renderFrame(playbackState.video.descriptors,
-                                         disabledOverlay,
-                                         disabledFps,
-                                         playbackState.colorInfo,
-                                         0.0f,
-                                         0.0f,
-                                         &overrides,
-                                         activeAdjustments);
+                if (cropDisplay)
+                {
+                    cropDisplay->renderFrame(playbackState.video.descriptors,
+                                             disabledOverlay,
+                                             disabledFps,
+                                             playbackState.colorInfo,
+                                             0.0f,
+                                             0.0f,
+                                             &overrides,
+                                             activeAdjustments);
+                }
             }
         }
 
@@ -1383,14 +1603,17 @@ int main(int argc, char** argv)
         OverlayImageInfo disabledFps{};
         RenderOverrides gradingOverrides{};
         gradingOverrides.hideScrubber = true;
-        gradingDisplay->renderFrame(blackVideo,
-                                    gradingOverlay,
-                                    disabledFps,
-                                    playbackState.colorInfo,
-                                    0.0f,
-                                    0.0f,
-                                    &gradingOverrides,
-                                    activeAdjustments);
+        if (gradingDisplay)
+        {
+            gradingDisplay->renderFrame(blackVideo,
+                                        gradingOverlay,
+                                        disabledFps,
+                                        playbackState.colorInfo,
+                                        0.0f,
+                                        0.0f,
+                                        &gradingOverrides,
+                                        activeAdjustments);
+        }
     }
 
     const bool logCleanup = isDebugEnabled(DebugCategory::Cleanup);

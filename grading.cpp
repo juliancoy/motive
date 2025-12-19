@@ -4,10 +4,12 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include <array>
 #include <string>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <limits>
 
 #include "engine.h"
 #include "glyph.h"
@@ -50,6 +52,59 @@ float normalizeSaturation(float sat)
 float denormalizeSaturation(float norm)
 {
     return std::clamp(norm * 2.0f, 0.0f, 3.0f);
+}
+
+float clampCurveX(float x, float prevX, float nextX)
+{
+    const float eps = 0.01f;
+    return std::clamp(x, prevX + eps, nextX - eps);
+}
+
+void drawLine(std::vector<uint8_t>& buf,
+              uint32_t width,
+              uint32_t height,
+              int x0,
+              int y0,
+              int x1,
+              int y1,
+              uint8_t r,
+              uint8_t g,
+              uint8_t b,
+              uint8_t a)
+{
+    const int dx = std::abs(x1 - x0);
+    const int dy = -std::abs(y1 - y0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    int x = x0;
+    int y = y0;
+    while (true)
+    {
+        if (x >= 0 && x < static_cast<int>(width) && y >= 0 && y < static_cast<int>(height))
+        {
+            size_t idx = (static_cast<size_t>(y) * width + static_cast<size_t>(x)) * 4;
+            buf[idx + 0] = r;
+            buf[idx + 1] = g;
+            buf[idx + 2] = b;
+            buf[idx + 3] = a;
+        }
+        if (x == x1 && y == y1)
+        {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy)
+        {
+            err += dy;
+            x += sx;
+        }
+        if (e2 <= dx)
+        {
+            err += dx;
+            y += sy;
+        }
+    }
 }
 
 void drawRect(std::vector<uint8_t>& buf,
@@ -142,10 +197,18 @@ bool buildGradingOverlay(Engine* engine,
         return false;
     }
     layout.width = 420;
-    layout.height = 520;
+    layout.height = 880;
     layout.margin = 20;
     layout.barHeight = 20;
-    layout.barYStart = 32;
+    layout.curvesPadding = 16;
+    layout.curvesHeight = 200;
+    layout.curvesX0 = layout.curvesPadding;
+    layout.curvesX1 = layout.width > layout.curvesPadding * 2
+                          ? layout.width - layout.curvesPadding
+                          : layout.width;
+    layout.curvesY0 = layout.curvesPadding;
+    layout.curvesY1 = layout.curvesY0 + layout.curvesHeight;
+    layout.barYStart = layout.curvesY1 + 32;
     layout.rowSpacing = 12;
     layout.handleRadius = 10;
 
@@ -175,6 +238,69 @@ bool buildGradingOverlay(Engine* engine,
         {clamp01(settings.highlights.g * 0.5f), {120, 255, 120}},
         {clamp01(settings.highlights.b * 0.5f), {120, 120, 255}},
     };
+
+    // Curves editor background
+    {
+        drawRect(pixels,
+                 layout.width,
+                 layout.height,
+                 layout.curvesX0,
+                 layout.curvesY0,
+                 layout.curvesX1,
+                 layout.curvesY1,
+                 35,
+                 35,
+                 35,
+                 255);
+        const uint32_t curvesW = layout.curvesX1 - layout.curvesX0;
+        const uint32_t curvesH = layout.curvesY1 - layout.curvesY0;
+        // Grid lines (4x4)
+        for (int i = 1; i < 4; ++i)
+        {
+            uint32_t x = layout.curvesX0 + static_cast<uint32_t>(std::round(static_cast<float>(curvesW) * (i / 4.0f)));
+            uint32_t y = layout.curvesY0 + static_cast<uint32_t>(std::round(static_cast<float>(curvesH) * (i / 4.0f)));
+            drawRect(pixels, layout.width, layout.height, x, layout.curvesY0, x + 1, layout.curvesY1, 55, 55, 55, 255);
+            drawRect(pixels, layout.width, layout.height, layout.curvesX0, y, layout.curvesX1, y + 1, 55, 55, 55, 255);
+        }
+        // Axes
+        drawRect(pixels, layout.width, layout.height, layout.curvesX0, layout.curvesY1 - 1, layout.curvesX1, layout.curvesY1, 80, 80, 80, 255);
+        drawRect(pixels, layout.width, layout.height, layout.curvesX0, layout.curvesY0, layout.curvesX0 + 1, layout.curvesY1, 80, 80, 80, 255);
+
+        // Curve polyline (linear between control points)
+        auto toPx = [&](const glm::vec2& p) -> glm::ivec2 {
+            float xNorm = clamp01(p.x);
+            float yNorm = clamp01(p.y);
+            int x = static_cast<int>(std::round(static_cast<float>(layout.curvesX0) + xNorm * static_cast<float>(curvesW)));
+            int y = static_cast<int>(std::round(static_cast<float>(layout.curvesY1) - yNorm * static_cast<float>(curvesH)));
+            return {x, y};
+        };
+        if (settings.curves.size() >= 2)
+        {
+            glm::ivec2 last = toPx(settings.curves.front());
+            for (size_t i = 1; i < settings.curves.size(); ++i)
+            {
+                glm::ivec2 curr = toPx(settings.curves[i]);
+                drawLine(pixels, layout.width, layout.height, last.x, last.y, curr.x, curr.y, 200, 200, 220, 255);
+                last = curr;
+            }
+            // Handles
+            for (size_t i = 0; i < settings.curves.size(); ++i)
+            {
+                glm::ivec2 p = toPx(settings.curves[i]);
+                uint8_t handleA = (i == 0 || i == settings.curves.size() - 1) ? 160 : 255;
+                drawHandle(pixels,
+                           layout.width,
+                           layout.height,
+                           static_cast<float>(p.x),
+                           static_cast<float>(p.y),
+                           static_cast<float>(layout.handleRadius) * 0.6f,
+                           255,
+                           255,
+                           255,
+                           handleA);
+            }
+        }
+    }
 
     for (int i = 0; i < 12; ++i)
     {
@@ -223,8 +349,14 @@ bool buildGradingOverlay(Engine* engine,
     const uint32_t buttonPadding = 12;
     const uint32_t totalButtonsHeight = layout.resetHeight + layout.loadHeight + layout.saveHeight +
                                         layout.previewHeight + buttonPadding * 3;
-    const uint32_t buttonStartY =
+    const uint32_t barBlockHeight = 12 * (layout.barHeight + layout.rowSpacing);
+    const uint32_t minButtonY = layout.barYStart + barBlockHeight + 20;
+    uint32_t buttonStartY =
         layout.height > (totalButtonsHeight + buttonPadding) ? layout.height - totalButtonsHeight - buttonPadding : 0;
+    if (buttonStartY < minButtonY)
+    {
+        buttonStartY = minButtonY;
+    }
     auto centerButtonX = [&](uint32_t w) {
         return (layout.width > w) ? (layout.width - w) / 2 : 0u;
     };
@@ -314,6 +446,7 @@ bool handleOverlayClick(const SliderLayout& layout,
                         double cursorY,
                         GradingSettings& settings,
                         bool doubleClick,
+                        bool rightClick,
                         bool* loadRequested,
                         bool* saveRequested,
                         bool* previewToggleRequested)
@@ -323,6 +456,97 @@ bool handleOverlayClick(const SliderLayout& layout,
     if (relX < 0.0 || relY < 0.0 || relX >= layout.width || relY >= layout.height)
     {
         return false;
+    }
+
+    // Curves editor hit test
+    if (relX >= layout.curvesX0 && relX <= layout.curvesX1 && relY >= layout.curvesY0 && relY <= layout.curvesY1)
+    {
+        const float width = static_cast<float>(layout.curvesX1 - layout.curvesX0);
+        const float height = static_cast<float>(layout.curvesY1 - layout.curvesY0);
+        if (doubleClick)
+        {
+            settings.curves = {glm::vec2(0.0f, 0.0f),
+                               glm::vec2(0.33f, 0.33f),
+                               glm::vec2(0.66f, 0.66f),
+                               glm::vec2(1.0f, 1.0f)};
+            return true;
+        }
+        float normX = clamp01(static_cast<float>(relX - layout.curvesX0) / width);
+        float normY = clamp01(1.0f - static_cast<float>(relY - layout.curvesY0) / height);
+        const size_t pointCount = settings.curves.size();
+        if (pointCount < 2)
+        {
+            return true;
+        }
+
+        // Find closest handle
+        size_t closest = 0;
+        float bestDist2 = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < pointCount; ++i)
+        {
+            float dx = normX - settings.curves[i].x;
+            float dy = normY - settings.curves[i].y;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < bestDist2)
+            {
+                bestDist2 = d2;
+                closest = i;
+            }
+        }
+
+        constexpr float kRemoveThreshold2 = 0.015f * 0.015f; // normalized distance squared
+        if (rightClick)
+        {
+            if (bestDist2 <= kRemoveThreshold2 && pointCount > 3 && closest > 0 && closest + 1 < pointCount)
+            {
+                settings.curves.erase(settings.curves.begin() + static_cast<std::ptrdiff_t>(closest));
+            }
+            else
+            {
+                constexpr size_t kMaxCurvePoints = 8;
+                if (pointCount < kMaxCurvePoints)
+                {
+                    // Insert keeping x-order
+                    size_t insertIdx = pointCount - 1;
+                    for (size_t i = 1; i < pointCount; ++i)
+                    {
+                        if (normX <= settings.curves[i].x)
+                        {
+                            insertIdx = i;
+                            break;
+                        }
+                    }
+                    float prevX = settings.curves[insertIdx - 1].x;
+                    float nextX = settings.curves[insertIdx].x;
+                    glm::vec2 p{clampCurveX(normX, prevX, nextX), normY};
+                    settings.curves.insert(settings.curves.begin() + static_cast<std::ptrdiff_t>(insertIdx), p);
+                }
+            }
+            return true;
+        }
+
+        if (pointCount <= 2)
+        {
+            return true;
+        }
+        if (closest == 0)
+        {
+            settings.curves[closest].x = 0.0f;
+            settings.curves[closest].y = normY;
+        }
+        else if (closest + 1 >= pointCount)
+        {
+            settings.curves[closest].x = 1.0f;
+            settings.curves[closest].y = normY;
+        }
+        else
+        {
+            float prevX = settings.curves[closest - 1].x;
+            float nextX = settings.curves[closest + 1].x;
+            settings.curves[closest].x = clampCurveX(normX, prevX, nextX);
+            settings.curves[closest].y = normY;
+        }
+        return true;
     }
 
     // Reset button hit test
@@ -370,6 +594,26 @@ bool handleOverlayClick(const SliderLayout& layout,
     }
 
     float t = clamp01(static_cast<float>((relX - padding) / static_cast<double>(barWidth)));
+    if (rightClick)
+    {
+        switch (sliderIndex)
+        {
+        case 0: settings.exposure = 0.0f; break;
+        case 1: settings.contrast = 1.0f; break;
+        case 2: settings.saturation = 1.0f; break;
+        case 3: settings.shadows.r = 1.0f; break;
+        case 4: settings.shadows.g = 1.0f; break;
+        case 5: settings.shadows.b = 1.0f; break;
+        case 6: settings.midtones.r = 1.0f; break;
+        case 7: settings.midtones.g = 1.0f; break;
+        case 8: settings.midtones.b = 1.0f; break;
+        case 9: settings.highlights.r = 1.0f; break;
+        case 10: settings.highlights.g = 1.0f; break;
+        case 11: settings.highlights.b = 1.0f; break;
+        default: break;
+        }
+        return true;
+    }
     switch (sliderIndex)
     {
     case 0:
@@ -422,6 +666,10 @@ void setGradingDefaults(GradingSettings& settings)
     settings.shadows = glm::vec3(1.0f);
     settings.midtones = glm::vec3(1.0f);
     settings.highlights = glm::vec3(1.0f);
+    settings.curves = {glm::vec2(0.0f, 0.0f),
+                       glm::vec2(0.33f, 0.33f),
+                       glm::vec2(0.66f, 0.66f),
+                       glm::vec2(1.0f, 1.0f)};
 }
 
 namespace
@@ -490,6 +738,89 @@ glm::vec3 parseVec3(const std::string& src, const std::string& key, const glm::v
     }
     return result;
 }
+
+std::vector<glm::vec2> parseCurves(const std::string& src,
+                                   const std::string& key,
+                                   const std::vector<glm::vec2>& fallback)
+{
+    const std::string needle = "\"" + key + "\"";
+    size_t pos = src.find(needle);
+    if (pos == std::string::npos)
+    {
+        return fallback;
+    }
+    pos = src.find('[', pos);
+    if (pos == std::string::npos)
+    {
+        return fallback;
+    }
+    std::vector<glm::vec2> result;
+    const char* cursor = src.c_str() + pos + 1;
+    while (true)
+    {
+        // find opening bracket for pair
+        while (*cursor != '[' && *cursor != '\0')
+        {
+            ++cursor;
+        }
+        if (*cursor == '\0')
+        {
+            return fallback;
+        }
+        ++cursor; // skip '['
+        char* endPtr = nullptr;
+        float x = std::strtof(cursor, &endPtr);
+        if (endPtr == cursor)
+        {
+            return fallback;
+        }
+        cursor = endPtr;
+        while (*cursor != ',' && *cursor != '\0')
+        {
+            ++cursor;
+        }
+        if (*cursor == '\0')
+        {
+            return fallback;
+        }
+        ++cursor; // skip ','
+        float y = std::strtof(cursor, &endPtr);
+        if (endPtr == cursor)
+        {
+            return fallback;
+        }
+        result.emplace_back(clamp01(x), clamp01(y));
+        cursor = endPtr;
+        while (*cursor != ']' && *cursor != '\0')
+        {
+            ++cursor;
+        }
+        if (*cursor == '\0')
+        {
+            return fallback;
+        }
+        ++cursor; // past ']'
+        while (*cursor != '[' && *cursor != '\0')
+        {
+            if (*cursor == ']')
+            {
+                // end of curves array
+                if (result.size() >= 2)
+                {
+                    // ensure sorted by x and clamp endpoints
+                    std::sort(result.begin(), result.end(), [](const glm::vec2& a, const glm::vec2& b) {
+                        return a.x < b.x;
+                    });
+                    result.front() = glm::vec2(0.0f, result.front().y);
+                    result.back() = glm::vec2(1.0f, result.back().y);
+                    return result;
+                }
+                return fallback;
+            }
+            ++cursor;
+        }
+    }
+}
 } // namespace
 
 bool loadGradingSettings(const std::filesystem::path& path, GradingSettings& settings)
@@ -515,6 +846,7 @@ bool loadGradingSettings(const std::filesystem::path& path, GradingSettings& set
     settings.shadows = parseVec3(contents, "shadows", settings.shadows);
     settings.midtones = parseVec3(contents, "midtones", settings.midtones);
     settings.highlights = parseVec3(contents, "highlights", settings.highlights);
+    settings.curves = parseCurves(contents, "curves", settings.curves);
     return true;
 }
 
@@ -531,8 +863,56 @@ bool saveGradingSettings(const std::filesystem::path& path, const GradingSetting
     out << "  \"saturation\": " << settings.saturation << ",\n";
     out << "  \"shadows\": [" << settings.shadows.r << ", " << settings.shadows.g << ", " << settings.shadows.b << "],\n";
     out << "  \"midtones\": [" << settings.midtones.r << ", " << settings.midtones.g << ", " << settings.midtones.b << "],\n";
-    out << "  \"highlights\": [" << settings.highlights.r << ", " << settings.highlights.g << ", " << settings.highlights.b << "]\n";
+    out << "  \"highlights\": [" << settings.highlights.r << ", " << settings.highlights.g << ", " << settings.highlights.b << "],\n";
+    out << "  \"curves\": [";
+    for (size_t i = 0; i < settings.curves.size(); ++i)
+    {
+        out << "[" << settings.curves[i].x << ", " << settings.curves[i].y << "]";
+        if (i + 1 < settings.curves.size())
+        {
+            out << ", ";
+        }
+    }
+    out << "]\n";
     out << "}\n";
     return true;
+}
+
+void buildCurveLut(const GradingSettings& settings, std::array<float, kCurveLutSize>& outLut)
+{
+    auto clamp01f = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+    if (settings.curves.size() < 2)
+    {
+        for (size_t i = 0; i < kCurveLutSize; ++i)
+        {
+            outLut[i] = static_cast<float>(i) / static_cast<float>(kCurveLutSize - 1);
+        }
+        return;
+    }
+
+    std::vector<glm::vec2> pts = settings.curves;
+    std::sort(pts.begin(), pts.end(), [](const glm::vec2& a, const glm::vec2& b) { return a.x < b.x; });
+    pts.front().x = 0.0f;
+    pts.back().x = 1.0f;
+    for (auto& p : pts)
+    {
+        p.x = clamp01f(p.x);
+        p.y = clamp01f(p.y);
+    }
+
+    size_t seg = 0;
+    for (size_t i = 0; i < kCurveLutSize; ++i)
+    {
+        float x = static_cast<float>(i) / static_cast<float>(kCurveLutSize - 1);
+        while (seg + 1 < pts.size() && x > pts[seg + 1].x)
+        {
+            ++seg;
+        }
+        size_t next = std::min(seg + 1, pts.size() - 1);
+        float denom = std::max(pts[next].x - pts[seg].x, 1e-4f);
+        float t = std::clamp((x - pts[seg].x) / denom, 0.0f, 1.0f);
+        float y = pts[seg].y + (pts[next].y - pts[seg].y) * t;
+        outLut[i] = clamp01f(y);
+    }
 }
 } // namespace grading

@@ -3,7 +3,10 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <chrono>
+#include <array>
 #include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 #include "video.h"
 
 class Engine;
@@ -54,6 +57,8 @@ struct ColorAdjustments
     glm::vec3 shadows{1.0f};
     glm::vec3 midtones{1.0f};
     glm::vec3 highlights{1.0f};
+    std::array<float, 256> curveLut{};
+    bool curveEnabled = false;
 };
 
 class Display2D
@@ -90,6 +95,13 @@ private:
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    VkBuffer curveUBO = VK_NULL_HANDLE;
+    VkDeviceMemory curveUBOMemory = VK_NULL_HANDLE;
+    void* curveUBOMapped = nullptr;
+    VkDeviceSize curveUBOSize = sizeof(glm::vec4) * 64; // 256 floats packed as vec4
+    std::array<float, 256> lastCurveLut{};
+    bool lastCurveEnabled = false;
+    bool curveUploaded = false;
 
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;

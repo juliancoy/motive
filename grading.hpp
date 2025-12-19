@@ -1,14 +1,18 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 #include <filesystem>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
 #include "display2d.h"
 #include "overlay.hpp"
 
 class Engine;
+
+constexpr size_t kCurveLutSize = 256;
 
 struct GradingSettings
 {
@@ -18,6 +22,11 @@ struct GradingSettings
     glm::vec3 shadows = glm::vec3(1.0f);
     glm::vec3 midtones = glm::vec3(1.0f);
     glm::vec3 highlights = glm::vec3(1.0f);
+    std::vector<glm::vec2> curves{
+        glm::vec2(0.0f, 0.0f),
+        glm::vec2(0.33f, 0.33f),
+        glm::vec2(0.66f, 0.66f),
+        glm::vec2(1.0f, 1.0f)};
 };
 
 namespace grading
@@ -32,6 +41,12 @@ struct SliderLayout
     uint32_t barYStart = 32;
     uint32_t rowSpacing = 12;
     uint32_t handleRadius = 8;
+    uint32_t curvesPadding = 16;
+    uint32_t curvesHeight = 180;
+    uint32_t curvesX0 = 0;
+    uint32_t curvesY0 = 0;
+    uint32_t curvesX1 = 0;
+    uint32_t curvesY1 = 0;
     VkOffset2D offset{0, 0};
     std::vector<std::string> labels;
     // Reset button bounds (overlay-local coords)
@@ -77,6 +92,7 @@ bool handleOverlayClick(const SliderLayout& layout,
                         double cursorY,
                         GradingSettings& settings,
                         bool doubleClick = false,
+                        bool rightClick = false,
                         bool* loadRequested = nullptr,
                         bool* saveRequested = nullptr,
                         bool* previewToggleRequested = nullptr);
@@ -84,5 +100,6 @@ bool handleOverlayClick(const SliderLayout& layout,
 void setGradingDefaults(GradingSettings& settings);
 bool loadGradingSettings(const std::filesystem::path& path, GradingSettings& settings);
 bool saveGradingSettings(const std::filesystem::path& path, const GradingSettings& settings);
+void buildCurveLut(const GradingSettings& settings, std::array<float, kCurveLutSize>& outLut);
 
 } // namespace grading
