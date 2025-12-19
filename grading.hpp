@@ -41,6 +41,12 @@ struct SliderLayout
     uint32_t resetY1 = 0;
     uint32_t resetWidth = 140;
     uint32_t resetHeight = 36;
+    uint32_t loadX0 = 0;
+    uint32_t loadY0 = 0;
+    uint32_t loadX1 = 0;
+    uint32_t loadY1 = 0;
+    uint32_t loadWidth = 140;
+    uint32_t loadHeight = 36;
     uint32_t saveX0 = 0;
     uint32_t saveY0 = 0;
     uint32_t saveX1 = 0;
@@ -71,6 +77,7 @@ bool handleOverlayClick(const SliderLayout& layout,
                         double cursorY,
                         GradingSettings& settings,
                         bool doubleClick = false,
+                        bool* loadRequested = nullptr,
                         bool* saveRequested = nullptr,
                         bool* previewToggleRequested = nullptr);
 

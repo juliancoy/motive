@@ -11,6 +11,8 @@
 #include <thread>
 #include <atomic>
 
+#include <vulkan/vulkan.h>
+
 #include "model.h"
 
 namespace glyph {
@@ -34,10 +36,19 @@ enum class DecodeImplementation {
     Vulkan = 1
 };
 
+struct VulkanInteropContext {
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    uint32_t queueFamilyIndex = 0;
+};
+
 struct DecodedFrame;
 
 struct DecoderInitParams {
     DecodeImplementation implementation = DecodeImplementation::Software;
+    std::optional<VulkanInteropContext> vulkanInterop;
 };
 
 struct VideoDecoder {
@@ -100,6 +111,18 @@ bool seekVideoDecoder(VideoDecoder& decoder, double targetSeconds);
 struct DecodedFrame {
     std::vector<uint8_t> buffer;
     double ptsSeconds = 0.0;
+    struct VulkanSurface {
+        bool valid = false;
+        uint32_t planes = 0;
+        VkImage images[2]{};
+        VkImageLayout layouts[2]{};
+        VkSemaphore semaphores[2]{};
+        uint64_t semaphoreValues[2]{};
+        uint32_t queueFamily[2]{};
+        VkFormat planeFormats[2]{};
+        uint32_t width = 0;
+        uint32_t height = 0;
+    } vkSurface;
 };
 
 bool decodeNextFrame(VideoDecoder& decoder,

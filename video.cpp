@@ -27,6 +27,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
+#include <libavutil/hwcontext_vulkan.h>
 }
 
 namespace {
@@ -202,7 +203,8 @@ bool codecSupportsDevice(const AVCodec* codec, AVHWDeviceType type, AVPixelForma
 bool trySetupHardwareDecoder(VideoDecoder& decoder,
                              const AVCodec* codec,
                              AVHWDeviceType type,
-                             DecodeImplementation implementation)
+                             DecodeImplementation implementation,
+                             const std::optional<video::VulkanInteropContext>& vulkanInterop)
 {
     AVPixelFormat hwFormat = AV_PIX_FMT_NONE;
     if (!codecSupportsDevice(codec, type, hwFormat))
@@ -211,12 +213,53 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
     }
 
     AVBufferRef* hwDeviceCtx = nullptr;
-    int err = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
-    if (err < 0)
+    if (type == AV_HWDEVICE_TYPE_VULKAN && vulkanInterop.has_value())
     {
-        std::cerr << "[Video] Failed to create " << hwDeviceTypeName(type)
-                  << " hardware context: " << ffmpegErrorString(err) << std::endl;
-        return false;
+        hwDeviceCtx = av_hwdevice_ctx_alloc(type);
+        if (!hwDeviceCtx)
+        {
+            std::cerr << "[Video] Failed to allocate Vulkan hwdevice context." << std::endl;
+            return false;
+        }
+
+        AVHWDeviceContext* devCtx = reinterpret_cast<AVHWDeviceContext*>(hwDeviceCtx->data);
+        auto* vkctx = reinterpret_cast<AVVulkanDeviceContext*>(devCtx->hwctx);
+        vkctx->get_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+        vkctx->inst = vulkanInterop->instance;
+        vkctx->phys_dev = vulkanInterop->physicalDevice;
+        vkctx->act_dev = vulkanInterop->device;
+#ifdef FF_API_VULKAN_FIXED_QUEUES
+        vkctx->queue_family_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->nb_graphics_queues = 1;
+        vkctx->queue_family_tx_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->nb_tx_queues = 1;
+        vkctx->queue_family_comp_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->nb_comp_queues = 1;
+        vkctx->queue_family_decode_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->nb_decode_queues = 1;
+        vkctx->queue_family_encode_index = -1;
+        vkctx->nb_encode_queues = 0;
+#endif
+        vkctx->device_features = VkPhysicalDeviceFeatures2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+
+        int err = av_hwdevice_ctx_init(hwDeviceCtx);
+        if (err < 0)
+        {
+            std::cerr << "[Video] Failed to init Vulkan hwdevice with external context: "
+                      << ffmpegErrorString(err) << std::endl;
+            av_buffer_unref(&hwDeviceCtx);
+            return false;
+        }
+    }
+    else
+    {
+        int err = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
+        if (err < 0)
+        {
+            std::cerr << "[Video] Failed to create " << hwDeviceTypeName(type)
+                      << " hardware context: " << ffmpegErrorString(err) << std::endl;
+            return false;
+        }
     }
 
     decoder.hwDeviceCtx = hwDeviceCtx;
@@ -245,7 +288,8 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
 
 bool configureDecodeImplementation(VideoDecoder& decoder,
                                    const AVCodec* codec,
-                                   DecodeImplementation implementation)
+                                   DecodeImplementation implementation,
+                                   const std::optional<video::VulkanInteropContext>& vulkanInterop)
 {
     decoder.implementation = DecodeImplementation::Software;
     decoder.implementationName = "Software (CPU)";
@@ -259,7 +303,11 @@ bool configureDecodeImplementation(VideoDecoder& decoder,
 
     if (implementation == DecodeImplementation::Vulkan)
     {
-        if (trySetupHardwareDecoder(decoder, codec, AV_HWDEVICE_TYPE_VULKAN, implementation))
+        if (trySetupHardwareDecoder(decoder,
+                                    codec,
+                                    AV_HWDEVICE_TYPE_VULKAN,
+                                    implementation,
+                                    vulkanInterop))
         {
             return true;
         }
@@ -324,7 +372,7 @@ bool initializeVideoDecoder(const std::filesystem::path& videoPath,
         return false;
     }
 
-    if (!configureDecodeImplementation(decoder, codec, initParams.implementation))
+    if (!configureDecodeImplementation(decoder, codec, initParams.implementation, initParams.vulkanInterop))
     {
         return false;
     }
@@ -563,8 +611,46 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame, bool cop
         
         if (receiveResult == 0)
         {
+            decodedFrame.vkSurface = {};
+            const bool isHardwareVulkan =
+                decoder.implementation == DecodeImplementation::Vulkan &&
+                decoder.hwDeviceType == AV_HWDEVICE_TYPE_VULKAN &&
+                decoder.frame->format == AV_PIX_FMT_VULKAN;
+
+            const AVPixelFormat frameFormat = isHardwareVulkan
+                                                  ? decoder.codecCtx->sw_pix_fmt
+                                                  : static_cast<AVPixelFormat>(decoder.frame->format);
+
             const AVFrame* ptsFrame = decoder.frame;
-            if (copyFrameBuffer)
+            // Update decoder dimensions/pixel format even if we skip buffer copy
+            if (decoder.width != decoder.frame->width || decoder.height != decoder.frame->height ||
+                frameFormat != decoder.sourcePixelFormat)
+            {
+                decoder.width = decoder.frame->width;
+                decoder.height = decoder.frame->height;
+                if (!configureFormatForPixelFormat(decoder, frameFormat))
+                {
+                    std::cerr << "[Video] Unsupported pixel format during decode: "
+                              << pixelFormatDescription(frameFormat) << std::endl;
+                    return false;
+                }
+
+                std::cout << "[Video] Decoder output pixel format changed to "
+                          << pixelFormatDescription(frameFormat) << std::endl;
+            }
+
+            // If Vulkan hardware frames are unavailable, force a CPU copy so playback still works.
+            bool doCopy = copyFrameBuffer;
+            if (!doCopy)
+            {
+                if (decoder.frame->format != AV_PIX_FMT_VULKAN ||
+                    decoder.hwDeviceType != AV_HWDEVICE_TYPE_VULKAN)
+                {
+                    doCopy = true;
+                }
+            }
+
+            if (doCopy)
             {
                 AVFrame* workingFrame = decoder.frame;
                 if (decoder.implementation != DecodeImplementation::Software &&
@@ -590,29 +676,40 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame, bool cop
                     workingFrame = decoder.swFrame;
                 }
 
-                const AVPixelFormat frameFormat = static_cast<AVPixelFormat>(workingFrame->format);
-                if (decoder.width != workingFrame->width || decoder.height != workingFrame->height ||
-                    frameFormat != decoder.sourcePixelFormat)
-                {
-                    decoder.width = workingFrame->width;
-                    decoder.height = workingFrame->height;
-                    if (!configureFormatForPixelFormat(decoder, frameFormat))
-                    {
-                        std::cerr << "[Video] Unsupported pixel format during decode: "
-                                  << pixelFormatDescription(frameFormat) << std::endl;
-                        return false;
-                    }
-
-                    std::cout << "[Video] Decoder output pixel format changed to "
-                              << pixelFormatDescription(frameFormat) << std::endl;
-                }
-
                 copyDecodedFrameToBuffer(decoder, workingFrame, decodedFrame.buffer);
                 ptsFrame = workingFrame;
             }
             else
             {
                 decodedFrame.buffer.clear();
+
+                // Populate Vulkan surface info when we stay on the GPU path
+                if (decoder.implementation == DecodeImplementation::Vulkan &&
+                    decoder.hwDeviceType == AV_HWDEVICE_TYPE_VULKAN &&
+                    decoder.frame->format == AV_PIX_FMT_VULKAN)
+                {
+                    const AVVkFrame* vkf = reinterpret_cast<AVVkFrame*>(decoder.frame->data[0]);
+                    if (vkf)
+                    {
+                        decodedFrame.vkSurface.valid = true;
+                        decodedFrame.vkSurface.width = static_cast<uint32_t>(decoder.frame->width);
+                        decodedFrame.vkSurface.height = static_cast<uint32_t>(decoder.frame->height);
+                        const VkFormat* vkFormats = av_vkfmt_from_pixfmt(decoder.codecCtx->sw_pix_fmt);
+                        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(decoder.codecCtx->sw_pix_fmt);
+                        uint32_t planes = desc ? desc->nb_components : 0;
+                        planes = std::min<uint32_t>(planes, 2u);
+                        decodedFrame.vkSurface.planes = planes;
+                        for (uint32_t i = 0; i < planes; ++i)
+                        {
+                            decodedFrame.vkSurface.images[i] = vkf->img[i];
+                            decodedFrame.vkSurface.layouts[i] = vkf->layout[i];
+                            decodedFrame.vkSurface.semaphores[i] = vkf->sem[i];
+                            decodedFrame.vkSurface.semaphoreValues[i] = vkf->sem_value[i];
+                            decodedFrame.vkSurface.queueFamily[i] = vkf->queue_family[i];
+                            decodedFrame.vkSurface.planeFormats[i] = vkFormats ? vkFormats[i] : VK_FORMAT_UNDEFINED;
+                        }
+                    }
+                }
             }
 
             double ptsSeconds = decoder.fallbackPtsSeconds;
@@ -677,12 +774,15 @@ void asyncDecodeLoop(VideoDecoder* decoder)
     localFrame.buffer.reserve(decoder->bufferSize);
     int frameCount = 0;
     auto loopStartTime = std::chrono::steady_clock::now();
+    bool preferZeroCopy =
+        decoder->implementation == DecodeImplementation::Vulkan &&
+        decoder->hwDeviceType == AV_HWDEVICE_TYPE_VULKAN;
     
     while (!decoder->stopRequested.load())
     {
         frameCount++;
         auto decodeStart = std::chrono::steady_clock::now();
-        bool decodeSuccess = video::decodeNextFrame(*decoder, localFrame);
+        bool decodeSuccess = video::decodeNextFrame(*decoder, localFrame, /*copyFrameBuffer=*/!preferZeroCopy);
         auto decodeEnd = std::chrono::steady_clock::now();
         auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
         
@@ -739,6 +839,12 @@ void asyncDecodeLoop(VideoDecoder* decoder)
             std::cout << "[Video] asyncDecodeLoop: stopRequested detected, breaking loop at frame " 
                       << frameCount << std::endl;
             break;
+        }
+
+        // If zero-copy was requested but the frame did not carry a Vulkan surface, disable it.
+        if (preferZeroCopy && !localFrame.vkSurface.valid)
+        {
+            preferZeroCopy = false;
         }
 
         decoder->frameQueue.emplace_back(std::move(localFrame));

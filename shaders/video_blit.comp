@@ -172,9 +172,9 @@ void main() {
                     alphaIcon = 1.0;
                 }
             } else {
-                // Play: right-pointing triangle
-                if (uvIcon.x > 0.18 && uvIcon.x < 0.85) {
-                    float t = (uvIcon.x - 0.18) / 0.67;
+                // Play: left-pointing triangle (mirror the previous shape)
+                if (uvIcon.x > 0.15 && uvIcon.x < 0.82) {
+                    float t = (0.82 - uvIcon.x) / 0.67;
                     float yTop = mix(0.1, 0.9, t);
                     float yBot = mix(0.9, 0.1, t);
                     if (uvIcon.y > yBot && uvIcon.y < yTop) {

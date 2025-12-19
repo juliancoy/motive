@@ -37,6 +37,9 @@ namespace
 const std::filesystem::path kDefaultVideoPath = std::filesystem::path("P1090533_main8_hevc_fast.mkv");
 constexpr uint32_t kScrubberWidth = 512;
 constexpr uint32_t kScrubberHeight = 64;
+constexpr double kScrubberMargin = 20.0;
+constexpr double kPlayIconSize = 28.0;
+constexpr double kPlayIconOffsetX = 36.0;
 
 using overlay::FpsOverlayResources;
 using overlay::ImageResource;
@@ -55,6 +58,9 @@ struct VideoResources
     ImageResource lumaImage;
     ImageResource chromaImage;
     VkSampler sampler = VK_NULL_HANDLE;
+    VkImageView externalLumaView = VK_NULL_HANDLE;
+    VkImageView externalChromaView = VK_NULL_HANDLE;
+    bool usingExternal = false;
 };
 
 struct VideoPlaybackState
@@ -286,6 +292,55 @@ VkSampler createLinearClampSampler(Engine* engine)
     return sampler;
 }
 
+void destroyExternalVideoViews(Engine* engine, VideoResources& video)
+{
+    if (!engine)
+    {
+        return;
+    }
+    if (video.externalLumaView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, video.externalLumaView, nullptr);
+        video.externalLumaView = VK_NULL_HANDLE;
+    }
+    if (video.externalChromaView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, video.externalChromaView, nullptr);
+        video.externalChromaView = VK_NULL_HANDLE;
+    }
+    video.usingExternal = false;
+}
+
+bool waitForVulkanFrameReady(Engine* engine, const video::DecodedFrame::VulkanSurface& surface)
+{
+    if (!engine || !surface.valid)
+    {
+        return false;
+    }
+
+    std::vector<VkSemaphore> semaphores;
+    std::vector<uint64_t> values;
+    for (uint32_t i = 0; i < surface.planes; ++i)
+    {
+        if (surface.semaphores[i] != VK_NULL_HANDLE)
+        {
+            semaphores.push_back(surface.semaphores[i]);
+            values.push_back(surface.semaphoreValues[i]);
+        }
+    }
+
+    if (semaphores.empty())
+    {
+        return true;
+    }
+
+    VkSemaphoreWaitInfo waitInfo{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+    waitInfo.semaphoreCount = static_cast<uint32_t>(semaphores.size());
+    waitInfo.pSemaphores = semaphores.data();
+    waitInfo.pValues = values.data();
+    return vkWaitSemaphores(engine->logicalDevice, &waitInfo, UINT64_MAX) == VK_SUCCESS;
+}
+
 // Scroll handling for rectangle sizing
 static double g_scrollDelta = 0.0;
 static void onScroll(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset)
@@ -321,6 +376,16 @@ bool initializeVideoPlayback(const std::filesystem::path& videoPath,
 
     video::DecoderInitParams params{};
     params.implementation = video::DecodeImplementation::Vulkan;
+    if (engine)
+    {
+        video::VulkanInteropContext interop{};
+        interop.instance = engine->instance;
+        interop.physicalDevice = engine->physicalDevice;
+        interop.device = engine->logicalDevice;
+        interop.queue = engine->graphicsQueue;
+        interop.queueFamilyIndex = engine->graphicsQueueFamilyIndex;
+        params.vulkanInterop = interop;
+    }
     if (!video::initializeVideoDecoder(videoPath, state.decoder, params))
     {
         std::cerr << "[Video2D] Vulkan decode unavailable, falling back to software." << std::endl;
@@ -478,7 +543,89 @@ bool uploadDecodedFrame(VideoResources& video,
                         const video::VideoDecoder& decoder,
                         const video::DecodedFrame& frame)
 {
-    if (!engine || frame.buffer.empty())
+    if (!engine)
+    {
+        return frame.vkSurface.valid; // allow zero-copy path
+    }
+
+    // Zero-copy Vulkan path: bind decoded images directly
+    if (frame.vkSurface.valid)
+    {
+        // Block until decode completion for this frame
+        if (!waitForVulkanFrameReady(engine, frame.vkSurface))
+        {
+            std::cerr << "[Video2D] Failed waiting for Vulkan decode semaphores." << std::endl;
+            return false;
+        }
+
+        // Destroy previous external views after ensuring GPU is idle to avoid use-after-free
+        vkDeviceWaitIdle(engine->logicalDevice);
+        destroyExternalVideoViews(engine, video);
+
+        auto createView = [&](VkImage image, VkFormat format) -> VkImageView {
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY,
+                                   VK_COMPONENT_SWIZZLE_IDENTITY,
+                                   VK_COMPONENT_SWIZZLE_IDENTITY,
+                                   VK_COMPONENT_SWIZZLE_IDENTITY};
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            VkImageView view = VK_NULL_HANDLE;
+            if (vkCreateImageView(engine->logicalDevice, &viewInfo, nullptr, &view) != VK_SUCCESS)
+            {
+                return VK_NULL_HANDLE;
+            }
+            return view;
+        };
+
+        VkImageView lumaView = VK_NULL_HANDLE;
+        VkImageView chromaView = VK_NULL_HANDLE;
+
+        if (frame.vkSurface.planes > 0 && frame.vkSurface.images[0] != VK_NULL_HANDLE)
+        {
+            lumaView = createView(frame.vkSurface.images[0], frame.vkSurface.planeFormats[0]);
+        }
+        if (frame.vkSurface.planes > 1 && frame.vkSurface.images[1] != VK_NULL_HANDLE)
+        {
+            chromaView = createView(frame.vkSurface.images[1], frame.vkSurface.planeFormats[1]);
+        }
+
+        if (lumaView == VK_NULL_HANDLE)
+        {
+            std::cerr << "[Video2D] Failed to create image view for Vulkan-decoded frame." << std::endl;
+            destroyExternalVideoViews(engine, video);
+            return false;
+        }
+
+        video.externalLumaView = lumaView;
+        video.externalChromaView = chromaView != VK_NULL_HANDLE ? chromaView : lumaView;
+        video.usingExternal = true;
+
+        video.descriptors.width = frame.vkSurface.width;
+        video.descriptors.height = frame.vkSurface.height;
+        video.descriptors.chromaDivX = decoder.chromaDivX;
+        video.descriptors.chromaDivY = decoder.chromaDivY;
+        video.descriptors.luma.view = video.externalLumaView;
+        video.descriptors.luma.sampler = video.sampler;
+        video.descriptors.chroma.view = video.externalChromaView;
+        video.descriptors.chroma.sampler = video.sampler;
+        return true;
+    }
+
+    // CPU upload path
+    if (video.usingExternal)
+    {
+        vkDeviceWaitIdle(engine->logicalDevice);
+        destroyExternalVideoViews(engine, video);
+    }
+
+    if (frame.buffer.empty())
     {
         return false;
     }
@@ -585,7 +732,9 @@ double advancePlayback(VideoPlaybackState& state, bool playing)
     if (!state.playbackClockInitialized)
     {
         state.playbackClockInitialized = true;
-        state.basePtsSeconds = nextFrame.ptsSeconds;
+        // Keep the visual scrub position continuous across seeks by anchoring the base
+        // to the requested playback time (lastDisplayedSeconds) rather than resetting to zero.
+        state.basePtsSeconds = nextFrame.ptsSeconds - state.lastDisplayedSeconds;
         state.lastFramePtsSeconds = nextFrame.ptsSeconds;
         state.lastFrameRenderTime = currentTime;
     }
@@ -619,17 +768,45 @@ double advancePlayback(VideoPlaybackState& state, bool playing)
 // Scrubber GPU drawing is now handled inside the video_blit compute shader; the
 // standalone scrubber compute path has been removed.
 
-bool cursorInScrubber(double x, double y, int windowWidth, int windowHeight)
+struct ScrubberUi
 {
-    // Use the actual scrubber pixel size to align hit testing with the overlay quad
+    double left;
+    double top;
+    double right;
+    double bottom;
+    double iconLeft;
+    double iconTop;
+    double iconRight;
+    double iconBottom;
+};
+
+ScrubberUi computeScrubberUi(int windowWidth, int windowHeight)
+{
+    ScrubberUi ui{};
     const double scrubberWidth = static_cast<double>(kScrubberWidth);
     const double scrubberHeight = static_cast<double>(kScrubberHeight);
-    const double margin = 20.0; // small bottom padding
-    const double left = (static_cast<double>(windowWidth) - scrubberWidth) * 0.5;
-    const double right = left + scrubberWidth;
-    const double top = static_cast<double>(windowHeight) - scrubberHeight - margin;
-    const double bottom = top + scrubberHeight;
-    return x >= left && x <= right && y >= top && y <= bottom;
+    ui.left = (static_cast<double>(windowWidth) - scrubberWidth) * 0.5;
+    ui.right = ui.left + scrubberWidth;
+    ui.top = static_cast<double>(windowHeight) - scrubberHeight - kScrubberMargin;
+    ui.bottom = ui.top + scrubberHeight;
+
+    ui.iconLeft = ui.left - kPlayIconOffsetX;
+    ui.iconTop = ui.top + (scrubberHeight - kPlayIconSize) * 0.5;
+    ui.iconRight = ui.iconLeft + kPlayIconSize;
+    ui.iconBottom = ui.iconTop + kPlayIconSize;
+    return ui;
+}
+
+bool cursorInScrubber(double x, double y, int windowWidth, int windowHeight)
+{
+    const ScrubberUi ui = computeScrubberUi(windowWidth, windowHeight);
+    return x >= ui.left && x <= ui.right && y >= ui.top && y <= ui.bottom;
+}
+
+bool cursorInPlayButton(double x, double y, int windowWidth, int windowHeight)
+{
+    const ScrubberUi ui = computeScrubberUi(windowWidth, windowHeight);
+    return x >= ui.iconLeft && x <= ui.iconRight && y >= ui.iconTop && y <= ui.iconBottom;
 }
 }
 
@@ -736,6 +913,7 @@ int main(int argc, char** argv)
     }
 
     bool playing = true;
+    bool wasPlayingBeforeScrub = false;
     bool spaceHeld = false;
     bool mouseHeld = false;
     bool scrubDragging = false;
@@ -848,11 +1026,16 @@ int main(int argc, char** argv)
             double cursorX = 0.0;
             double cursorY = 0.0;
             glfwGetCursorPos(display->window, &cursorX, &cursorY);
-            if (cursorInScrubber(cursorX, cursorY, display->width, display->height))
+            if (cursorInPlayButton(cursorX, cursorY, display->width, display->height))
+            {
+                playing = !playing;
+            }
+            else if (cursorInScrubber(cursorX, cursorY, display->width, display->height))
             {
                 scrubDragging = true;
                 scrubDragStartX = cursorX;
                 scrubDragStartProgress = static_cast<float>(scrubProgressUi);
+                wasPlayingBeforeScrub = playing;
                 playing = false; // pause while dragging
             }
             else
@@ -880,6 +1063,7 @@ int main(int argc, char** argv)
         else if (mouseState == GLFW_RELEASE && scrubDragging)
         {
             scrubDragging = false;
+            const bool resumePlayback = wasPlayingBeforeScrub;
             if (videoDurationSeconds > 0.0)
             {
                 playbackState.lastDisplayedSeconds = scrubProgressUi * videoDurationSeconds;
@@ -905,6 +1089,7 @@ int main(int argc, char** argv)
                 // The lastDisplayedSeconds, basePtsSeconds, lastFramePtsSeconds will be set by the first frame after seek
                 video::startAsyncDecoding(playbackState.decoder, 12); // Restart async decoding
             }
+            playing = resumePlayback;
         }
         mouseHeld = (mouseState == GLFW_PRESS);
 
@@ -928,15 +1113,20 @@ int main(int argc, char** argv)
                 {
                     return -2; // reset button
                 }
+                if (relX >= gradingLayout.loadX0 && relX <= gradingLayout.loadX1 &&
+                    relY >= gradingLayout.loadY0 && relY <= gradingLayout.loadY1)
+                {
+                    return -3; // load button
+                }
                 if (relX >= gradingLayout.saveX0 && relX <= gradingLayout.saveX1 &&
                     relY >= gradingLayout.saveY0 && relY <= gradingLayout.saveY1)
                 {
-                    return -3; // save button
+                    return -4; // save button
                 }
                 if (relX >= gradingLayout.previewX0 && relX <= gradingLayout.previewX1 &&
                     relY >= gradingLayout.previewY0 && relY <= gradingLayout.previewY1)
                 {
-                    return -4; // preview toggle
+                    return -5; // preview toggle
                 }
                 const uint32_t padding = 12;
                 const uint32_t barWidth = gradingLayout.width - padding * 2;
@@ -967,6 +1157,7 @@ int main(int argc, char** argv)
                 doubleClick = true;
             }
 
+            bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
             if (grading::handleOverlayClick(gradingLayout,
@@ -974,10 +1165,18 @@ int main(int argc, char** argv)
                                             gy,
                                             gradingSettings,
                                             doubleClick,
+                                            &loadRequested,
                                             &saveRequested,
                                             &previewToggle))
             {
                 gradingOverlayDirty = true;
+                if (loadRequested)
+                {
+                    if (!grading::loadGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to load grading settings from " << gradingConfigPath << "\n";
+                    }
+                }
                 if (saveRequested)
                 {
                     if (!grading::saveGradingSettings(gradingConfigPath, gradingSettings))
@@ -1000,11 +1199,26 @@ int main(int argc, char** argv)
             double gx = 0.0;
             double gy = 0.0;
             glfwGetCursorPos(gradingDisplay->window, &gx, &gy);
+            bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
-            if (grading::handleOverlayClick(gradingLayout, gx, gy, gradingSettings, false, &saveRequested, &previewToggle))
+            if (grading::handleOverlayClick(gradingLayout,
+                                            gx,
+                                            gy,
+                                            gradingSettings,
+                                            false,
+                                            &loadRequested,
+                                            &saveRequested,
+                                            &previewToggle))
             {
                 gradingOverlayDirty = true;
+                if (loadRequested)
+                {
+                    if (!grading::loadGradingSettings(gradingConfigPath, gradingSettings))
+                    {
+                        std::cerr << "[Video2D] Failed to load grading settings from " << gradingConfigPath << "\n";
+                    }
+                }
                 if (saveRequested)
                 {
                     if (!grading::saveGradingSettings(gradingConfigPath, gradingSettings))

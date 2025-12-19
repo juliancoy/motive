@@ -220,26 +220,34 @@ bool buildGradingOverlay(Engine* engine,
     }
 
     // Reset button near the bottom
-    const uint32_t buttonPadding = 16;
-    const uint32_t buttonWidth = layout.resetWidth;
-    const uint32_t buttonHeight = layout.resetHeight;
-    const uint32_t totalButtonsWidth = layout.resetWidth + layout.saveWidth + layout.previewWidth + buttonPadding * 2;
-    const uint32_t buttonStartX = (layout.width > totalButtonsWidth) ? (layout.width - totalButtonsWidth) / 2 : 0;
-    const uint32_t buttonY = layout.height > (buttonHeight + buttonPadding) ? layout.height - buttonHeight - buttonPadding : 0;
+    const uint32_t buttonPadding = 12;
+    const uint32_t totalButtonsHeight = layout.resetHeight + layout.loadHeight + layout.saveHeight +
+                                        layout.previewHeight + buttonPadding * 3;
+    const uint32_t buttonStartY =
+        layout.height > (totalButtonsHeight + buttonPadding) ? layout.height - totalButtonsHeight - buttonPadding : 0;
+    auto centerButtonX = [&](uint32_t w) {
+        return (layout.width > w) ? (layout.width - w) / 2 : 0u;
+    };
 
-    layout.resetX0 = buttonStartX;
-    layout.resetX1 = buttonStartX + layout.resetWidth;
-    layout.resetY0 = buttonY;
-    layout.resetY1 = buttonY + layout.resetHeight;
+    layout.resetX0 = centerButtonX(layout.resetWidth);
+    layout.resetX1 = layout.resetX0 + layout.resetWidth;
+    layout.resetY0 = buttonStartY;
+    layout.resetY1 = layout.resetY0 + layout.resetHeight;
 
-    layout.saveX0 = buttonStartX + layout.resetWidth + buttonPadding;
+    layout.loadX0 = centerButtonX(layout.loadWidth);
+    layout.loadX1 = layout.loadX0 + layout.loadWidth;
+    layout.loadY0 = layout.resetY1 + buttonPadding;
+    layout.loadY1 = layout.loadY0 + layout.loadHeight;
+
+    layout.saveX0 = centerButtonX(layout.saveWidth);
     layout.saveX1 = layout.saveX0 + layout.saveWidth;
-    layout.saveY0 = buttonY;
-    layout.saveY1 = buttonY + layout.saveHeight;
-    layout.previewX0 = layout.saveX1 + buttonPadding;
+    layout.saveY0 = layout.loadY1 + buttonPadding;
+    layout.saveY1 = layout.saveY0 + layout.saveHeight;
+
+    layout.previewX0 = centerButtonX(layout.previewWidth);
     layout.previewX1 = layout.previewX0 + layout.previewWidth;
-    layout.previewY0 = buttonY;
-    layout.previewY1 = buttonY + layout.previewHeight;
+    layout.previewY0 = layout.saveY1 + buttonPadding;
+    layout.previewY1 = layout.previewY0 + layout.previewHeight;
 
     auto drawButton = [&](uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, const char* text) {
         drawRect(pixels, layout.width, layout.height, x0, y0, x0 + w, y0 + h, 70, 70, 70, 255);
@@ -270,6 +278,7 @@ bool buildGradingOverlay(Engine* engine,
     };
 
     drawButton(layout.resetX0, layout.resetY0, layout.resetWidth, layout.resetHeight, "Reset");
+    drawButton(layout.loadX0, layout.loadY0, layout.loadWidth, layout.loadHeight, "Load");
     drawButton(layout.saveX0, layout.saveY0, layout.saveWidth, layout.saveHeight, "Save");
     drawButton(layout.previewX0,
                layout.previewY0,
@@ -305,6 +314,7 @@ bool handleOverlayClick(const SliderLayout& layout,
                         double cursorY,
                         GradingSettings& settings,
                         bool doubleClick,
+                        bool* loadRequested,
                         bool* saveRequested,
                         bool* previewToggleRequested)
 {
@@ -319,6 +329,15 @@ bool handleOverlayClick(const SliderLayout& layout,
     if (relX >= layout.resetX0 && relX <= layout.resetX1 && relY >= layout.resetY0 && relY <= layout.resetY1)
     {
         setGradingDefaults(settings);
+        return true;
+    }
+    // Load button hit test
+    if (relX >= layout.loadX0 && relX <= layout.loadX1 && relY >= layout.loadY0 && relY <= layout.loadY1)
+    {
+        if (loadRequested)
+        {
+            *loadRequested = true;
+        }
         return true;
     }
     // Save button hit test
