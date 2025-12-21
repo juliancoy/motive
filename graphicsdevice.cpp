@@ -284,7 +284,13 @@ void RenderDevice::createInstance()
     {
         loaderApiVersion = VK_API_VERSION_1_0;
     }
-    const uint32_t requestedApiVersion = std::min(loaderApiVersion, VK_API_VERSION_1_2);
+    uint32_t targetApi = VK_API_VERSION_1_2;
+#ifdef VK_API_VERSION_1_4
+    targetApi = VK_API_VERSION_1_4;
+#elif defined(VK_API_VERSION_1_3)
+    targetApi = VK_API_VERSION_1_3;
+#endif
+    const uint32_t requestedApiVersion = std::min(loaderApiVersion, targetApi);
     appInfo.apiVersion = requestedApiVersion;
     std::cout << "[RenderDevice] Using Vulkan API "
               << VK_VERSION_MAJOR(requestedApiVersion) << "."
@@ -523,20 +529,99 @@ void RenderDevice::createLogicalDevice()
     queueCreateInfo.queueCount = 1;
     queueCreateInfo.pQueuePriorities = &queuePriority;
 
-    VkPhysicalDeviceFeatures deviceFeatures{};
-    deviceFeatures.samplerAnisotropy = VK_TRUE;
-    deviceFeatures.sampleRateShading = VK_TRUE;
+    VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeatures{};
+    timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+
+    VkPhysicalDeviceSynchronization2Features sync2Features{};
+    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBufferFeatures{};
+    descriptorBufferFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+
+    timelineFeatures.pNext = &sync2Features;
+
+    VkPhysicalDeviceFeatures2 features2{};
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2.pNext = &timelineFeatures;
 
     const std::vector<const char *> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+        VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+        VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
+        VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME,
+        VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
+        VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+#ifdef VK_KHR_video_encode_av1
+        VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,
+#endif
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+        VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME,
+        VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
     createInfo.queueCreateInfoCount = 1;
-    createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    createInfo.pEnabledFeatures = nullptr;
+    createInfo.pNext = &features2;
+    uint32_t devExtCount = 0;
+    vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &devExtCount, nullptr);
+    std::vector<VkExtensionProperties> availableDevExt(devExtCount);
+    vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &devExtCount, availableDevExt.data());
+
+    const auto deviceExtensionSupported = [&availableDevExt](const char *name) {
+        return std::any_of(
+            availableDevExt.begin(), availableDevExt.end(),
+            [name](const VkExtensionProperties &ext) { return strcmp(ext.extensionName, name) == 0; });
+    };
+
+    std::vector<const char *> enabledDevExt;
+    enabledDevExt.reserve(deviceExtensions.size());
+    bool descriptorBufferExtSupported = false;
+
+    for (const char *ext : deviceExtensions)
+    {
+        if (deviceExtensionSupported(ext))
+        {
+            enabledDevExt.push_back(ext);
+            if (strcmp(ext, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME) == 0)
+            {
+                descriptorBufferExtSupported = true;
+            }
+        }
+        else
+        {
+            std::cerr << "[RenderDevice] Skipping unsupported device extension: " << ext << std::endl;
+        }
+    }
+
+    if (descriptorBufferExtSupported)
+    {
+        sync2Features.pNext = &descriptorBufferFeatures;
+        descriptorBufferFeatures.descriptorBuffer = VK_TRUE;
+    }
+
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+    features2.features.samplerAnisotropy = VK_TRUE;
+    features2.features.sampleRateShading = VK_TRUE;
+    timelineFeatures.timelineSemaphore = timelineFeatures.timelineSemaphore ? VK_TRUE : VK_FALSE;
+    sync2Features.synchronization2 = sync2Features.synchronization2 ? VK_TRUE : VK_FALSE;
+    if (descriptorBufferExtSupported && !descriptorBufferFeatures.descriptorBuffer)
+    {
+        descriptorBufferFeatures.descriptorBuffer = VK_TRUE;
+    }
+
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledDevExt.size());
+    createInfo.ppEnabledExtensionNames = enabledDevExt.data();
 
     const std::vector<const char *> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
