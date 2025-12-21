@@ -5,7 +5,14 @@ import subprocess
 import sys
 import shutil
 import json
+import argparse
 from concurrent.futures import ThreadPoolExecutor
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Build the Motive engine')
+parser.add_argument('--rebuild', action='store_true', help='Force rebuild all files, ignoring timestamps')
+args = parser.parse_args()
+REBUILD = args.rebuild
 
 # Paths
 this_dir = os.path.dirname(__file__)
@@ -195,24 +202,28 @@ manifest.setdefault("objects", {})
 manifest.setdefault("build_py_mtime", 0)
 
 # Recompile shaders only if source is newer than spv
-print("Compiling shaders (incremental)...")
+if REBUILD:
+    print("Compiling shaders (forced rebuild)...")
+else:
+    print("Compiling shaders (incremental)...")
 shader_exts = {"vert", "frag", "comp"}
 for shaderFilename in os.listdir(shader_dir):
     if shaderFilename.split(".")[-1] not in shader_exts:
         continue
     src = os.path.join(shader_dir, shaderFilename)
     dst = os.path.join(shader_dir, f"{shaderFilename}.spv")
-    src_mtime = os.path.getmtime(src)
-    dst_mtime = os.path.getmtime(dst) if os.path.exists(dst) else -1
-    if src_mtime <= dst_mtime:
-        continue
+    if not REBUILD:
+        src_mtime = os.path.getmtime(src)
+        dst_mtime = os.path.getmtime(dst) if os.path.exists(dst) else -1
+        if src_mtime <= dst_mtime:
+            continue
     cmd = f"glslangValidator -V {src} -o {dst}"
     print(f"Running: {cmd}")
     result = subprocess.run(cmd, shell=True)
     if result.returncode != 0:
         print(f"❌ Failed to compile shader: {shaderFilename}", file=sys.stderr)
         sys.exit(result.returncode)
-    manifest["shaders"][shaderFilename] = src_mtime
+    manifest["shaders"][shaderFilename] = os.path.getmtime(src)
 print("✅ Shader check complete.\n")
 
 
@@ -220,7 +231,7 @@ def compile_cpp_to_o(src_file):
     obj_file = f"{os.path.splitext(src_file)[0]}.o"
     src_mtime = os.path.getmtime(src_file)
     build_py_mtime = os.path.getmtime(__file__)
-    if os.path.exists(obj_file):
+    if not REBUILD and os.path.exists(obj_file):
         obj_mtime = os.path.getmtime(obj_file)
         if obj_mtime >= src_mtime and obj_mtime >= build_py_mtime:
             # Skip unchanged
@@ -241,14 +252,14 @@ with ThreadPoolExecutor() as executor:
 
 # Link static library only when needed
 need_link_so = not os.path.exists("libengine.a")
-if not need_link_so:
+if not need_link_so and not REBUILD:
     so_mtime = os.path.getmtime("libengine.a")
     for obj in so_objects:
         if os.path.exists(obj) and os.path.getmtime(obj) > so_mtime:
             need_link_so = True
             break
 
-if need_link_so or any(changed_list):
+if REBUILD or need_link_so or any(changed_list):
     so_link_cmd = f"ar rcs libengine.a {' '.join(so_objects)}"
     print(f"\nLinking static library:\n{so_link_cmd}")
     so_link_result = subprocess.run(so_link_cmd, shell=True)
@@ -262,22 +273,22 @@ else:
 for src, obj in zip(main_sources, main_objects):
     binary_name = os.path.splitext(src)[0]
     need_link = not os.path.exists(binary_name)
-    if not need_link:
+    if not need_link and not REBUILD:
         bin_mtime = os.path.getmtime(binary_name)
         deps = [obj, "libengine.a"]
         for dep in deps:
             if os.path.exists(dep) and os.path.getmtime(dep) > bin_mtime:
                 need_link = True
                 break
-    if not need_link:
+    if REBUILD or need_link:
+        main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
+        print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
+        main_link_result = subprocess.run(main_link_cmd, shell=True)
+        if main_link_result.returncode != 0:
+            print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
+            sys.exit(main_link_result.returncode)
+    else:
         print(f"\nExecutable {binary_name} up to date.")
-        continue
-    main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
-    print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
-    main_link_result = subprocess.run(main_link_cmd, shell=True)
-    if main_link_result.returncode != 0:
-        print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
-        sys.exit(main_link_result.returncode)
 
 manifest["build_py_mtime"] = os.path.getmtime(__file__)
 save_manifest(manifest)

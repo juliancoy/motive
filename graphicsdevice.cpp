@@ -38,6 +38,17 @@ PFN_vkDestroyDebugUtilsMessengerEXT loadDestroyMessenger(VkInstance instance)
     return reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
         vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
 }
+
+std::string videoCodecOperationsToString(VkVideoCodecOperationFlagsKHR flags) {
+    std::string s;
+    if (flags & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) s += "H264D ";
+    if (flags & VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR) s += "H265D ";
+    if (flags & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) s += "H264E ";
+    if (flags & VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) s += "H265E ";
+    if (s.empty()) return "None";
+    return s;
+}
+
 } // namespace
 
 RenderDevice::RenderDevice()
@@ -48,6 +59,10 @@ RenderDevice::RenderDevice()
       physicalDevice(VK_NULL_HANDLE),
       graphicsQueue(VK_NULL_HANDLE),
       graphicsQueueFamilyIndex(0),
+      videoDecodeQueue(VK_NULL_HANDLE),
+      videoDecodeQueueFamilyIndex(0),
+      videoEncodeQueue(VK_NULL_HANDLE),
+      videoEncodeQueueFamilyIndex(0),
       descriptorSetLayout(VK_NULL_HANDLE),
       primitiveDescriptorSetLayout(VK_NULL_HANDLE),
       descriptorPool(VK_NULL_HANDLE),
@@ -262,6 +277,12 @@ VkDescriptorPool &RenderDevice::getDescriptorPool() { return descriptorPool; }
 VkCommandPool &RenderDevice::getCommandPool() { return commandPool; }
 VkQueue &RenderDevice::getGraphicsQueue() { return graphicsQueue; }
 uint32_t &RenderDevice::getGraphicsQueueFamilyIndex() { return graphicsQueueFamilyIndex; }
+VkQueue &RenderDevice::RenderDevice::getVideoQueue() { return videoDecodeQueue; }
+uint32_t &RenderDevice::RenderDevice::getVideoQueueFamilyIndex() { return videoDecodeQueueFamilyIndex; }
+VkQueue &RenderDevice::getVideoDecodeQueue() { return videoDecodeQueue; }
+uint32_t &RenderDevice::getVideoDecodeQueueFamilyIndex() { return videoDecodeQueueFamilyIndex; }
+VkQueue &RenderDevice::getVideoEncodeQueue() { return videoEncodeQueue; }
+uint32_t &RenderDevice::getVideoEncodeQueueFamilyIndex() { return videoEncodeQueueFamilyIndex; }
 VkPhysicalDeviceMemoryProperties &RenderDevice::getMemoryProperties() { return memProperties; }
 VkPhysicalDeviceProperties &RenderDevice::getDeviceProperties() { return props; }
 VkPhysicalDeviceFeatures &RenderDevice::getDeviceFeatures() { return features; }
@@ -430,33 +451,208 @@ void RenderDevice::pickPhysicalDevice()
     std::cout << "\nAvailable Physical Devices:\n";
     std::cout << "-------------------------\n";
 
-    VkPhysicalDeviceProperties thisDeviceProps;
     for (const auto &device : devices)
     {
-        vkGetPhysicalDeviceProperties(device, &thisDeviceProps);
-        std::cout << "Device: " << thisDeviceProps.deviceName << "\n";
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        std::cout << "Device: " << props.deviceName << "\n";
     }
 
-    physicalDevice = devices[0];
+    // Find a suitable device and queue
+    VkPhysicalDevice selectedDevice = VK_NULL_HANDLE;
+    int selectedGraphicsQueueFamilyIndex = -1;
+    int selectedVideoQueueFamilyIndex = -1;
+    int selectedVideoEncodeQueueFamilyIndex = -1;
+    auto enumerateQueueFamiliesWithVideo = [](VkPhysicalDevice device,
+                                              std::vector<VkQueueFamilyProperties2> &queueFamilies,
+                                              std::vector<VkQueueFamilyVideoPropertiesKHR> &videoProps) -> uint32_t {
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties2(device, &queueFamilyCount, nullptr);
+        queueFamilies.resize(queueFamilyCount);
+        videoProps.resize(queueFamilyCount);
 
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
+        for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+            videoProps[i] = {};
+            videoProps[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
+            videoProps[i].pNext = nullptr;
+            queueFamilies[i] = {};
+            queueFamilies[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+            queueFamilies[i].pNext = &videoProps[i];
+        }
 
-    for (uint32_t i = 0; i < queueFamilyCount; i++)
-    {
-        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            graphicsQueueFamilyIndex = i;
-            break;
+        vkGetPhysicalDeviceQueueFamilyProperties2(device, &queueFamilyCount, queueFamilies.data());
+        return queueFamilyCount;
+    };
+
+    auto logQueueFamilies = [](const std::vector<VkQueueFamilyProperties2> &queueFamilies,
+                               const std::vector<VkQueueFamilyVideoPropertiesKHR> &videoProps) {
+        for (uint32_t i = 0; i < queueFamilies.size(); i++) {
+            const auto &queueFamily = queueFamilies[i].queueFamilyProperties;
+            const auto &videoProp = videoProps[i];
+            std::cout << "  Queue family " << i << ": " << queueFamily.queueCount << " queues, flags: "
+                      << ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) ? "G " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) ? "C " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT) ? "T " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) ? "S " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_PROTECTED_BIT) ? "P " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) ? "VD " : "")
+                      << ((queueFamily.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) ? "VE " : "")
+                      << "Video: " << videoCodecOperationsToString(videoProp.videoCodecOperations)
+                      << std::endl;
+        }
+    };
+    
+    // Prefer discrete GPU
+    for (const auto& device : devices) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        std::cout << "Evaluating device: " << props.deviceName << std::endl;
+        std::vector<VkQueueFamilyProperties2> queueFamilies2;
+        std::vector<VkQueueFamilyVideoPropertiesKHR> videoProperties;
+        uint32_t queueFamilyCount = enumerateQueueFamiliesWithVideo(device, queueFamilies2, videoProperties);
+        logQueueFamilies(queueFamilies2, videoProperties);
+
+        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            // Find a unified queue for graphics and video decode
+            for (uint32_t i = 0; i < queueFamilyCount; i++) {
+                const auto& queueFamily = queueFamilies2[i].queueFamilyProperties;
+                if (queueFamily.queueCount > 0 && 
+                    (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && 
+                    (queueFamily.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
+                    selectedDevice = device;
+                    selectedGraphicsQueueFamilyIndex = i;
+                    selectedVideoQueueFamilyIndex = i; // Same queue for video
+                    // Also look for encode queue
+                    for (uint32_t j = 0; j < queueFamilyCount; j++) {
+                        const auto& queueFamily2 = queueFamilies2[j].queueFamilyProperties;
+                        if (queueFamily2.queueCount > 0 && (queueFamily2.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR)) {
+                            selectedVideoEncodeQueueFamilyIndex = j;
+                            break;
+                        }
+                    }
+                    std::cout << "  -> Selected discrete GPU with unified queue family " << i << std::endl;
+                    goto device_found;
+                }
+            }
+            // If no unified, try to find separate queues on discrete GPU
+            int potentialGraphicsQueue = -1;
+            int potentialVideoQueue = -1;
+            int potentialVideoEncodeQueue = -1;
+            for (uint32_t i = 0; i < queueFamilyCount; i++) {
+                const auto& queueFamily = queueFamilies2[i].queueFamilyProperties;
+                if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                    potentialGraphicsQueue = i;
+                }
+                if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
+                    potentialVideoQueue = i;
+                }
+                if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR)) {
+                    potentialVideoEncodeQueue = i;
+                }
+            }
+            if (potentialGraphicsQueue != -1 && potentialVideoQueue != -1) {
+                selectedDevice = device;
+                selectedGraphicsQueueFamilyIndex = potentialGraphicsQueue;
+                selectedVideoQueueFamilyIndex = potentialVideoQueue;
+                selectedVideoEncodeQueueFamilyIndex = potentialVideoEncodeQueue;
+                std::cout << "  -> Selected discrete GPU with separate graphics (" << potentialGraphicsQueue 
+                          << ") and video decode (" << potentialVideoQueue << ") queue families.";
+                if (potentialVideoEncodeQueue != -1) {
+                    std::cout << " Found video encode queue family " << potentialVideoEncodeQueue;
+                }
+                std::cout << std::endl;
+                goto device_found;
+            }
         }
     }
+
+    // Fallback to any device with a unified queue
+    for (const auto& device : devices) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        std::vector<VkQueueFamilyProperties2> queueFamilies2;
+        std::vector<VkQueueFamilyVideoPropertiesKHR> videoProperties;
+        uint32_t queueFamilyCount = enumerateQueueFamiliesWithVideo(device, queueFamilies2, videoProperties);
+        for (uint32_t i = 0; i < queueFamilyCount; i++) {
+            const auto& queueFamily = queueFamilies2[i].queueFamilyProperties;
+            if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (queueFamily.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
+                selectedDevice = device;
+                selectedGraphicsQueueFamilyIndex = i;
+                selectedVideoQueueFamilyIndex = i;
+                std::cout << "  -> Selected device '" << props.deviceName << "' with unified queue family " << i << std::endl;
+                goto device_found;
+            }
+        }
+    }
+
+    // Fallback to any device with separate graphics and video queues
+    for (const auto& device : devices) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        std::vector<VkQueueFamilyProperties2> queueFamilies2;
+        std::vector<VkQueueFamilyVideoPropertiesKHR> videoProperties;
+        uint32_t queueFamilyCount = enumerateQueueFamiliesWithVideo(device, queueFamilies2, videoProperties);
+        int potentialGraphicsQueue = -1;
+        int potentialVideoQueue = -1;
+        for (uint32_t i = 0; i < queueFamilyCount; i++) {
+            const auto& queueFamily = queueFamilies2[i].queueFamilyProperties;
+            if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                potentialGraphicsQueue = i;
+            }
+            if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
+                potentialVideoQueue = i;
+            }
+        }
+        if (potentialGraphicsQueue != -1 && potentialVideoQueue != -1) {
+            selectedDevice = device;
+            selectedGraphicsQueueFamilyIndex = potentialGraphicsQueue;
+            selectedVideoQueueFamilyIndex = potentialVideoQueue;
+            std::cout << "  -> Selected device '" << props.deviceName << "' with separate graphics (" << potentialGraphicsQueue 
+                      << ") and video (" << potentialVideoQueue << ") queue families." << std::endl;
+            goto device_found;
+        }
+    }
+
+    // Last resort fallback: any device with at least a graphics queue (no video)
+    for (const auto& device : devices) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        std::vector<VkQueueFamilyProperties2> queueFamilies2;
+        std::vector<VkQueueFamilyVideoPropertiesKHR> videoProperties;
+        uint32_t queueFamilyCount = enumerateQueueFamiliesWithVideo(device, queueFamilies2, videoProperties);
+        for (uint32_t i = 0; i < queueFamilyCount; i++) {
+            const auto& queueFamily = queueFamilies2[i].queueFamilyProperties;
+            if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                selectedDevice = device;
+                selectedGraphicsQueueFamilyIndex = i;
+                selectedVideoQueueFamilyIndex = -1; // No video queue found
+                std::cout << "  -> Selected device '" << props.deviceName << "' with graphics-only queue family " << i << std::endl;
+                goto device_found;
+            }
+        }
+    }
+
+
+device_found:
+    if (selectedDevice == VK_NULL_HANDLE) {
+        throw std::runtime_error("failed to find a suitable GPU!");
+    }
+    physicalDevice = selectedDevice;
+    graphicsQueueFamilyIndex = selectedGraphicsQueueFamilyIndex;
+    videoDecodeQueueFamilyIndex = selectedVideoQueueFamilyIndex;
+    videoEncodeQueueFamilyIndex = selectedVideoEncodeQueueFamilyIndex;
 
     std::cout << "\nSelected Device Properties:\n";
     std::cout << "-------------------------\n";
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    std::cout << "Using graphics queue family: " << graphicsQueueFamilyIndex << "\n";
+    std::cout << "Using graphics queue family: " << graphicsQueueFamilyIndex;
+    if (videoDecodeQueueFamilyIndex != -1) {
+        std::cout << ", video decode queue family: " << videoDecodeQueueFamilyIndex;
+    }
+    if (videoEncodeQueueFamilyIndex != -1) {
+        std::cout << ", video encode queue family: " << videoEncodeQueueFamilyIndex;
+    }
+    std::cout << "\n";
 
     vkGetPhysicalDeviceFeatures(physicalDevice, &features);
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -520,59 +716,7 @@ void RenderDevice::pickPhysicalDevice()
     }
 }
 
-void RenderDevice::createLogicalDevice()
-{
-    float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreateInfo{};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
-
-    VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeatures{};
-    timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
-
-    VkPhysicalDeviceSynchronization2Features sync2Features{};
-    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
-
-    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBufferFeatures{};
-    descriptorBufferFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
-
-    timelineFeatures.pNext = &sync2Features;
-
-    VkPhysicalDeviceFeatures2 features2{};
-    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2.pNext = &timelineFeatures;
-
-    const std::vector<const char *> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-        VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
-        VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
-        VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
-        VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME,
-        VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
-        VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
-#ifdef VK_KHR_video_encode_av1
-        VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,
-#endif
-        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-        VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME,
-        VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
-        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
-        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
-
-    VkDeviceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pQueueCreateInfos = &queueCreateInfo;
-    createInfo.queueCreateInfoCount = 1;
-    createInfo.pEnabledFeatures = nullptr;
-    createInfo.pNext = &features2;
+std::vector<const char *> RenderDevice::getRequiredDeviceExtensions() {
     uint32_t devExtCount = 0;
     vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &devExtCount, nullptr);
     std::vector<VkExtensionProperties> availableDevExt(devExtCount);
@@ -584,49 +728,110 @@ void RenderDevice::createLogicalDevice()
             [name](const VkExtensionProperties &ext) { return strcmp(ext.extensionName, name) == 0; });
     };
 
-    std::vector<const char *> enabledDevExt;
-    enabledDevExt.reserve(deviceExtensions.size());
-    bool descriptorBufferExtSupported = false;
+    std::vector<const char *> requiredExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME,
+        VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
+        VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+        
+    };
 
-    for (const char *ext : deviceExtensions)
-    {
-        if (deviceExtensionSupported(ext))
-        {
-            enabledDevExt.push_back(ext);
-            if (strcmp(ext, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME) == 0)
-            {
-                descriptorBufferExtSupported = true;
-            }
-        }
-        else
-        {
-            std::cerr << "[RenderDevice] Skipping unsupported device extension: " << ext << std::endl;
-        }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME);
+    }
+    if (deviceExtensionSupported(VK_EXT_SHADER_OBJECT_EXTENSION_NAME)) {
+        requiredExtensions.push_back(VK_EXT_SHADER_OBJECT_EXTENSION_NAME);
     }
 
-    if (descriptorBufferExtSupported)
-    {
-        sync2Features.pNext = &descriptorBufferFeatures;
-        descriptorBufferFeatures.descriptorBuffer = VK_TRUE;
+    return requiredExtensions;
+}
+
+void RenderDevice::createLogicalDevice()
+{
+    float queuePriority = 1.0f;
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    std::set<uint32_t> uniqueQueueFamilies;
+
+    uniqueQueueFamilies.insert(graphicsQueueFamilyIndex);
+    if (videoDecodeQueueFamilyIndex != -1 && videoDecodeQueueFamilyIndex != graphicsQueueFamilyIndex) {
+        uniqueQueueFamilies.insert(videoDecodeQueueFamilyIndex);
+    }
+    if (videoEncodeQueueFamilyIndex != -1 && videoEncodeQueueFamilyIndex != graphicsQueueFamilyIndex && 
+        videoEncodeQueueFamilyIndex != videoDecodeQueueFamilyIndex) {
+        uniqueQueueFamilies.insert(videoEncodeQueueFamilyIndex);
     }
 
-    vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+    for (uint32_t queueFamilyIndex : uniqueQueueFamilies) {
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamilyIndex;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+    }
+
+    VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeatures{};
+    timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+    timelineFeatures.timelineSemaphore = VK_TRUE;
+
+    VkPhysicalDeviceSynchronization2Features sync2Features{};
+    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    sync2Features.synchronization2 = VK_TRUE;
+    timelineFeatures.pNext = &sync2Features;
+
+    VkPhysicalDeviceFeatures2 features2{};
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
     features2.features.sampleRateShading = VK_TRUE;
-    timelineFeatures.timelineSemaphore = timelineFeatures.timelineSemaphore ? VK_TRUE : VK_FALSE;
-    sync2Features.synchronization2 = sync2Features.synchronization2 ? VK_TRUE : VK_FALSE;
-    if (descriptorBufferExtSupported && !descriptorBufferFeatures.descriptorBuffer)
-    {
-        descriptorBufferFeatures.descriptorBuffer = VK_TRUE;
-    }
+    features2.pNext = &timelineFeatures;
 
+    std::vector<const char *> enabledDevExt = getRequiredDeviceExtensions();
+
+    VkDeviceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pQueueCreateInfos = queueCreateInfos.data();
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    createInfo.pEnabledFeatures = nullptr;
+    createInfo.pNext = &features2;
     createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledDevExt.size());
     createInfo.ppEnabledExtensionNames = enabledDevExt.data();
 
     const std::vector<const char *> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
-    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-    createInfo.ppEnabledLayerNames = validationLayers.data();
+    if (validationLayersEnabled) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+    } else {
+        createInfo.enabledLayerCount = 0;
+    }
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice) != VK_SUCCESS)
     {
@@ -634,6 +839,21 @@ void RenderDevice::createLogicalDevice()
     }
 
     vkGetDeviceQueue(logicalDevice, graphicsQueueFamilyIndex, 0, &graphicsQueue);
+    if (videoDecodeQueueFamilyIndex != -1) {
+        vkGetDeviceQueue(logicalDevice, videoDecodeQueueFamilyIndex, 0, &videoDecodeQueue);
+        std::cout << "[RenderDevice] Using dedicated video decode queue family " << videoDecodeQueueFamilyIndex << std::endl;
+    } else {
+        videoDecodeQueue = graphicsQueue; // Fallback if no specific video decode queue was selected
+        std::cout << "[RenderDevice] No dedicated video decode queue found, falling back to graphics queue" << std::endl;
+    }
+    if (videoEncodeQueueFamilyIndex != -1) {
+        vkGetDeviceQueue(logicalDevice, videoEncodeQueueFamilyIndex, 0, &videoEncodeQueue);
+        std::cout << "[RenderDevice] Using dedicated video encode queue family " << videoEncodeQueueFamilyIndex << std::endl;
+    } else {
+        videoEncodeQueue = graphicsQueue; // Fallback if no specific video encode queue was selected
+        std::cout << "[RenderDevice] No dedicated video encode queue found, falling back to graphics queue" << std::endl;
+    }
+
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;

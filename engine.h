@@ -67,10 +67,26 @@ public:
     VkShaderModule createShaderModule(const std::vector<char> &code);
     void setLight(const Light& light);
     void setMsaaSampleCount(VkSampleCountFlagBits requested);
+
+    // Queue accessors for interop paths
+    VkQueue getGraphicsQueue() const { return graphicsQueue; }
+    uint32_t getGraphicsQueueFamilyIndex() const { return graphicsQueueFamilyIndex; }
+    VkQueue getVideoQueue() const { return videoQueue; }
+    uint32_t getVideoQueueFamilyIndex() const { return videoQueueFamilyIndex; }
+    VkQueue getVideoDecodeQueue() const { return videoDecodeQueue; }
+    uint32_t getVideoDecodeQueueFamilyIndex() const { return videoDecodeQueueFamilyIndex; }
+    VkQueue getVideoEncodeQueue() const { return videoEncodeQueue; }
+    uint32_t getVideoEncodeQueueFamilyIndex() const { return videoEncodeQueueFamilyIndex; }
     
     VkCommandPool &commandPool;
     uint32_t &graphicsQueueFamilyIndex;
     VkQueue &graphicsQueue;
+    uint32_t &videoQueueFamilyIndex;
+    VkQueue &videoQueue;
+    uint32_t &videoDecodeQueueFamilyIndex;
+    VkQueue &videoDecodeQueue;
+    uint32_t &videoEncodeQueueFamilyIndex;
+    VkQueue &videoEncodeQueue;
 private:
     void createLightResources();
     void destroyLightResources();

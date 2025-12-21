@@ -34,6 +34,12 @@ public:
     VkCommandPool &getCommandPool();
     VkQueue &getGraphicsQueue();
     uint32_t &getGraphicsQueueFamilyIndex();
+    VkQueue &getVideoQueue();
+    uint32_t &getVideoQueueFamilyIndex();
+    VkQueue &getVideoDecodeQueue();
+    uint32_t &getVideoDecodeQueueFamilyIndex();
+    VkQueue &getVideoEncodeQueue();
+    uint32_t &getVideoEncodeQueueFamilyIndex();
     VkPhysicalDeviceMemoryProperties &getMemoryProperties();
     VkPhysicalDeviceProperties &getDeviceProperties();
     VkPhysicalDeviceFeatures &getDeviceFeatures();
@@ -44,6 +50,7 @@ private:
     void destroyDebugMessenger();
     void pickPhysicalDevice();
     void createLogicalDevice();
+    std::vector<const char *> getRequiredDeviceExtensions();
     bool validationLayersEnabled;
     bool debugUtilsEnabled;
 
@@ -52,6 +59,10 @@ private:
     VkPhysicalDevice physicalDevice;
     VkQueue graphicsQueue;
     uint32_t graphicsQueueFamilyIndex;
+    VkQueue videoDecodeQueue;
+    uint32_t videoDecodeQueueFamilyIndex;
+    VkQueue videoEncodeQueue;
+    uint32_t videoEncodeQueueFamilyIndex;
 
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorSetLayout primitiveDescriptorSetLayout;

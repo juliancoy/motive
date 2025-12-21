@@ -204,7 +204,8 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
                              const AVCodec* codec,
                              AVHWDeviceType type,
                              DecodeImplementation implementation,
-                             const std::optional<video::VulkanInteropContext>& vulkanInterop)
+                             const std::optional<video::VulkanInteropContext>& vulkanInterop,
+                             bool requireGraphicsQueue)
 {
     AVPixelFormat hwFormat = AV_PIX_FMT_NONE;
     if (!codecSupportsDevice(codec, type, hwFormat))
@@ -229,13 +230,16 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
         vkctx->phys_dev = vulkanInterop->physicalDevice;
         vkctx->act_dev = vulkanInterop->device;
 #ifdef FF_API_VULKAN_FIXED_QUEUES
-        vkctx->queue_family_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
-        vkctx->nb_graphics_queues = 1;
-        vkctx->queue_family_tx_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        const uint32_t graphicsFamily = vulkanInterop->graphicsQueueFamilyIndex;
+        const uint32_t videoFamily = vulkanInterop->videoQueueFamilyIndex;
+        const uint32_t decodeFamily = (videoFamily != static_cast<uint32_t>(-1)) ? videoFamily : graphicsFamily;
+        vkctx->queue_family_index = static_cast<int>(graphicsFamily);
+        vkctx->nb_graphics_queues = requireGraphicsQueue ? 1 : 0;
+        vkctx->queue_family_tx_index = static_cast<int>(graphicsFamily);
         vkctx->nb_tx_queues = 1;
-        vkctx->queue_family_comp_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->queue_family_comp_index = static_cast<int>(graphicsFamily);
         vkctx->nb_comp_queues = 1;
-        vkctx->queue_family_decode_index = static_cast<int>(vulkanInterop->queueFamilyIndex);
+        vkctx->queue_family_decode_index = static_cast<int>(decodeFamily);
         vkctx->nb_decode_queues = 1;
         vkctx->queue_family_encode_index = -1;
         vkctx->nb_encode_queues = 0;
@@ -253,6 +257,12 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
     }
     else
     {
+        // When no Vulkan context is provided, av_hwdevice_ctx_create handles device creation.
+        // FFmpeg's default device selection logic tends to prefer queues that support graphics.
+        // There is no simple option to force selection of a non-graphics (e.g., compute-only) queue.
+        // The existing decode-only benchmark works because FFmpeg is able to find a suitable
+        // device/queue on its own. If more fine-grained control is needed, the caller should
+        // create their own Vulkan instance/device and pass it via the VulkanInteropContext.
         int err = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
         if (err < 0)
         {
@@ -289,7 +299,8 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
 bool configureDecodeImplementation(VideoDecoder& decoder,
                                    const AVCodec* codec,
                                    DecodeImplementation implementation,
-                                   const std::optional<video::VulkanInteropContext>& vulkanInterop)
+                                   const std::optional<video::VulkanInteropContext>& vulkanInterop,
+                                   bool requireGraphicsQueue)
 {
     decoder.implementation = DecodeImplementation::Software;
     decoder.implementationName = "Software (CPU)";
@@ -307,7 +318,8 @@ bool configureDecodeImplementation(VideoDecoder& decoder,
                                     codec,
                                     AV_HWDEVICE_TYPE_VULKAN,
                                     implementation,
-                                    vulkanInterop))
+                                    vulkanInterop,
+                                    requireGraphicsQueue))
         {
             return true;
         }
@@ -372,7 +384,7 @@ bool initializeVideoDecoder(const std::filesystem::path& videoPath,
         return false;
     }
 
-    if (!configureDecodeImplementation(decoder, codec, initParams.implementation, initParams.vulkanInterop))
+    if (!configureDecodeImplementation(decoder, codec, initParams.implementation, initParams.vulkanInterop, initParams.requireGraphicsQueue))
     {
         return false;
     }

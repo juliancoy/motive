@@ -40,8 +40,10 @@ struct VulkanInteropContext {
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
-    VkQueue queue = VK_NULL_HANDLE;
-    uint32_t queueFamilyIndex = 0;
+    VkQueue graphicsQueue = VK_NULL_HANDLE;
+    uint32_t graphicsQueueFamilyIndex = 0;
+    VkQueue videoQueue = VK_NULL_HANDLE;
+    uint32_t videoQueueFamilyIndex = 0;
 };
 
 struct DecodedFrame;
@@ -49,6 +51,7 @@ struct DecodedFrame;
 struct DecoderInitParams {
     DecodeImplementation implementation = DecodeImplementation::Software;
     std::optional<VulkanInteropContext> vulkanInterop;
+    bool requireGraphicsQueue = true;
 };
 
 struct VideoDecoder {

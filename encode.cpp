@@ -171,6 +171,12 @@ struct OffscreenBlit
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    VkImage lumaImage = VK_NULL_HANDLE;
+    VkDeviceMemory lumaMemory = VK_NULL_HANDLE;
+    VkImageView lumaView = VK_NULL_HANDLE;
+    VkImage chromaImage = VK_NULL_HANDLE;
+    VkDeviceMemory chromaMemory = VK_NULL_HANDLE;
+    VkImageView chromaView = VK_NULL_HANDLE;
 
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -192,52 +198,94 @@ struct OffscreenBlit
             return false;
         }
 
-        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-        imageInfo.extent = {width, height, 1};
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        auto createImage = [&](VkFormat format, VkExtent2D imgExtent, VkImageUsageFlags usage, VkImage& outImage, VkDeviceMemory& outMemory, VkImageView& outView) -> bool {
+            VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.format = format;
+            imageInfo.extent = {imgExtent.width, imgExtent.height, 1};
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.usage = usage;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-        if (vkCreateImage(engine->logicalDevice, &imageInfo, nullptr, &image) != VK_SUCCESS)
+            if (vkCreateImage(engine->logicalDevice, &imageInfo, nullptr, &outImage) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            VkMemoryRequirements memReq{};
+            vkGetImageMemoryRequirements(engine->logicalDevice, outImage, &memReq);
+            VkMemoryAllocateInfo memAlloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            memAlloc.allocationSize = memReq.size;
+            memAlloc.memoryTypeIndex = engine->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (vkAllocateMemory(engine->logicalDevice, &memAlloc, nullptr, &outMemory) != VK_SUCCESS)
+            {
+                vkDestroyImage(engine->logicalDevice, outImage, nullptr);
+                outImage = VK_NULL_HANDLE;
+                return false;
+            }
+            if (vkBindImageMemory(engine->logicalDevice, outImage, outMemory, 0) != VK_SUCCESS)
+            {
+                vkDestroyImage(engine->logicalDevice, outImage, nullptr);
+                vkFreeMemory(engine->logicalDevice, outMemory, nullptr);
+                outImage = VK_NULL_HANDLE;
+                outMemory = VK_NULL_HANDLE;
+                return false;
+            }
+
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = outImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            if (vkCreateImageView(engine->logicalDevice, &viewInfo, nullptr, &outView) != VK_SUCCESS)
+            {
+                vkDestroyImage(engine->logicalDevice, outImage, nullptr);
+                vkFreeMemory(engine->logicalDevice, outMemory, nullptr);
+                outImage = VK_NULL_HANDLE;
+                outMemory = VK_NULL_HANDLE;
+                return false;
+            }
+            return true;
+        };
+
+        if (!createImage(VK_FORMAT_R8G8B8A8_UNORM,
+                         extent,
+                         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         image,
+                         memory,
+                         view))
         {
             std::cerr << "[Encode] Failed to create offscreen image.\n";
             return false;
         }
 
-        VkMemoryRequirements memReq{};
-        vkGetImageMemoryRequirements(engine->logicalDevice, image, &memReq);
-        VkMemoryAllocateInfo memAlloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        memAlloc.allocationSize = memReq.size;
-        memAlloc.memoryTypeIndex = engine->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (vkAllocateMemory(engine->logicalDevice, &memAlloc, nullptr, &memory) != VK_SUCCESS)
+        VkExtent2D chromaExtent{(width + 1) / 2, (height + 1) / 2};
+        if (!createImage(VK_FORMAT_R8_UNORM,
+                         extent,
+                         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         lumaImage,
+                         lumaMemory,
+                         lumaView))
         {
-            std::cerr << "[Encode] Failed to allocate offscreen image memory.\n";
+            std::cerr << "[Encode] Failed to create offscreen luma image.\n";
             return false;
         }
-        if (vkBindImageMemory(engine->logicalDevice, image, memory, 0) != VK_SUCCESS)
+        if (!createImage(VK_FORMAT_R8G8_UNORM,
+                         chromaExtent,
+                         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         chromaImage,
+                         chromaMemory,
+                         chromaView))
         {
-            std::cerr << "[Encode] Failed to bind offscreen image memory.\n";
-            return false;
-        }
-
-        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        viewInfo.image = image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = imageInfo.format;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
-        if (vkCreateImageView(engine->logicalDevice, &viewInfo, nullptr, &view) != VK_SUCCESS)
-        {
-            std::cerr << "[Encode] Failed to create offscreen view.\n";
+            std::cerr << "[Encode] Failed to create offscreen chroma image.\n";
             return false;
         }
 
@@ -371,6 +419,16 @@ struct OffscreenBlit
         {
             return;
         }
+        if (chromaView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(engine->logicalDevice, chromaView, nullptr);
+            chromaView = VK_NULL_HANDLE;
+        }
+        if (lumaView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(engine->logicalDevice, lumaView, nullptr);
+            lumaView = VK_NULL_HANDLE;
+        }
         if (descriptorPool != VK_NULL_HANDLE)
         {
             vkDestroyDescriptorPool(engine->logicalDevice, descriptorPool, nullptr);
@@ -416,10 +474,30 @@ struct OffscreenBlit
             vkDestroyImage(engine->logicalDevice, image, nullptr);
             image = VK_NULL_HANDLE;
         }
+        if (lumaImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(engine->logicalDevice, lumaImage, nullptr);
+            lumaImage = VK_NULL_HANDLE;
+        }
+        if (chromaImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(engine->logicalDevice, chromaImage, nullptr);
+            chromaImage = VK_NULL_HANDLE;
+        }
         if (memory != VK_NULL_HANDLE)
         {
             vkFreeMemory(engine->logicalDevice, memory, nullptr);
             memory = VK_NULL_HANDLE;
+        }
+        if (lumaMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(engine->logicalDevice, lumaMemory, nullptr);
+            lumaMemory = VK_NULL_HANDLE;
+        }
+        if (chromaMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(engine->logicalDevice, chromaMemory, nullptr);
+            chromaMemory = VK_NULL_HANDLE;
         }
     }
 
@@ -434,17 +512,20 @@ struct OffscreenBlit
 
         VkCommandBuffer cmd = engine->beginSingleTimeCommands();
 
+        VkImageSubresourceRange colorRange{};
+        colorRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        colorRange.baseMipLevel = 0;
+        colorRange.levelCount = 1;
+        colorRange.baseArrayLayer = 0;
+        colorRange.layerCount = 1;
+
         VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toGeneral.image = image;
-        toGeneral.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        toGeneral.subresourceRange.baseMipLevel = 0;
-        toGeneral.subresourceRange.levelCount = 1;
-        toGeneral.subresourceRange.baseArrayLayer = 0;
-        toGeneral.subresourceRange.layerCount = 1;
+        toGeneral.subresourceRange = colorRange;
         toGeneral.srcAccessMask = 0;
         toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 
@@ -577,7 +658,7 @@ struct OffscreenBlit
         toReadable.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toReadable.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toReadable.image = image;
-        toReadable.subresourceRange = toGeneral.subresourceRange;
+        toReadable.subresourceRange = colorRange;
         toReadable.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         toReadable.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd,

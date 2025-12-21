@@ -1,4 +1,4 @@
-#include "engine.h"
+l#include "engine.h"
 #include "model.h"
 #include <../tinygltf/tiny_gltf.h>
 #include <array>
@@ -16,7 +16,13 @@ Engine::Engine()
       descriptorPool(renderDevice.getDescriptorPool()),
       commandPool(renderDevice.getCommandPool()),
       graphicsQueueFamilyIndex(renderDevice.getGraphicsQueueFamilyIndex()),
-      graphicsQueue(renderDevice.getGraphicsQueue())
+      graphicsQueue(renderDevice.getGraphicsQueue()),
+      videoQueueFamilyIndex(renderDevice.getVideoQueueFamilyIndex()),
+      videoQueue(renderDevice.getVideoQueue()),
+      videoDecodeQueueFamilyIndex(renderDevice.getVideoDecodeQueueFamilyIndex()),
+      videoDecodeQueue(renderDevice.getVideoDecodeQueue()),
+      videoEncodeQueueFamilyIndex(renderDevice.getVideoEncodeQueueFamilyIndex()),
+      videoEncodeQueue(renderDevice.getVideoEncodeQueue())
 {
     if (!glfwInit())
     {

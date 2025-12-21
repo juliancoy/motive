@@ -290,6 +290,7 @@ int runDecodeOnlyBenchmark(const std::filesystem::path &videoPath, const std::op
     video::VideoDecoder decoder;
     video::DecoderInitParams params{};
     params.implementation = video::DecodeImplementation::Vulkan;
+    params.requireGraphicsQueue = false;
 
     if (!video::initializeVideoDecoder(videoPath, decoder, params))
     {
@@ -363,8 +364,10 @@ bool initializeVideoPlayback(const std::filesystem::path &videoPath,
         interop.instance = engine->instance;
         interop.physicalDevice = engine->physicalDevice;
         interop.device = engine->logicalDevice;
-        interop.queue = engine->graphicsQueue;
-        interop.queueFamilyIndex = engine->graphicsQueueFamilyIndex;
+        interop.graphicsQueue = engine->getGraphicsQueue();
+        interop.graphicsQueueFamilyIndex = engine->getGraphicsQueueFamilyIndex();
+        interop.videoQueue = engine->getVideoQueue();
+        interop.videoQueueFamilyIndex = engine->getVideoQueueFamilyIndex();
         params.vulkanInterop = interop;
     }
     if (!video::initializeVideoDecoder(videoPath, state.decoder, params))
