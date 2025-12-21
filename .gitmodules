@@ -10,3 +10,6 @@
 [submodule "Vulkan-Headers"]
 	path = Vulkan-Headers
 	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "Vulkan-Video-Samples"]
+	path = Vulkan-Video-Samples
+	url = https://github.com/KhronosGroup/Vulkan-Video-Samples.git
