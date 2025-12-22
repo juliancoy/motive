@@ -202,6 +202,24 @@ Engine (engine.h/engine.cpp)
 - **Separation of Concerns:** Clear division between rendering, camera management, model management, and resource management
 - **Event Forwarding:** Display forwards input events to Camera instances
 
+## Headless Vulkan Video (In Progress)
+- Headless Annex-B path built in `encode.cpp` using `mini_decoder*` helpers (no FFmpeg); loads Vulkan Video entry points from `Engine` and queries decode formats with `vkGetPhysicalDeviceVideoFormatPropertiesKHR`.
+- `mini_decoder_session` creates `VkVideoSession/VkVideoSessionParameters` and allocates DPB images/views; `mini_decode_pipeline` uploads Annex-B NALs into a bitstream buffer and records `vkCmdDecodeVideoKHR`, transitioning DPB images to `GENERAL`.
+- `OffscreenBlit` in `encode.cpp` copies decoded DPB images into an RGBA target for downstream blit/encode, staying GPU-only.
+- Remaining integration: wire Vulkan-Video-Samples parser to emit `VkParserPerFrameDecodeParameters/VkParserDecodePictureInfo`, honor DPB/POC/display order, initialize `VulkanVideoFrameBuffer` from stream sequence info, and feed parsed decode images into the existing blit/encode pipeline (zero-copy).
+
+## Vulkan Video Integration (WIP)
+
+- A Vulkan-only encode path is being built to replace FFmpeg. New helper files: `annexb_demuxer.{h,cpp}` (raw Annex-B input), `vulkan_video_bridge.{h,cpp}` (adapts Engine-owned Vulkan handles to Vulkan Video), and imported sample sources under `vk_video_decoder/` and `common_vv/`.
+- Current expectation: inputs are raw Annex-B elementary streams (`.h264`/`.h265`). Container demuxing (MP4/MKV) is not provided.
+- Parser/decoder are instantiated; NALs are fed via `ParseByteStream`, and the display callback dequeues from `VulkanVideoFrameBuffer` to surface decoded images/headless.
+- Remaining work: ensure frame buffer init matches stream format, wire decoded images into blit/NV12/encode, replace placeholder timestamps/DPB handling, and implement Vulkan Video encode + MP4 mux.
+- Alternative path (planned): drop the heavy sample stack and build a minimal Vulkan Video decoder on top of Engine-owned instance/device/queues:
+  - Query video decode capabilities/profile from the input bitstream (H.264/H.265).
+  - Create `VkVideoSessionKHR`/session parameters and allocate decode/DPB images and bitstream buffers.
+  - Record/submit `vkCmdDecodeVideoKHR` per frame and surface the output `VkImage`/layout to the blit/encode path.
+  - Add lightweight Annex-B feeding and cleanup.
+
 ## Memory Management
 
 - **Engine:** Owns Vulkan device, descriptor pool, command pool

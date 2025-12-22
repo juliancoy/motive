@@ -350,12 +350,6 @@ void RenderDevice::createInstance()
                   << "Continuing without validation layers." << std::endl;
     }
 
-    VkInstanceCreateInfo instanceCreateInfo{};
-    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    instanceCreateInfo.pApplicationInfo = &appInfo;
-    instanceCreateInfo.enabledLayerCount = validationLayersEnabled ? static_cast<uint32_t>(validationLayers.size()) : 0;
-    instanceCreateInfo.ppEnabledLayerNames = validationLayersEnabled ? validationLayers.data() : nullptr;
-
     uint32_t extensionCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
     std::vector<VkExtensionProperties> extensions(extensionCount);
@@ -386,8 +380,37 @@ void RenderDevice::createInstance()
         }
     }
 
-    instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
-    instanceCreateInfo.ppEnabledExtensionNames = requiredExtensions.data();
+    enabledInstanceExtensionNames.clear();
+    enabledInstanceExtensionNamePtrs.clear();
+    enabledInstanceExtensionNames.reserve(requiredExtensions.size());
+    enabledInstanceExtensionNamePtrs.reserve(requiredExtensions.size());
+    for (const char* ext : requiredExtensions)
+    {
+        enabledInstanceExtensionNames.emplace_back(ext);
+    }
+    for (const auto& ext : enabledInstanceExtensionNames)
+    {
+        enabledInstanceExtensionNamePtrs.push_back(ext.c_str());
+    }
+
+    VkInstanceCreateInfo instanceCreateInfo{};
+    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instanceCreateInfo.pApplicationInfo = &appInfo;
+    instanceCreateInfo.enabledLayerCount = validationLayersEnabled ? static_cast<uint32_t>(validationLayers.size()) : 0;
+    instanceCreateInfo.ppEnabledLayerNames = validationLayersEnabled ? validationLayers.data() : nullptr;
+    instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(enabledInstanceExtensionNamePtrs.size());
+    instanceCreateInfo.ppEnabledExtensionNames = enabledInstanceExtensionNamePtrs.data();
+
+    std::cout << "[RenderDevice] Enabled instance extensions (" << enabledInstanceExtensionNamePtrs.size() << "): ";
+    for (size_t i = 0; i < enabledInstanceExtensionNamePtrs.size(); ++i)
+    {
+        std::cout << enabledInstanceExtensionNamePtrs[i];
+        if (i + 1 < enabledInstanceExtensionNamePtrs.size())
+        {
+            std::cout << ", ";
+        }
+    }
+    std::cout << std::endl;
 
     VkResult instanceResult = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
     if (instanceResult != VK_SUCCESS)
@@ -798,31 +821,54 @@ void RenderDevice::createLogicalDevice()
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeatures{};
-    timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
-    timelineFeatures.timelineSemaphore = VK_TRUE;
+    enabledTimelineFeatures = {};
+    enabledTimelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+    enabledTimelineFeatures.timelineSemaphore = VK_TRUE;
 
-    VkPhysicalDeviceSynchronization2Features sync2Features{};
-    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
-    sync2Features.synchronization2 = VK_TRUE;
-    timelineFeatures.pNext = &sync2Features;
+    enabledSync2Features = {};
+    enabledSync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    enabledSync2Features.synchronization2 = VK_TRUE;
+    enabledTimelineFeatures.pNext = &enabledSync2Features;
 
-    VkPhysicalDeviceFeatures2 features2{};
-    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2.features.samplerAnisotropy = VK_TRUE;
-    features2.features.sampleRateShading = VK_TRUE;
-    features2.pNext = &timelineFeatures;
+    enabledFeatures2 = {};
+    enabledFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    enabledFeatures2.features.samplerAnisotropy = VK_TRUE;
+    enabledFeatures2.features.sampleRateShading = VK_TRUE;
+    enabledFeatures2.pNext = &enabledTimelineFeatures;
 
     std::vector<const char *> enabledDevExt = getRequiredDeviceExtensions();
+    enabledDeviceExtensionNames.clear();
+    enabledDeviceExtensionNamePtrs.clear();
+    enabledDeviceExtensionNames.reserve(enabledDevExt.size());
+    enabledDeviceExtensionNamePtrs.reserve(enabledDevExt.size());
+    for (const char* ext : enabledDevExt)
+    {
+        enabledDeviceExtensionNames.emplace_back(ext);
+    }
+    for (const auto& ext : enabledDeviceExtensionNames)
+    {
+        enabledDeviceExtensionNamePtrs.push_back(ext.c_str());
+    }
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pEnabledFeatures = nullptr;
-    createInfo.pNext = &features2;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledDevExt.size());
-    createInfo.ppEnabledExtensionNames = enabledDevExt.data();
+    createInfo.pNext = &enabledFeatures2;
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledDeviceExtensionNamePtrs.size());
+    createInfo.ppEnabledExtensionNames = enabledDeviceExtensionNamePtrs.data();
+
+    std::cout << "[RenderDevice] Enabled device extensions (" << enabledDeviceExtensionNamePtrs.size() << "): ";
+    for (size_t i = 0; i < enabledDeviceExtensionNamePtrs.size(); ++i)
+    {
+        std::cout << enabledDeviceExtensionNamePtrs[i];
+        if (i + 1 < enabledDeviceExtensionNamePtrs.size())
+        {
+            std::cout << ", ";
+        }
+    }
+    std::cout << std::endl;
 
     const std::vector<const char *> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};

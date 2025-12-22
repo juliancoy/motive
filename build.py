@@ -7,6 +7,7 @@ import shutil
 import json
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import pathlib
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Build the Motive engine')
@@ -23,12 +24,23 @@ ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/insta
 
 # Source and object files
 main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+exclude_sources = ["vulkan_video_bridge.cpp"]  # missing Vulkan-Video-Samples libraries
 so_sources = []
 for file in os.listdir(this_dir):
-    if file.endswith(".cpp") and file not in main_sources:
+    if file.endswith(".cpp") and file not in main_sources and file not in exclude_sources:
         so_sources.append(file)
 so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
+
+# Sample Vulkan Video sources (decoder/parsers/utils)
+vv_common_sources = [
+    str(p) for p in pathlib.Path(this_dir, "common_vv/libs").rglob("*.cpp")
+]
+vv_decoder_sources = [
+    str(p) for p in pathlib.Path(this_dir, "vk_video_decoder/libs").rglob("*.cpp")
+]
+vv_sources = vv_common_sources + vv_decoder_sources
+vv_objects = [os.path.splitext(os.path.relpath(p, this_dir))[0] + ".o" for p in vv_sources]
 
 # Include and library paths
 include_paths = [
@@ -40,6 +52,10 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "freetype/include")),
     os.path.abspath(os.path.join(this_dir, "freetype/build/include")),
     os.path.abspath(os.path.join(this_dir, "freetype/build/include/freetype2")),
+    os.path.abspath(os.path.join(this_dir, "common_vv/include")),
+    os.path.abspath(os.path.join(this_dir, "common_vv/libs")),
+    os.path.abspath(os.path.join(this_dir, "vk_video_decoder/include")),
+    os.path.abspath(os.path.join(this_dir, "vk_video_decoder/libs")),
 ]
 ffmpeg_lib_dir = os.path.join(ffmpeg_install_dir, "lib")
 lib_paths = [
@@ -246,7 +262,7 @@ def compile_cpp_to_o(src_file):
     return True
 
 
-all_sources = so_sources + main_sources
+all_sources = so_sources + main_sources + vv_sources
 with ThreadPoolExecutor() as executor:
     changed_list = list(executor.map(compile_cpp_to_o, all_sources))
 

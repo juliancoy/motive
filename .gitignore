@@ -18,3 +18,7 @@ nv-codec*
 *.MP4
 *.json
 20251216_ClimateTechHolidayParty_blit.mp4
+encode
+*.h265
+*.h264
+

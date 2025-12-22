@@ -229,21 +229,6 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
         vkctx->inst = vulkanInterop->instance;
         vkctx->phys_dev = vulkanInterop->physicalDevice;
         vkctx->act_dev = vulkanInterop->device;
-#ifdef FF_API_VULKAN_FIXED_QUEUES
-        const uint32_t graphicsFamily = vulkanInterop->graphicsQueueFamilyIndex;
-        const uint32_t videoFamily = vulkanInterop->videoQueueFamilyIndex;
-        const uint32_t decodeFamily = (videoFamily != static_cast<uint32_t>(-1)) ? videoFamily : graphicsFamily;
-        vkctx->queue_family_index = static_cast<int>(graphicsFamily);
-        vkctx->nb_graphics_queues = requireGraphicsQueue ? 1 : 0;
-        vkctx->queue_family_tx_index = static_cast<int>(graphicsFamily);
-        vkctx->nb_tx_queues = 1;
-        vkctx->queue_family_comp_index = static_cast<int>(graphicsFamily);
-        vkctx->nb_comp_queues = 1;
-        vkctx->queue_family_decode_index = static_cast<int>(decodeFamily);
-        vkctx->nb_decode_queues = 1;
-        vkctx->queue_family_encode_index = -1;
-        vkctx->nb_encode_queues = 0;
-#endif
         vkctx->device_features = VkPhysicalDeviceFeatures2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
 
         int err = av_hwdevice_ctx_init(hwDeviceCtx);

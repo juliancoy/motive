@@ -68,6 +68,25 @@ def ensure_local_vulkan_pc():
     pc_dir.mkdir(parents=True, exist_ok=True)
     pc_path = pc_dir / "vulkan.pc"
 
+    # FFmpeg's configure script includes the header via an absolute path, which skips
+    # our pkg-config include flags. Mirror the upstream Vulkan-Headers install layout
+    # by exposing vk_video/ next to vulkan_core.h so those relative includes resolve.
+    vk_video_src = Path("Vulkan-Headers/include/vk_video")
+    vk_video_link = Path("Vulkan-Headers/include/vulkan/vk_video")
+    try:
+        if vk_video_src.exists():
+            vk_video_link.parent.mkdir(parents=True, exist_ok=True)
+            if vk_video_link.is_symlink() or vk_video_link.exists():
+                if vk_video_link.is_symlink() and vk_video_link.resolve() != vk_video_src.resolve():
+                    vk_video_link.unlink()
+                else:
+                    # Already present and correct; nothing to do.
+                    pass
+            if not vk_video_link.exists():
+                vk_video_link.symlink_to(Path("..") / "vk_video")
+    except OSError as exc:
+        print(f"Warning: could not ensure vk_video include shim: {exc}", file=sys.stderr)
+
     prefix = Path("Vulkan-Headers").resolve()
     contents = textwrap.dedent(
         f"""\
@@ -78,7 +97,7 @@ def ensure_local_vulkan_pc():
         Description: Vulkan Headers (local)
         Version: {full_version}
         Cflags: -I${{includedir}}
-        Libs:
+        Libs: -lvulkan
         """
     )
     pc_path.write_text(contents)
@@ -270,17 +289,19 @@ def determine_hwaccel_flags():
             skipped.append(description)
 
     # Vulkan: ffmpeg master currently requires headers >= 1.3.277
-    # Disabling Vulkan support due to header issues
+    # Enable Vulkan if we have the required version
     vulkan_version = pkg_config_version("vulkan")
     vulkan_required = "1.3.277"
-    # Always skip Vulkan for now
-    msg = f"Vulkan (requires >= {vulkan_required}"
-    if vulkan_version:
-        msg += f", found {vulkan_version})"
+    if vulkan_version and version_gte(vulkan_version, vulkan_required):
+        flags.append("--enable-vulkan")
+        enabled.append("Vulkan")
     else:
-        msg += ", not found)"
-    msg += " - disabled due to header issues"
-    skipped.append(msg)
+        msg = f"Vulkan (requires >= {vulkan_required}"
+        if vulkan_version:
+            msg += f", found {vulkan_version})"
+        else:
+            msg += ", not found)"
+        skipped.append(msg)
 
     cuda_flags = ["--enable-cuda", "--enable-cuvid", "--enable-nvdec", "--enable-nvenc"]
     if cuda_available() and ffnvcodec_available():
@@ -336,13 +357,40 @@ def setup_ffmpeg():
         print("No optional FFmpeg hardware decode features detected.")
     if hwaccel_options["skipped_descriptions"]:
         print("Skipping unavailable hardware features:", ", ".join(hwaccel_options["skipped_descriptions"]))
-    configure_cmd = (
-        f"PKG_CONFIG_PATH={pc_env} ../configure --prefix={install_prefix} "
-        "--enable-static --disable-shared --enable-pic "
-        "--disable-programs --disable-doc "
-        "--enable-gpl --enable-version3 "
-        + " ".join(hwaccel_options.get("flags", []))
-    )
+
+    debug_enabled = os.environ.get("FFMPEG_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+    debug_enabled = True
+    debug_flags = []
+    if debug_enabled:
+        print("FFmpeg debug build enabled via FFMPEG_DEBUG (debug symbols, no stripping, optimizations off).")
+        debug_flags.extend(
+            [
+                "--disable-optimizations",
+                "--disable-stripping",
+                "--enable-debug=3",
+                '--extra-cflags="-g"',
+                '--extra-ldflags="-g"',
+            ]
+        )
+    else:
+        print("FFmpeg debug build disabled (set FFMPEG_DEBUG=1 to enable debug symbols).")
+
+    configure_flags = [
+        f"PKG_CONFIG_PATH={pc_env}",
+        "../configure",
+        f"--prefix={install_prefix}",
+        "--enable-static",
+        "--disable-shared",
+        "--enable-pic",
+        "--disable-programs",
+        "--disable-doc",
+        "--enable-gpl",
+        "--enable-version3",
+    ]
+    configure_flags.extend(hwaccel_options.get("flags", []))
+    configure_flags.extend(debug_flags)
+
+    configure_cmd = " ".join(configure_flags)
     run_command(configure_cmd, cwd=build_dir)
 
     make_cmd = f"make -j{os.cpu_count()}"

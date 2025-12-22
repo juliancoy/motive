@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include <string>
 #include <vector>
 
 class RenderDevice
@@ -43,6 +44,9 @@ public:
     VkPhysicalDeviceMemoryProperties &getMemoryProperties();
     VkPhysicalDeviceProperties &getDeviceProperties();
     VkPhysicalDeviceFeatures &getDeviceFeatures();
+    const std::vector<const char *> &getEnabledInstanceExtensionNames() const { return enabledInstanceExtensionNamePtrs; }
+    const std::vector<const char *> &getEnabledDeviceExtensionNames() const { return enabledDeviceExtensionNamePtrs; }
+    const VkPhysicalDeviceFeatures2 &getEnabledFeatures2() const { return enabledFeatures2; }
 
 private:
     void createInstance();
@@ -72,6 +76,14 @@ private:
     VkPhysicalDeviceProperties props;
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceMemoryProperties memProperties;
+    VkPhysicalDeviceFeatures2 enabledFeatures2{};
+    VkPhysicalDeviceSynchronization2Features enabledSync2Features{};
+    VkPhysicalDeviceTimelineSemaphoreFeatures enabledTimelineFeatures{};
+
+    std::vector<std::string> enabledInstanceExtensionNames;
+    std::vector<const char *> enabledInstanceExtensionNamePtrs;
+    std::vector<std::string> enabledDeviceExtensionNames;
+    std::vector<const char *> enabledDeviceExtensionNamePtrs;
 
     VkDebugUtilsMessengerEXT debugMessenger;
 };
