@@ -24,6 +24,8 @@
 #include "engine.h"
 #include "light.h"
 #include "overlay.hpp"
+#include "overlay_yolo.cpp"  // Include YOLO overlay implementation
+#include "detection.hpp"     // Include YOLO detection system
 #include "grading.hpp"
 #include "utils.h"
 #include "video.h"
@@ -54,11 +56,24 @@ using overlay::runOverlayCompute;
 using overlay::updateFpsOverlay;
 using overlay::uploadImageData;
 
+// YOLO overlay compute
+using overlay::YOLOOverlayCompute;
+using overlay::destroyYOLOOverlayCompute;
+using overlay::initializeYOLOOverlayCompute;
+using overlay::runYOLOOverlayCompute;
+
+// Pose overlay compute
+using overlay::PoseOverlayCompute;
+using overlay::destroyPoseOverlayCompute;
+using overlay::initializePoseOverlayCompute;
+using overlay::runPoseOverlayCompute;
+
 enum class DebugCategory
 {
     Decode,
     Cleanup,
-    Overlay
+    Overlay,
+    Detection
 };
 
 struct DebugFlags
@@ -66,6 +81,7 @@ struct DebugFlags
     bool decode = false;
     bool cleanup = false;
     bool overlay = false;
+    bool detection = false;
 } gDebugFlags;
 
 bool isDebugEnabled(DebugCategory category)
@@ -78,6 +94,8 @@ bool isDebugEnabled(DebugCategory category)
         return gDebugFlags.cleanup;
     case DebugCategory::Overlay:
         return gDebugFlags.overlay;
+    case DebugCategory::Detection:
+        return gDebugFlags.detection;
     default:
         return false;
     }
@@ -100,16 +118,21 @@ void parseDebugFlags(int argc, char** argv)
         {
             gDebugFlags.overlay = true;
         }
+        else if (arg == "--debugDetection")
+        {
+            gDebugFlags.detection = true;
+        }
         else if (arg == "--debugAll")
         {
-            gDebugFlags.decode = gDebugFlags.cleanup = gDebugFlags.overlay = true;
+            gDebugFlags.decode = gDebugFlags.cleanup = gDebugFlags.overlay = gDebugFlags.detection = true;
         }
     }
 }
 
 bool isDebugArg(const std::string& arg)
 {
-    return arg == "--debugDecode" || arg == "--debugCleanup" || arg == "--debugOverlay" || arg == "--debugAll";
+    return arg == "--debugDecode" || arg == "--debugCleanup" || arg == "--debugOverlay" || 
+           arg == "--debugDetection" || arg == "--debugAll";
 }
 
 struct CliOptions
@@ -121,6 +144,8 @@ struct CliOptions
     bool showInput = true;
     bool showRegion = true;
     bool showGrading = true;
+    bool enableDetection = false;  // New option to enable YOLO detection
+    bool enablePose = false;       // New option to enable YOLO pose estimation
 };
 
 CliOptions parseCliOptions(int argc, char** argv)
@@ -132,6 +157,8 @@ CliOptions parseCliOptions(int argc, char** argv)
     bool showInput = true;
     bool showRegion = true;
     bool showGrading = true;
+    bool enableDetection = false;
+    bool enablePose = false;
     bool windowsSpecified = false;
     bool parsedInput = false;
     bool parsedRegion = false;
@@ -182,6 +209,15 @@ CliOptions parseCliOptions(int argc, char** argv)
         else if (arg == "--encode")
         {
             encode = true;
+        }
+        else if (arg == "--detection")
+        {
+            enableDetection = true;
+        }
+        else if (arg == "--pose")
+        {
+            enablePose = true;
+            enableDetection = true; // Pose requires detection to be enabled
         }
         else if (arg.rfind("--windows", 0) == 0)
         {
@@ -249,9 +285,8 @@ CliOptions parseCliOptions(int argc, char** argv)
         showRegion = parsedRegion;
         showGrading = parsedGrading;
     }
-    return CliOptions{videoPath, swapUV, decodeOnly, encode, showInput, showRegion, showGrading};
+    return CliOptions{videoPath, swapUV, decodeOnly, encode, showInput, showRegion, showGrading, enableDetection, enablePose};
 }
-
 
 // Scroll handling for rectangle sizing
 static double g_scrollDelta = 0.0;
@@ -259,23 +294,6 @@ static void onScroll(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset)
 {
     g_scrollDelta += yoffset;
 }
-
-static void onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/)
-{
-    /*if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-    {
-        std::cout << "[Video2D] ESC pressed at "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::steady_clock::now().time_since_epoch())
-                         .count()
-                  << " ms" << std::endl;
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }*/
-}
-
-
-// Scrubber GPU drawing is now handled inside the video_blit compute shader; the
-// standalone scrubber compute path has been removed.
 
 struct ScrubberUi
 {
@@ -320,7 +338,8 @@ bool cursorInPlayButton(double x, double y, int windowWidth, int windowHeight)
     const ScrubberUi ui = computeScrubberUi(windowWidth, windowHeight);
     return x >= ui.iconLeft && x <= ui.iconRight && y >= ui.iconTop && y <= ui.iconBottom;
 }
-}
+
+} // anonymous namespace
 
 int main(int argc, char** argv)
 {
@@ -353,7 +372,7 @@ int main(int argc, char** argv)
         std::cout << "[Video2D] Initializing display..." << std::endl;
         if (cli.showInput)
         {
-            display = new Display2D(engine, 1280, 900, "Motive Video 2D");
+            display = new Display2D(engine, 1280, 900, "Motive Video 2D with YOLO Detection");
             std::cout << "[Video2D] Display initialized successfully." << std::endl;
         }
         else
@@ -393,7 +412,6 @@ int main(int argc, char** argv)
     float fbWidthF = static_cast<float>(fbWidth);
     float fbHeightF = static_cast<float>(fbHeight);
     glfwSetScrollCallback(display->window, onScroll);
-    //glfwSetKeyCallback(display->window, onKey);
 
     Light sceneLight(glm::vec3(0.0f, 0.0f, 1.0f),
                      glm::vec3(0.1f),
@@ -410,6 +428,55 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Initialize YOLO detection system
+    detection::DetectionSystem& detectionSystem = detection::DetectionSystem::getInstance();
+    detection::DetectionConfig detectionConfig = cli.enablePose ? detection::getDefaultPoseConfig() : detection::getDefaultYOLOConfig();
+    
+    // Try to initialize detection system
+    bool detectionInitialized = false;
+    if (cli.enableDetection) {
+        std::cout << "[YOLO] Initializing detection system..." << std::endl;
+        if (cli.enablePose) {
+            std::cout << "[YOLO] Using pose estimation model: " << detectionConfig.param_path << std::endl;
+        } else {
+            std::cout << "[YOLO] Using object detection model: " << detectionConfig.param_path << std::endl;
+        }
+        detectionInitialized = detectionSystem.initialize(engine, detectionConfig);
+        if (detectionInitialized) {
+            std::cout << "[YOLO] Detection system initialized successfully" << std::endl;
+            detectionSystem.setEnabled(true);
+        } else {
+            std::cerr << "[YOLO] Failed to initialize detection system, using placeholder mode" << std::endl;
+        }
+    }
+
+    // Initialize overlay compute based on mode
+    YOLOOverlayCompute yoloOverlayCompute{};
+    PoseOverlayCompute poseOverlayCompute{};
+    bool yoloOverlayInitialized = false;
+    bool poseOverlayInitialized = false;
+    
+    if (cli.enableDetection) {
+        if (cli.enablePose) {
+            // Initialize pose overlay for pose estimation mode
+            poseOverlayInitialized = initializePoseOverlayCompute(engine, poseOverlayCompute);
+            if (poseOverlayInitialized) {
+                std::cout << "[Pose] Pose overlay compute initialized successfully" << std::endl;
+            } else {
+                std::cerr << "[Pose] Failed to initialize pose overlay compute, using fallback overlay" << std::endl;
+            }
+        } else {
+            // Initialize YOLO overlay for object detection mode
+            yoloOverlayInitialized = initializeYOLOOverlayCompute(engine, yoloOverlayCompute);
+            if (yoloOverlayInitialized) {
+                std::cout << "[YOLO] YOLO overlay compute initialized successfully" << std::endl;
+            } else {
+                std::cerr << "[YOLO] Failed to initialize YOLO overlay compute, using fallback overlay" << std::endl;
+            }
+        }
+    }
+
+    // Initialize regular overlay compute as fallback
     OverlayCompute overlayCompute{};
     if (!initializeOverlayCompute(engine, overlayCompute))
     {
@@ -475,7 +542,7 @@ int main(int argc, char** argv)
     int lastGradingSlider = -1;
     auto lastGradingClickTime = std::chrono::steady_clock::time_point{};
     bool gradingPreviewEnabled = true;
-    bool detectionEnabled = false;
+    bool detectionEnabled = cli.enableDetection;  // Start with detection enabled if requested
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
@@ -485,6 +552,10 @@ int main(int argc, char** argv)
     float rectHeight = fbHeightF;
     float rectWidth = rectHeight * (9.0f / 16.0f);
     glm::vec2 rectCenter(fbWidthF * 0.5f, fbHeightF * 0.5f);
+
+    // Detection frame counter (run detection every N frames for performance)
+    int detectionFrameCounter = 0;
+    const int detectionInterval = 30; // Run detection every 30 frames (~1 second at 30fps)
 
     while (true)
     {
@@ -702,6 +773,11 @@ int main(int argc, char** argv)
                 {
                     return -5; // preview toggle
                 }
+                if (relX >= gradingLayout.detectionX0 && relX <= gradingLayout.detectionX1 &&
+                    relY >= gradingLayout.detectionY0 && relY <= gradingLayout.detectionY1)
+                {
+                    return -6; // detection toggle
+                }
                 const uint32_t padding = 12;
                 const uint32_t barWidth = gradingLayout.width - padding * 2;
                 const uint32_t barYStart = gradingLayout.barYStart;
@@ -772,6 +848,9 @@ int main(int argc, char** argv)
                 if (detectionToggle)
                 {
                     detectionEnabled = !detectionEnabled;
+                    if (detectionInitialized) {
+                        detectionSystem.setEnabled(detectionEnabled);
+                    }
                 }
             }
 
@@ -822,6 +901,9 @@ int main(int argc, char** argv)
                 if (detectionToggle)
                 {
                     detectionEnabled = !detectionEnabled;
+                    if (detectionInitialized) {
+                        detectionSystem.setEnabled(detectionEnabled);
+                    }
                 }
             }
         }
@@ -874,6 +956,9 @@ int main(int argc, char** argv)
                 if (detectionToggle)
                 {
                     detectionEnabled = !detectionEnabled;
+                    if (detectionInitialized) {
+                        detectionSystem.setEnabled(detectionEnabled);
+                    }
                 }
             }
             gradingRightHeld = true;
@@ -883,7 +968,6 @@ int main(int argc, char** argv)
             gradingRightHeld = false;
         }
         }
-
 
         // Scroll to resize rectangle
         double scrollDelta = g_scrollDelta;
@@ -967,30 +1051,105 @@ int main(int argc, char** argv)
                              fbHeightU);
         }
 
+        // Run YOLO detection if enabled and it's time
+        detectionFrameCounter++;
+        if (detectionEnabled && detectionInitialized && detectionFrameCounter >= detectionInterval)
+        {
+            detectionFrameCounter = 0;
+            
+            // Process current frame for detection
+            auto detections = detectionSystem.processFrame(engine, &playbackState.video);
+            
+            // Update detection buffer on GPU
+            detectionSystem.updateDetectionBuffer(engine);
+            
+            if (isDebugEnabled(DebugCategory::Detection) && !detections.empty())
+            {
+                std::cout << "[YOLO] Detected " << detections.size() << " objects" << std::endl;
+                for (const auto& det : detections)
+                {
+                    std::cout << "  - " << det.label << " (conf: " << det.confidence 
+                              << ") at [" << det.bbox.x << ", " << det.bbox.y 
+                              << ", " << det.bbox.z << ", " << det.bbox.w << "]" << std::endl;
+                }
+            }
+        }
+
         // Draw overlay (rectangle) via GPU compute into overlay image
-        // Create a detection box slightly offset and smaller than the main rectangle
-        // TODO: Replace with actual YOLO detection results
-        // For real YOLO integration:
-        // 1. Capture current video frame (GPU to CPU readback or use Vulkan buffer)
-        // 2. Run ncnn YOLO inference on the frame
-        // 3. Process detection results (bounding boxes, confidence scores, class labels)
-        // 4. Pass detection results to shader via storage buffer (not push constants)
-        // 5. Draw multiple bounding boxes with labels in the overlay
-        glm::vec2 detectionBoxCenter = rectCenter + glm::vec2(rectWidth * 0.2f, rectHeight * 0.2f);
-        glm::vec2 detectionBoxSize = glm::vec2(rectWidth * 0.6f, rectHeight * 0.6f);
+        // Use appropriate overlay based on mode if available and detection is enabled, otherwise use fallback
+        bool useSpecializedOverlay = detectionEnabled && detectionInitialized;
+        bool usePoseOverlay = cli.enablePose && poseOverlayInitialized;
+        bool useYOLOOverlay = !cli.enablePose && yoloOverlayInitialized;
         
-        runOverlayCompute(engine,
-                          overlayCompute,
-                          playbackState.overlay.image,
-                          static_cast<uint32_t>(fbWidth),
-                          static_cast<uint32_t>(fbHeight),
-                          glm::vec2(rectCenter.x, rectCenter.y),
-                          glm::vec2(rectWidth, rectHeight),
-                          3.0f,
-                          3.0f,
-                          detectionEnabled ? 1.0f : 0.0f,
-                          detectionBoxCenter,
-                          detectionBoxSize);
+        if (useSpecializedOverlay)
+        {
+            // Check if detection buffer is valid
+            const auto& detectionBuffer = detectionSystem.getDetectionBuffer();
+            if (detectionBuffer.buffer != VK_NULL_HANDLE)
+            {
+                if (usePoseOverlay)
+                {
+                    // Use pose overlay for pose estimation
+                    runPoseOverlayCompute(engine,
+                                          poseOverlayCompute,
+                                          playbackState.overlay.image,
+                                          static_cast<uint32_t>(fbWidth),
+                                          static_cast<uint32_t>(fbHeight),
+                                          glm::vec2(rectCenter.x, rectCenter.y),
+                                          glm::vec2(rectWidth, rectHeight),
+                                          3.0f,
+                                          3.0f,
+                                          detectionEnabled ? 1.0f : 0.0f,
+                                          detectionBuffer);
+                }
+                else if (useYOLOOverlay)
+                {
+                    // Use YOLO overlay for object detection
+                    runYOLOOverlayCompute(engine,
+                                          yoloOverlayCompute,
+                                          playbackState.overlay.image,
+                                          static_cast<uint32_t>(fbWidth),
+                                          static_cast<uint32_t>(fbHeight),
+                                          glm::vec2(rectCenter.x, rectCenter.y),
+                                          glm::vec2(rectWidth, rectHeight),
+                                          3.0f,
+                                          3.0f,
+                                          detectionEnabled ? 1.0f : 0.0f,
+                                          detectionBuffer);
+                }
+                else
+                {
+                    // Specialized overlay not available, use fallback
+                    useSpecializedOverlay = false;
+                }
+            }
+            else
+            {
+                // Detection buffer not ready, use fallback
+                useSpecializedOverlay = false;
+            }
+        }
+        
+        if (!useSpecializedOverlay)
+        {
+            // Use fallback overlay with simulated detection box
+            glm::vec2 detectionBoxCenter = rectCenter + glm::vec2(rectWidth * 0.2f, rectHeight * 0.2f);
+            glm::vec2 detectionBoxSize = glm::vec2(rectWidth * 0.6f, rectHeight * 0.6f);
+            
+            runOverlayCompute(engine,
+                              overlayCompute,
+                              playbackState.overlay.image,
+                              static_cast<uint32_t>(fbWidth),
+                              static_cast<uint32_t>(fbHeight),
+                              glm::vec2(rectCenter.x, rectCenter.y),
+                              glm::vec2(rectWidth, rectHeight),
+                              3.0f,
+                              3.0f,
+                              detectionEnabled ? 1.0f : 0.0f,
+                              detectionBoxCenter,
+                              detectionBoxSize);
+        }
+        
         playbackState.overlay.info.overlay.view = playbackState.overlay.image.view;
         playbackState.overlay.info.overlay.sampler = playbackState.overlay.sampler;
         playbackState.overlay.info.extent = {static_cast<uint32_t>(fbWidth), static_cast<uint32_t>(fbHeight)};
@@ -1086,6 +1245,16 @@ int main(int argc, char** argv)
     if (logCleanup)
     {
         std::cout << "[Video2D] Starting cleanup..." << std::endl;
+    }
+    
+    // Cleanup overlays if initialized
+    if (yoloOverlayInitialized)
+    {
+        destroyYOLOOverlayCompute(yoloOverlayCompute);
+    }
+    if (poseOverlayInitialized)
+    {
+        destroyPoseOverlayCompute(poseOverlayCompute);
     }
     
     auto start1 = std::chrono::steady_clock::now();

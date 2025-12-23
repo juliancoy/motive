@@ -67,6 +67,11 @@ public:
     VkShaderModule createShaderModule(const std::vector<char> &code);
     void setLight(const Light& light);
     void setMsaaSampleCount(VkSampleCountFlagBits requested);
+    
+    // Image to buffer copy for frame capture
+    void copyImageToBuffer(VkImage srcImage, VkBuffer dstBuffer, 
+                          uint32_t width, uint32_t height, 
+                          VkFormat format, VkImageLayout srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     // Queue accessors for interop paths
     VkQueue getGraphicsQueue() const { return graphicsQueue; }

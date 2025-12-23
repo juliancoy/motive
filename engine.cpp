@@ -231,6 +231,49 @@ VkSampleCountFlagBits Engine::clampSampleCount(VkSampleCountFlagBits requested) 
     return VK_SAMPLE_COUNT_1_BIT;
 }
 
+// Image to buffer copy for frame capture
+void Engine::copyImageToBuffer(VkImage srcImage, VkBuffer dstBuffer, 
+                              uint32_t width, uint32_t height, 
+                              VkFormat format, VkImageLayout srcImageLayout) {
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+    
+    // Determine bytes per pixel based on format
+    uint32_t bytesPerPixel = 4; // Default for RGBA8
+    if (format == VK_FORMAT_R8_UNORM) {
+        bytesPerPixel = 1;
+    } else if (format == VK_FORMAT_R8G8_UNORM) {
+        bytesPerPixel = 2;
+    } else if (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_B8G8R8A8_UNORM) {
+        bytesPerPixel = 4;
+    }
+    
+    // Setup buffer copy region
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;  // Tightly packed
+    region.bufferImageHeight = 0; // Tightly packed
+    
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {width, height, 1};
+    
+    // Copy image to buffer
+    vkCmdCopyImageToBuffer(
+        commandBuffer,
+        srcImage,
+        srcImageLayout,
+        dstBuffer,
+        1,
+        &region
+    );
+    
+    endSingleTimeCommands(commandBuffer);
+}
+
 // C interface for Python
 Engine *engine;
 

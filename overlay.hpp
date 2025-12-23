@@ -82,7 +82,10 @@ void runOverlayCompute(Engine* engine,
                        const glm::vec2& rectCenter,
                        const glm::vec2& rectSize,
                        float outerThickness,
-                       float innerThickness);
+                       float innerThickness,
+                       float detectionEnabled,
+                       const glm::vec2& detectionBoxCenter,
+                       const glm::vec2& detectionBoxSize);
 
 void updateFpsOverlay(Engine* engine,
                       FpsOverlayResources& fpsOverlay,
@@ -93,4 +96,3 @@ void updateFpsOverlay(Engine* engine,
                       uint32_t fbHeight);
 
 } // namespace overlay
-

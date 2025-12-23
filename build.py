@@ -23,12 +23,17 @@ manifest_path = os.path.join(this_dir, ".build_manifest.json")
 ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
-main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp", "motive2d_yolo.cpp"]
 exclude_sources = ["vulkan_video_bridge.cpp"]  # missing Vulkan-Video-Samples libraries
 so_sources = []
 for file in os.listdir(this_dir):
     if file.endswith(".cpp") and file not in main_sources and file not in exclude_sources:
         so_sources.append(file)
+# Ensure detection.cpp and overlay_yolo.cpp are included
+if "detection.cpp" not in so_sources:
+    so_sources.append("detection.cpp")
+if "overlay_yolo.cpp" not in so_sources:
+    so_sources.append("overlay_yolo.cpp")
 so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
 
@@ -56,6 +61,9 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "common_vv/libs")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/include")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/libs")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/include")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/src")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
 ]
 ffmpeg_lib_dir = os.path.join(ffmpeg_install_dir, "lib")
 lib_paths = [
@@ -63,6 +71,7 @@ lib_paths = [
     os.path.abspath(os.path.join(this_dir, "glfw/build/src")),
     ffmpeg_lib_dir,
     os.path.abspath(os.path.join(this_dir, "freetype/build")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
     os.path.abspath(os.path.join(this_dir, ".")),
 ]
 core_libraries = [
@@ -75,6 +84,7 @@ core_libraries = [
     "avutil",
     "swresample",
     "freetype",
+    "ncnn",
     "m",
     "pthread",
     "dl",
@@ -252,7 +262,13 @@ def compile_cpp_to_o(src_file):
         if obj_mtime >= src_mtime and obj_mtime >= build_py_mtime:
             # Skip unchanged
             return False
-    cmd = f"g++ -std=c++17 {debug_flags} {sanitize_flags} -fPIC -c {include_flags} {src_file} -o {obj_file}"
+    
+    # Add NCNN_AVAILABLE flag for detection files
+    extra_flags = ""
+    if "detection" in src_file or "overlay_yolo" in src_file or "motive2d_yolo" in src_file:
+        extra_flags = "-DNCNN_AVAILABLE -DNCNN_USE_VULKAN=0"
+    
+    cmd = f"g++ -std=c++17 {debug_flags} {sanitize_flags} -fPIC -c {include_flags} {extra_flags} {src_file} -o {obj_file}"
     print(f"Compiling {src_file}...")
     result = subprocess.run(cmd, shell=True)
     if result.returncode != 0:

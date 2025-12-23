@@ -271,7 +271,10 @@ void runOverlayCompute(Engine* engine,
                        const glm::vec2& rectCenter,
                        const glm::vec2& rectSize,
                        float outerThickness,
-                       float innerThickness)
+                       float innerThickness,
+                       float detectionEnabled,
+                       const glm::vec2& detectionBoxCenter,
+                       const glm::vec2& detectionBoxSize)
 {
     bool recreated = false;
     if (!ensureImageResource(engine, target, width, height, VK_FORMAT_R8G8B8A8_UNORM, recreated,
@@ -307,7 +310,11 @@ void runOverlayCompute(Engine* engine,
         glm::vec2 rectSize;
         float outerThickness;
         float innerThickness;
-    } push{glm::vec2(static_cast<float>(width), static_cast<float>(height)), rectCenter, rectSize, outerThickness, innerThickness};
+        float detectionEnabled;
+        glm::vec2 detectionBoxCenter;
+        glm::vec2 detectionBoxSize;
+    } push{glm::vec2(static_cast<float>(width), static_cast<float>(height)), rectCenter, rectSize, outerThickness, innerThickness,
+           detectionEnabled, detectionBoxCenter, detectionBoxSize};
 
     const VkImageLayout initialLayout = recreated ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkImageMemoryBarrier toGeneralBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -423,7 +430,7 @@ bool initializeOverlayCompute(Engine* engine, OverlayCompute& comp)
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = sizeof(glm::vec2) * 3 + sizeof(float) * 2;
+    pushRange.size = sizeof(glm::vec2) * 5 + sizeof(float) * 3; // outputSize, rectCenter, rectSize, detectionBoxCenter, detectionBoxSize (5 vec2) + outerThickness, innerThickness, detectionEnabled (3 float)
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipelineLayoutInfo.setLayoutCount = 1;
