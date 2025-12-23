@@ -22,3 +22,5 @@ encode
 *.h265
 *.h264
 models
+#motive large binary
+motive2d_yolo
