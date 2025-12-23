@@ -182,7 +182,8 @@ bool buildGradingOverlay(Engine* engine,
                          uint32_t fbWidth,
                          uint32_t fbHeight,
                          SliderLayout& layout,
-                         bool previewEnabled)
+                         bool previewEnabled,
+                         bool detectionEnabled)
 {
     if (layout.labels.empty())
     {
@@ -348,7 +349,7 @@ bool buildGradingOverlay(Engine* engine,
     // Reset button near the bottom
     const uint32_t buttonPadding = 12;
     const uint32_t totalButtonsHeight = layout.resetHeight + layout.loadHeight + layout.saveHeight +
-                                        layout.previewHeight + buttonPadding * 3;
+                                        layout.previewHeight + layout.detectionHeight + buttonPadding * 4;
     const uint32_t barBlockHeight = 12 * (layout.barHeight + layout.rowSpacing);
     const uint32_t minButtonY = layout.barYStart + barBlockHeight + 20;
     uint32_t buttonStartY =
@@ -380,6 +381,11 @@ bool buildGradingOverlay(Engine* engine,
     layout.previewX1 = layout.previewX0 + layout.previewWidth;
     layout.previewY0 = layout.saveY1 + buttonPadding;
     layout.previewY1 = layout.previewY0 + layout.previewHeight;
+
+    layout.detectionX0 = centerButtonX(layout.detectionWidth);
+    layout.detectionX1 = layout.detectionX0 + layout.detectionWidth;
+    layout.detectionY0 = layout.previewY1 + buttonPadding;
+    layout.detectionY1 = layout.detectionY0 + layout.detectionHeight;
 
     auto drawButton = [&](uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, const char* text) {
         drawRect(pixels, layout.width, layout.height, x0, y0, x0 + w, y0 + h, 70, 70, 70, 255);
@@ -417,6 +423,12 @@ bool buildGradingOverlay(Engine* engine,
                layout.previewWidth,
                layout.previewHeight,
                previewEnabled ? "Preview On" : "Preview Off");
+    
+    drawButton(layout.detectionX0,
+               layout.detectionY0,
+               layout.detectionWidth,
+               layout.detectionHeight,
+               detectionEnabled ? "Detection On" : "Detection Off");
 
     const uint32_t overlayX = (fbWidth > layout.width) ? (fbWidth - layout.width) / 2 : 0;
     const uint32_t overlayY = (fbHeight > layout.height + layout.margin) ? fbHeight - layout.height - layout.margin : 0;
@@ -449,7 +461,8 @@ bool handleOverlayClick(const SliderLayout& layout,
                         bool rightClick,
                         bool* loadRequested,
                         bool* saveRequested,
-                        bool* previewToggleRequested)
+                        bool* previewToggleRequested,
+                        bool* detectionToggleRequested)
 {
     const double relX = cursorX - static_cast<double>(layout.offset.x);
     const double relY = cursorY - static_cast<double>(layout.offset.y);
@@ -579,6 +592,15 @@ bool handleOverlayClick(const SliderLayout& layout,
         if (previewToggleRequested)
         {
             *previewToggleRequested = true;
+        }
+        return true;
+    }
+    // Detection button hit test
+    if (relX >= layout.detectionX0 && relX <= layout.detectionX1 && relY >= layout.detectionY0 && relY <= layout.detectionY1)
+    {
+        if (detectionToggleRequested)
+        {
+            *detectionToggleRequested = true;
         }
         return true;
     }

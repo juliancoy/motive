@@ -475,6 +475,7 @@ int main(int argc, char** argv)
     int lastGradingSlider = -1;
     auto lastGradingClickTime = std::chrono::steady_clock::time_point{};
     bool gradingPreviewEnabled = true;
+    bool detectionEnabled = false;
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
@@ -733,6 +734,7 @@ int main(int argc, char** argv)
             bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
+            bool detectionToggle = false;
             const bool rightClick = (gradingMouseState == GLFW_PRESS &&
                                      glfwGetMouseButton(gradingDisplay->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
             if (grading::handleOverlayClick(gradingLayout,
@@ -743,7 +745,8 @@ int main(int argc, char** argv)
                                             rightClick,
                                             &loadRequested,
                                             &saveRequested,
-                                            &previewToggle))
+                                            &previewToggle,
+                                            &detectionToggle))
             {
                 gradingOverlayDirty = true;
                 curveDirty = true;
@@ -766,6 +769,10 @@ int main(int argc, char** argv)
                     gradingPreviewEnabled = !gradingPreviewEnabled;
                     curveDirty = true;
                 }
+                if (detectionToggle)
+                {
+                    detectionEnabled = !detectionEnabled;
+                }
             }
 
             lastGradingSlider = hitIndex;
@@ -780,6 +787,7 @@ int main(int argc, char** argv)
             bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
+            bool detectionToggle = false;
             if (grading::handleOverlayClick(gradingLayout,
                                             gx,
                                             gy,
@@ -788,7 +796,8 @@ int main(int argc, char** argv)
                                             /*rightClick=*/false,
                                             &loadRequested,
                                             &saveRequested,
-                                            &previewToggle))
+                                            &previewToggle,
+                                            &detectionToggle))
             {
                 gradingOverlayDirty = true;
                 curveDirty = true;
@@ -809,6 +818,10 @@ int main(int argc, char** argv)
                 if (previewToggle)
                 {
                     gradingPreviewEnabled = !gradingPreviewEnabled;
+                }
+                if (detectionToggle)
+                {
+                    detectionEnabled = !detectionEnabled;
                 }
             }
         }
@@ -826,6 +839,7 @@ int main(int argc, char** argv)
             bool loadRequested = false;
             bool saveRequested = false;
             bool previewToggle = false;
+            bool detectionToggle = false;
             if (grading::handleOverlayClick(gradingLayout,
                                             gx,
                                             gy,
@@ -834,7 +848,8 @@ int main(int argc, char** argv)
                                             /*rightClick=*/true,
                                             &loadRequested,
                                             &saveRequested,
-                                            &previewToggle))
+                                            &previewToggle,
+                                            &detectionToggle))
             {
                 gradingOverlayDirty = true;
                 curveDirty = true;
@@ -855,6 +870,10 @@ int main(int argc, char** argv)
                 if (previewToggle)
                 {
                     gradingPreviewEnabled = !gradingPreviewEnabled;
+                }
+                if (detectionToggle)
+                {
+                    detectionEnabled = !detectionEnabled;
                 }
             }
             gradingRightHeld = true;
@@ -915,7 +934,8 @@ int main(int argc, char** argv)
                                                                gradingFbWidth,
                                                                gradingFbHeight,
                                                                gradingLayout,
-                                                               gradingPreviewEnabled);
+                                                               gradingPreviewEnabled,
+                                                               detectionEnabled);
             gradingOverlayInfo.overlay.sampler = playbackState.overlay.sampler;
         }
         if (display)

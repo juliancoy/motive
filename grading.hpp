@@ -74,6 +74,13 @@ struct SliderLayout
     uint32_t previewY1 = 0;
     uint32_t previewWidth = 160;
     uint32_t previewHeight = 36;
+    // Detection overlay button bounds
+    uint32_t detectionX0 = 0;
+    uint32_t detectionY0 = 0;
+    uint32_t detectionX1 = 0;
+    uint32_t detectionY1 = 0;
+    uint32_t detectionWidth = 180;
+    uint32_t detectionHeight = 36;
 };
 
 // Build/update the grading overlay texture based on current settings; places it centered at bottom.
@@ -84,7 +91,8 @@ bool buildGradingOverlay(Engine* engine,
                          uint32_t fbWidth,
                          uint32_t fbHeight,
                          SliderLayout& layout,
-                         bool previewEnabled);
+                         bool previewEnabled,
+                         bool detectionEnabled = false);
 
 // Map a click within the overlay to one of the slider values. Returns true if a value changed.
 bool handleOverlayClick(const SliderLayout& layout,
@@ -95,7 +103,8 @@ bool handleOverlayClick(const SliderLayout& layout,
                         bool rightClick = false,
                         bool* loadRequested = nullptr,
                         bool* saveRequested = nullptr,
-                        bool* previewToggleRequested = nullptr);
+                        bool* previewToggleRequested = nullptr,
+                        bool* detectionToggleRequested = nullptr);
 
 void setGradingDefaults(GradingSettings& settings);
 bool loadGradingSettings(const std::filesystem::path& path, GradingSettings& settings);
