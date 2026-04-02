@@ -18,6 +18,7 @@
 #include <cstring>
 #include <sstream>
 #include <deque>
+#include <dlfcn.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -28,12 +29,19 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/hwcontext_vulkan.h>
+#include <libavutil/version.h>
 }
 
 namespace {
 
 using video::DecodeImplementation;
 using video::VideoDecoder;
+
+#if defined(LIBAVUTIL_VERSION_INT)
+#define MOTIVE_HAVE_FFMPEG_VK_SYNC_FIELDS (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(58, 2, 100))
+#else
+#define MOTIVE_HAVE_FFMPEG_VK_SYNC_FIELDS 0
+#endif
 
 std::string ffmpegErrorString(int errnum)
 {
@@ -73,6 +81,16 @@ const char* pixelFormatName(AVPixelFormat fmt)
 {
     const char* name = av_get_pix_fmt_name(fmt);
     return name ? name : "unknown";
+}
+
+const VkFormat* tryGetVkFormats(AVPixelFormat fmt)
+{
+    using VkFormatFn = const VkFormat* (*)(AVPixelFormat);
+    static VkFormatFn fn = []() -> VkFormatFn {
+        void* symbol = dlsym(RTLD_DEFAULT, "av_vkfmt_from_pixfmt");
+        return reinterpret_cast<VkFormatFn>(symbol);
+    }();
+    return fn ? fn(fmt) : nullptr;
 }
 
 int interrupt_callback(void* opaque)
@@ -225,7 +243,9 @@ bool trySetupHardwareDecoder(VideoDecoder& decoder,
 
         AVHWDeviceContext* devCtx = reinterpret_cast<AVHWDeviceContext*>(hwDeviceCtx->data);
         auto* vkctx = reinterpret_cast<AVVulkanDeviceContext*>(devCtx->hwctx);
+#if MOTIVE_HAVE_FFMPEG_VK_SYNC_FIELDS
         vkctx->get_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+#endif
         vkctx->inst = vulkanInterop->instance;
         vkctx->phys_dev = vulkanInterop->physicalDevice;
         vkctx->act_dev = vulkanInterop->device;
@@ -691,7 +711,7 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame, bool cop
                         decodedFrame.vkSurface.valid = true;
                         decodedFrame.vkSurface.width = static_cast<uint32_t>(decoder.frame->width);
                         decodedFrame.vkSurface.height = static_cast<uint32_t>(decoder.frame->height);
-                        const VkFormat* vkFormats = av_vkfmt_from_pixfmt(decoder.codecCtx->sw_pix_fmt);
+                        const VkFormat* vkFormats = tryGetVkFormats(decoder.codecCtx->sw_pix_fmt);
                         const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(decoder.codecCtx->sw_pix_fmt);
                         uint32_t planes = desc ? desc->nb_components : 0;
                         planes = std::min<uint32_t>(planes, 2u);
@@ -701,8 +721,13 @@ bool decodeNextFrame(VideoDecoder& decoder, DecodedFrame& decodedFrame, bool cop
                             decodedFrame.vkSurface.images[i] = vkf->img[i];
                             decodedFrame.vkSurface.layouts[i] = vkf->layout[i];
                             decodedFrame.vkSurface.semaphores[i] = vkf->sem[i];
+#if MOTIVE_HAVE_FFMPEG_VK_SYNC_FIELDS
                             decodedFrame.vkSurface.semaphoreValues[i] = vkf->sem_value[i];
                             decodedFrame.vkSurface.queueFamily[i] = vkf->queue_family[i];
+#else
+                            decodedFrame.vkSurface.semaphoreValues[i] = 0;
+                            decodedFrame.vkSurface.queueFamily[i] = 0;
+#endif
                             decodedFrame.vkSurface.planeFormats[i] = vkFormats ? vkFormats[i] : VK_FORMAT_UNDEFINED;
                         }
                     }

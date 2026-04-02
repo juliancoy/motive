@@ -881,6 +881,19 @@ void RenderDevice::createLogicalDevice()
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice) != VK_SUCCESS)
     {
+        const bool isCpuDevice = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+        const std::string deviceName = props.deviceName ? std::string(props.deviceName) : std::string();
+        const bool isSoftware = deviceName.find("llvmpipe") != std::string::npos ||
+                                deviceName.find("softpipe") != std::string::npos;
+        if (isCpuDevice || isSoftware)
+        {
+            std::cerr << "[RenderDevice] Vulkan device creation failed using a software ICD ("
+                      << deviceName << ")." << std::endl;
+            std::cerr << "[RenderDevice] Install a hardware Vulkan driver and retry. Examples:" << std::endl;
+            std::cerr << "  - Intel/AMD (Mesa): sudo apt-get install mesa-vulkan-drivers" << std::endl;
+            std::cerr << "  - NVIDIA: install the proprietary driver package (e.g. nvidia-driver-XXX)" << std::endl;
+            std::cerr << "  - Verify with: vulkaninfo" << std::endl;
+        }
         throw std::runtime_error("Failed to create logical device");
     }
 

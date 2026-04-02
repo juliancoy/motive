@@ -18,6 +18,71 @@ def pkg_config_flags(*packages, mode):
         sys.exit(result.returncode)
     return result.stdout.strip()
 
+def pkg_config_exists(package):
+    result = subprocess.run(
+        ["pkg-config", "--exists", package],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+def try_pkg_config_flags(*packages, mode):
+    cmd = ["pkg-config", mode, *packages]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+def try_qt6_fallback_flags():
+    include_root_candidates = [
+        "/usr/include/x86_64-linux-gnu/qt6",
+        "/usr/local/include/qt6",
+        "/usr/include/qt6",
+    ]
+    lib_dir_candidates = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/local/lib",
+    ]
+
+    include_root = next((p for p in include_root_candidates if os.path.isdir(p)), None)
+    lib_dir = next((p for p in lib_dir_candidates if os.path.isdir(p)), None)
+    if not include_root or not lib_dir:
+        return None, None
+
+    required_headers = [
+        os.path.join(include_root, "QtWidgets", "QApplication"),
+        os.path.join(include_root, "QtGui", "QWindow"),
+        os.path.join(include_root, "QtCore", "QObject"),
+    ]
+    if not all(os.path.exists(p) for p in required_headers):
+        return None, None
+
+    required_libs = [
+        os.path.join(lib_dir, "libQt6Widgets.so"),
+        os.path.join(lib_dir, "libQt6Gui.so"),
+        os.path.join(lib_dir, "libQt6Core.so"),
+    ]
+    if not all(os.path.exists(p) for p in required_libs):
+        return None, None
+
+    include_flags = " ".join(
+        f"-I{p}"
+        for p in [
+            include_root,
+            os.path.join(include_root, "QtWidgets"),
+            os.path.join(include_root, "QtGui"),
+            os.path.join(include_root, "QtCore"),
+        ]
+    )
+    link_flags = f"-L{lib_dir} -lQt6Widgets -lQt6Gui -lQt6Core"
+    return include_flags, link_flags
+
+# Allow fallbacks when library names differ between static builds and system packages.
+LIB_ALIASES = {
+    "glfw3": ["glfw"],
+}
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Build the Motive engine')
 parser.add_argument('--rebuild', action='store_true', help='Force rebuild all files, ignoring timestamps')
@@ -79,18 +144,18 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "common_vv/libs")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/include")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/libs")),
-    os.path.abspath(os.path.join(this_dir, "ncnn/include")),
-    os.path.abspath(os.path.join(this_dir, "ncnn/src")),
-    os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
+    # ncnn integration optional; keep out of default include paths.
 ]
+for system_include in ("/usr/include/freetype2", "/usr/local/include/freetype2"):
+    if os.path.isdir(system_include):
+        include_paths.append(system_include)
 ffmpeg_lib_dir = os.path.join(ffmpeg_install_dir, "lib")
 lib_paths = [
     os.path.join(vulkan_sdk_path, "lib"),
     os.path.abspath(os.path.join(this_dir, "glfw/build/src")),
     ffmpeg_lib_dir,
     os.path.abspath(os.path.join(this_dir, "freetype/build")),
-    os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
-    os.path.abspath(os.path.join(this_dir, "ncnn/build/glslang/glslang")),
+    # ncnn integration optional; keep out of default library paths.
     os.path.abspath(os.path.join(this_dir, ".")),
 ]
 core_libraries = [
@@ -103,7 +168,7 @@ core_libraries = [
     "avutil",
     "swresample",
     "freetype",
-    "ncnn",
+    # "ncnn" (optional; enable only when built/installed)
     "glslang",
     "glslang-default-resource-limits",
     "m",
@@ -137,49 +202,50 @@ def resolve_library(lib_name):
     We prefer the standard -l flag when available; otherwise fall back to a
     versioned .so path returned by ldconfig.
     """
-    # First check whether the compiler can already see the library.
-    for ext in (".so", ".a"):
-        result = subprocess.run(
-            ["g++", f"-print-file-name=lib{lib_name}{ext}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        path = result.stdout.strip()
-        if path and path != f"lib{lib_name}{ext}" and os.path.exists(path):
-            return f"-l{lib_name}"
+    for name in [lib_name] + LIB_ALIASES.get(lib_name, []):
+        # First check whether the compiler can already see the library.
+        for ext in (".so", ".a"):
+            result = subprocess.run(
+                ["g++", f"-print-file-name=lib{name}{ext}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            path = result.stdout.strip()
+            if path and path != f"lib{name}{ext}" and os.path.exists(path):
+                return f"-l{name}"
 
-    # Next, look through the configured library paths explicitly.
-    for base in lib_paths:
-        for ext in (".a", ".so"):
-            candidate = os.path.join(base, f"lib{lib_name}{ext}")
-            if os.path.exists(candidate):
-                return candidate
+        # Next, look through the configured library paths explicitly.
+        for base in lib_paths:
+            for ext in (".a", ".so"):
+                candidate = os.path.join(base, f"lib{name}{ext}")
+                if os.path.exists(candidate):
+                    return candidate
 
-    # Finally, consult ldconfig for a versioned shared object.
-    if shutil.which("ldconfig"):
-        pattern = re.compile(rf"lib{re.escape(lib_name)}[\w\-]*\.so")
-        ldconfig_out = subprocess.run(
-            ["ldconfig", "-p"], capture_output=True, text=True, check=False
-        ).stdout
-        for line in ldconfig_out.splitlines():
-            if "=>" not in line:
-                continue
-            tokens = line.strip().split()
-            if not tokens:
-                continue
-            soname = tokens[0]
-            prefix = f"lib{lib_name}"
-            if not soname.startswith(prefix):
-                continue
-            suffix = soname[len(prefix) :]
-            if suffix and suffix[0] not in ".0123456789":
-                continue
-            if not pattern.search(soname):
-                continue
-            candidate = line.split("=>")[-1].strip()
-            if os.path.exists(candidate):
-                return candidate
+        # Finally, consult ldconfig for a versioned shared object.
+        if shutil.which("ldconfig"):
+            pattern = re.compile(rf"lib{re.escape(name)}[\w\-]*\.so")
+            ldconfig_out = subprocess.run(
+                ["ldconfig", "-p"], capture_output=True, text=True, check=False
+            ).stdout
+            for line in ldconfig_out.splitlines():
+                if "=>" not in line:
+                    continue
+                tokens = line.strip().split()
+                if not tokens:
+                    continue
+                soname = tokens[0]
+                prefix = f"lib{name}"
+                if not soname.startswith(prefix):
+                    continue
+                suffix = soname[len(prefix) :]
+                if suffix and suffix[0] not in ".0123456789":
+                    continue
+                if not pattern.search(soname):
+                    continue
+                candidate = line.split("=>")[-1].strip()
+                if os.path.exists(candidate):
+                    return candidate
 
     return None
 
@@ -215,8 +281,30 @@ def collect_link_args(required_libs, optional_libs):
 
 library_link_args = collect_link_args(core_libraries, optional_libraries)
 qt_packages = ["Qt6Widgets", "Qt6Gui", "Qt6Core"]
-qt_include_flags = pkg_config_flags(*qt_packages, mode="--cflags")
-qt_link_flags = pkg_config_flags(*qt_packages, mode="--libs")
+qt_include_flags = try_pkg_config_flags(*qt_packages, mode="--cflags")
+qt_link_flags = try_pkg_config_flags(*qt_packages, mode="--libs")
+if qt_include_flags is None or qt_link_flags is None:
+    fallback_include, fallback_link = try_qt6_fallback_flags()
+    if fallback_include and fallback_link:
+        qt_include_flags = fallback_include
+        qt_link_flags = fallback_link
+qt_enabled = qt_include_flags is not None and qt_link_flags is not None
+if not qt_enabled:
+    print("Qt6 pkg-config metadata not found; skipping Qt editor build.")
+    qt_include_flags = ""
+    qt_link_flags = ""
+    qt_main_sources = []
+    qt_main_objects = []
+    so_sources = [src for src in so_sources if not src.startswith("engine_ui_")]
+    so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
+
+ffmpeg_packages = ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]
+missing_ffmpeg = [pkg for pkg in ffmpeg_packages if not pkg_config_exists(pkg)]
+if missing_ffmpeg:
+    missing_list = ", ".join(missing_ffmpeg)
+    print("Missing FFmpeg development packages (via pkg-config):", missing_list, file=sys.stderr)
+    print("Install with: sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev", file=sys.stderr)
+    sys.exit(1)
 
 # Manifest helpers
 def load_manifest():
