@@ -9,6 +9,15 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import pathlib
 
+def pkg_config_flags(*packages, mode):
+    cmd = ["pkg-config", mode, *packages]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        package_list = ", ".join(packages)
+        print(f"Missing pkg-config metadata for: {package_list}", file=sys.stderr)
+        sys.exit(result.returncode)
+    return result.stdout.strip()
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Build the Motive engine')
 parser.add_argument('--rebuild', action='store_true', help='Force rebuild all files, ignoring timestamps')
@@ -23,19 +32,26 @@ manifest_path = os.path.join(this_dir, ".build_manifest.json")
 ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
-main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp", "motive2d_yolo.cpp"]
-exclude_sources = ["vulkan_video_bridge.cpp"]  # missing Vulkan-Video-Samples libraries
+main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+qt_main_sources = ["engine_ui_motive_editor_main.cpp"]
+exclude_sources = [
+    "brain_viewer_engine.cpp",  # currently does not match the main engine APIs
+    "vulkan_video_bridge.cpp",  # missing Vulkan-Video-Samples libraries
+]
 so_sources = []
 for file in os.listdir(this_dir):
-    if file.endswith(".cpp") and file not in main_sources and file not in exclude_sources:
+    if (
+        file.endswith(".cpp")
+        and file not in main_sources
+        and file not in qt_main_sources
+        and file not in exclude_sources
+        and not file.startswith("editor_ref_")
+    ):
         so_sources.append(file)
-# Ensure detection.cpp and overlay_yolo.cpp are included
-if "detection.cpp" not in so_sources:
-    so_sources.append("detection.cpp")
-if "overlay_yolo.cpp" not in so_sources:
-    so_sources.append("overlay_yolo.cpp")
+        
 so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 main_objects = [f"{os.path.splitext(f)[0]}.o" for f in main_sources]
+qt_main_objects = [f"{os.path.splitext(f)[0]}.o" for f in qt_main_sources]
 
 # Sample Vulkan Video sources (decoder/parsers/utils)
 vv_common_sources = [
@@ -52,6 +68,8 @@ include_paths = [
     os.path.join(vulkan_sdk_path, "include"),
     os.path.abspath(os.path.join(this_dir, "glfw/include")),
     os.path.abspath(os.path.join(this_dir, "tinygltf")),
+    os.path.abspath(os.path.join(this_dir, "tinygltf/examples/common/imgui")),
+    os.path.abspath(os.path.join(this_dir, "imgui")),
     os.path.abspath(os.path.join(this_dir, "glm")),
     os.path.join(ffmpeg_install_dir, "include"),
     os.path.abspath(os.path.join(this_dir, "freetype/include")),
@@ -72,6 +90,7 @@ lib_paths = [
     ffmpeg_lib_dir,
     os.path.abspath(os.path.join(this_dir, "freetype/build")),
     os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/build/glslang/glslang")),
     os.path.abspath(os.path.join(this_dir, ".")),
 ]
 core_libraries = [
@@ -85,9 +104,12 @@ core_libraries = [
     "swresample",
     "freetype",
     "ncnn",
+    "glslang",
+    "glslang-default-resource-limits",
     "m",
     "pthread",
     "dl",
+    "gomp",
 ]
 
 # Optional libraries may not be present on every system; include them only if
@@ -192,6 +214,9 @@ def collect_link_args(required_libs, optional_libs):
 
 
 library_link_args = collect_link_args(core_libraries, optional_libraries)
+qt_packages = ["Qt6Widgets", "Qt6Gui", "Qt6Core"]
+qt_include_flags = pkg_config_flags(*qt_packages, mode="--cflags")
+qt_link_flags = pkg_config_flags(*qt_packages, mode="--libs")
 
 # Manifest helpers
 def load_manifest():
@@ -267,6 +292,8 @@ def compile_cpp_to_o(src_file):
     extra_flags = ""
     if "detection" in src_file or "overlay_yolo" in src_file or "motive2d_yolo" in src_file:
         extra_flags = "-DNCNN_AVAILABLE -DNCNN_USE_VULKAN=0"
+    if src_file.startswith("engine_ui_"):
+        extra_flags = f"{extra_flags} {qt_include_flags}".strip()
     
     cmd = f"g++ -std=c++17 {debug_flags} {sanitize_flags} -fPIC -c {include_flags} {extra_flags} {src_file} -o {obj_file}"
     print(f"Compiling {src_file}...")
@@ -278,7 +305,7 @@ def compile_cpp_to_o(src_file):
     return True
 
 
-all_sources = so_sources + main_sources + vv_sources
+all_sources = so_sources + main_sources + qt_main_sources + vv_sources
 with ThreadPoolExecutor() as executor:
     changed_list = list(executor.map(compile_cpp_to_o, all_sources))
 
@@ -314,6 +341,30 @@ for src, obj in zip(main_sources, main_objects):
                 break
     if REBUILD or need_link:
         main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
+        print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
+        main_link_result = subprocess.run(main_link_cmd, shell=True)
+        if main_link_result.returncode != 0:
+            print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
+            sys.exit(main_link_result.returncode)
+    else:
+        print(f"\nExecutable {binary_name} up to date.")
+
+# Link Qt editor executable when needed
+for src, obj in zip(qt_main_sources, qt_main_objects):
+    binary_name = "motive_editor"
+    need_link = not os.path.exists(binary_name)
+    if not need_link and not REBUILD:
+        bin_mtime = os.path.getmtime(binary_name)
+        deps = [obj, "libengine.a"]
+        for dep in deps:
+            if os.path.exists(dep) and os.path.getmtime(dep) > bin_mtime:
+                need_link = True
+                break
+    if REBUILD or need_link:
+        main_link_cmd = (
+            f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine "
+            f"{lib_links} {qt_link_flags} -o {binary_name}"
+        )
         print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
         main_link_result = subprocess.run(main_link_cmd, shell=True)
         if main_link_result.returncode != 0:

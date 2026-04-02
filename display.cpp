@@ -34,12 +34,13 @@ void Display::createCommandPool()
 }
 
 
-Display::Display(Engine* engine, int width, int height, const char* title, bool disableCulling, bool use2DPipeline){
+Display::Display(Engine* engine, int width, int height, const char* title, bool disableCulling, bool use2DPipeline, bool embeddedMode){
     this->engine = engine;
     this->width = width;
     this->height = height;
     this->cullingDisabled = disableCulling;
     this->use2DPipeline = use2DPipeline;
+    this->embeddedMode = embeddedMode;
     fpsLastSampleTime = std::chrono::steady_clock::now();
     currentFps = 0.0f;
     fpsFrameCounter = 0;
@@ -503,6 +504,14 @@ void Display::createSwapchain() {
 
 void Display::createWindow(const char *title)
 {
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    if (embeddedMode)
+    {
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
+    }
     window = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window)
     {

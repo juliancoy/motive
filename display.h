@@ -25,7 +25,8 @@ public:
             int height = 600,
             const char* title = "Motive",
             bool disableCulling = false,
-            bool use2DPipeline = false);
+            bool use2DPipeline = false,
+            bool embeddedMode = false);
     ~Display();
     void createSwapchain();
     void createWindow(const char *title);
@@ -91,6 +92,7 @@ public:
     float currentFps = 0.0f;
     bool cullingDisabled = false;
     bool use2DPipeline = false;
+    bool embeddedMode = false;
 
     // Camera instance
     std::vector<Camera*> cameras;

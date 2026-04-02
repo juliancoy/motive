@@ -104,9 +104,9 @@ void Engine::addModel(std::unique_ptr<Model> model)
     models.push_back(std::move(model));
 }
 
-Display *Engine::createWindow(int width, int height, const char *title, bool disableCulling, bool use2DPipeline)
+Display *Engine::createWindow(int width, int height, const char *title, bool disableCulling, bool use2DPipeline, bool embeddedMode)
 {
-    Display *display = new Display(this, width, height, title, disableCulling, use2DPipeline);
+    Display *display = new Display(this, width, height, title, disableCulling, use2DPipeline, embeddedMode);
     displays.push_back(display);
     return display;
 }

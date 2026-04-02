@@ -121,6 +121,8 @@ struct CliOptions
     bool showInput = true;
     bool showRegion = true;
     bool showGrading = true;
+    bool firstFrameOnly = false;
+    bool poseMode = false;
 };
 
 CliOptions parseCliOptions(int argc, char** argv)
@@ -132,6 +134,8 @@ CliOptions parseCliOptions(int argc, char** argv)
     bool showInput = true;
     bool showRegion = true;
     bool showGrading = true;
+    bool firstFrameOnly = false;
+    bool poseMode = false;
     bool windowsSpecified = false;
     bool parsedInput = false;
     bool parsedRegion = false;
@@ -182,6 +186,14 @@ CliOptions parseCliOptions(int argc, char** argv)
         else if (arg == "--encode")
         {
             encode = true;
+        }
+        else if (arg == "--firstframe")
+        {
+            firstFrameOnly = true;
+        }
+        else if (arg == "--pose")
+        {
+            poseMode = true;
         }
         else if (arg.rfind("--windows", 0) == 0)
         {
@@ -249,7 +261,8 @@ CliOptions parseCliOptions(int argc, char** argv)
         showRegion = parsedRegion;
         showGrading = parsedGrading;
     }
-    return CliOptions{videoPath, swapUV, decodeOnly, encode, showInput, showRegion, showGrading};
+    return CliOptions{videoPath, swapUV, decodeOnly, encode, showInput, showRegion, showGrading,
+                     firstFrameOnly, poseMode};
 }
 
 
@@ -326,6 +339,15 @@ int main(int argc, char** argv)
 {
     parseDebugFlags(argc, argv);
     CliOptions cli = parseCliOptions(argc, argv);
+
+    if (cli.firstFrameOnly)
+    {
+        std::cout << "[Video2D] --firstframe enabled; exiting after the first frame is rendered.\n";
+    }
+    if (cli.poseMode)
+    {
+        std::cout << "[Pose] Pose mode enabled (stub) - YOLO pose coordinates will be emitted to stdout as placeholders.\n";
+    }
 
     if (cli.decodeOnly)
     {
@@ -475,7 +497,8 @@ int main(int argc, char** argv)
     int lastGradingSlider = -1;
     auto lastGradingClickTime = std::chrono::steady_clock::time_point{};
     bool gradingPreviewEnabled = true;
-    bool detectionEnabled = false;
+    bool detectionEnabled = cli.poseMode;
+    bool poseStubPrinted = false;
     auto fpsLastSample = std::chrono::steady_clock::now();
     int fpsFrameCounter = 0;
     float currentFps = 0.0f;
@@ -997,6 +1020,13 @@ int main(int argc, char** argv)
         playbackState.overlay.info.offset = {0, 0};
         playbackState.overlay.info.enabled = true;
 
+        if (cli.poseMode && !poseStubPrinted)
+        {
+            std::cout << "[Pose] YOLO pose coordinates (stub): head=(0.50,0.20), left_shoulder=(0.35,0.40), "
+                         "right_shoulder=(0.65,0.40), hip_center=(0.50,0.60)\n";
+            poseStubPrinted = true;
+        }
+
         // Render cropped region in secondary window
                 RenderOverrides overrides{};
                 const uint32_t vidW = playbackState.video.descriptors.width;
@@ -1078,6 +1108,12 @@ int main(int argc, char** argv)
                                         0.0f,
                                         &gradingOverrides,
                                         activeAdjustments);
+        }
+
+        if (cli.firstFrameOnly)
+        {
+            std::cout << "[Video2D] --firstframe completed; exiting after the current frame.\n";
+            break;
         }
     }
 
