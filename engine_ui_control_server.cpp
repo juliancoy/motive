@@ -1,0 +1,325 @@
+#include "engine_ui_control_server.h"
+
+#include <QApplication>
+#include <QDebug>
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMetaObject>
+#include <QStringList>
+
+#include <cerrno>
+#include <cstring>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+namespace motive::ui {
+
+namespace {
+
+QString reasonPhrase(int statusCode)
+{
+    switch (statusCode)
+    {
+    case 200: return QStringLiteral("OK");
+    case 404: return QStringLiteral("Not Found");
+    case 405: return QStringLiteral("Method Not Allowed");
+    case 500: return QStringLiteral("Internal Server Error");
+    default: return QStringLiteral("Status");
+    }
+}
+
+QByteArray compactJson(const QJsonObject& object)
+{
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+QString invokeRootPathProvider(const std::function<QString()>& provider)
+{
+    QString rootPath;
+    if (!provider)
+    {
+        return QDir::currentPath();
+    }
+
+    const bool invoked = QMetaObject::invokeMethod(
+        qApp,
+        [&rootPath, &provider]()
+        {
+            rootPath = provider();
+        },
+        Qt::BlockingQueuedConnection);
+
+    if (!invoked || rootPath.isEmpty())
+    {
+        return QDir::currentPath();
+    }
+    return rootPath;
+}
+
+EngineUiControlServer::ProfileData invokeProfileDataProvider(const std::function<EngineUiControlServer::ProfileData()>& provider)
+{
+    EngineUiControlServer::ProfileData data;
+    if (!provider)
+    {
+        return data;
+    }
+
+    const bool invoked = QMetaObject::invokeMethod(
+        qApp,
+        [&data, &provider]()
+        {
+            data = provider();
+        },
+        Qt::BlockingQueuedConnection);
+
+    return data;
+}
+
+QJsonObject buildDirectoryListing(const QString& rootPath)
+{
+    const QDir rootDir(rootPath.isEmpty() ? QDir::currentPath() : rootPath);
+    const QString absoluteRoot = rootDir.absolutePath();
+    QJsonArray entries;
+
+    const QFileInfoList fileInfos = rootDir.entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot,
+        QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
+
+    for (const QFileInfo& info : fileInfos)
+    {
+        entries.append(QJsonObject{
+            {QStringLiteral("name"), info.fileName()},
+            {QStringLiteral("path"), info.absoluteFilePath()},
+            {QStringLiteral("is_dir"), info.isDir()},
+            {QStringLiteral("size"), static_cast<qint64>(info.size())}
+        });
+    }
+
+    return QJsonObject{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("root"), absoluteRoot},
+        {QStringLiteral("count"), entries.size()},
+        {QStringLiteral("entries"), entries}
+    };
+}
+
+}  // namespace
+
+EngineUiControlServer::EngineUiControlServer(std::function<QString()> rootPathProvider,
+                                             std::function<ProfileData()> profileDataProvider,
+                                             QObject* parent)
+    : QObject(parent),
+      m_rootPathProvider(std::move(rootPathProvider)),
+      m_profileDataProvider(std::move(profileDataProvider))
+{
+}
+
+EngineUiControlServer::~EngineUiControlServer()
+{
+    stop();
+}
+
+bool EngineUiControlServer::start(quint16 port)
+{
+    if (m_running.load())
+    {
+        qInfo() << "[EngineUiControlServer] start() ignored; already running on port" << m_port;
+        return false;
+    }
+
+    m_serverFd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (m_serverFd < 0)
+    {
+        qWarning() << "[EngineUiControlServer] socket() failed:" << strerror(errno);
+        return false;
+    }
+
+    int reuse = 1;
+    ::setsockopt(m_serverFd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    if (::bind(m_serverFd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
+    {
+        qWarning() << "[EngineUiControlServer] bind() failed on port" << port << ":" << strerror(errno);
+        ::close(m_serverFd);
+        m_serverFd = -1;
+        return false;
+    }
+
+    if (::listen(m_serverFd, 8) != 0)
+    {
+        qWarning() << "[EngineUiControlServer] listen() failed on port" << port << ":" << strerror(errno);
+        ::close(m_serverFd);
+        m_serverFd = -1;
+        return false;
+    }
+
+    m_port = port;
+    m_running.store(true);
+    m_thread = std::make_unique<std::thread>(&EngineUiControlServer::run, this);
+    qInfo() << "[EngineUiControlServer] Initialized on http://127.0.0.1:" << port;
+    return true;
+}
+
+void EngineUiControlServer::stop()
+{
+    if (!m_running.exchange(false))
+    {
+        return;
+    }
+
+    if (m_serverFd >= 0)
+    {
+        ::shutdown(m_serverFd, SHUT_RDWR);
+        ::close(m_serverFd);
+        m_serverFd = -1;
+    }
+
+    if (m_thread && m_thread->joinable())
+    {
+        m_thread->join();
+    }
+    m_thread.reset();
+}
+
+void EngineUiControlServer::run()
+{
+    while (m_running.load())
+    {
+        const int clientFd = ::accept(m_serverFd, nullptr, nullptr);
+        if (clientFd < 0)
+        {
+            if (m_running.load())
+            {
+                qWarning() << "[EngineUiControlServer] accept() failed:" << strerror(errno);
+            }
+            continue;
+        }
+
+        handleClient(clientFd);
+        ::close(clientFd);
+    }
+}
+
+void EngineUiControlServer::handleClient(int clientFd) const
+{
+    char buffer[8192];
+    const ssize_t bytesRead = ::recv(clientFd, buffer, sizeof(buffer), 0);
+    if (bytesRead <= 0)
+    {
+        return;
+    }
+
+    const QByteArray request(buffer, static_cast<int>(bytesRead));
+    const QByteArray response = buildResponse(request);
+    if (!response.isEmpty())
+    {
+        ::send(clientFd, response.constData(), static_cast<size_t>(response.size()), 0);
+    }
+}
+
+QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
+{
+    const QList<QByteArray> lines = request.split('\n');
+    if (lines.isEmpty())
+    {
+        return jsonResponse(500, compactJson(QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("invalid request")}
+        }));
+    }
+
+    const QList<QByteArray> requestLine = lines.first().trimmed().split(' ');
+    if (requestLine.size() < 2)
+    {
+        return jsonResponse(500, compactJson(QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("invalid request line")}
+        }));
+    }
+
+    const QByteArray method = requestLine.at(0);
+    const QByteArray path = requestLine.at(1);
+
+    if (method != "GET")
+    {
+        return jsonResponse(405, compactJson(QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("method not allowed")}
+        }));
+    }
+
+    if (path == "/health")
+    {
+        return jsonResponse(200, compactJson(QJsonObject{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("port"), static_cast<int>(m_port)}
+        }));
+    }
+
+    if (path == "/ls" || path == "/root-ls")
+    {
+        const QString rootPath = invokeRootPathProvider(m_rootPathProvider);
+        return jsonResponse(200, compactJson(buildDirectoryListing(rootPath)));
+    }
+
+    if (path == "/profile/status")
+    {
+        return jsonResponse(200, compactJson(QJsonObject{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("application"), QStringLiteral("MotiveEditor")},
+            {QStringLiteral("port"), static_cast<int>(m_port)}
+        }));
+    }
+
+    if (path == "/profile/scene")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonArray cameraPosArray;
+        cameraPosArray.append(data.cameraPosition.x());
+        cameraPosArray.append(data.cameraPosition.y());
+        cameraPosArray.append(data.cameraPosition.z());
+        
+        QJsonArray cameraRotArray;
+        cameraRotArray.append(data.cameraRotation.x());
+        cameraRotArray.append(data.cameraRotation.y());
+        cameraRotArray.append(data.cameraRotation.z());
+        
+        return jsonResponse(200, compactJson(QJsonObject{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("rootPath"), data.rootPath},
+            {QStringLiteral("sceneItemCount"), data.sceneItemCount},
+            {QStringLiteral("sceneItems"), QJsonArray::fromVariantList(QVariantList(data.sceneItems.begin(), data.sceneItems.end()))},
+            {QStringLiteral("cameraPosition"), cameraPosArray},
+            {QStringLiteral("cameraRotation"), cameraRotArray}
+        }));
+    }
+
+    return jsonResponse(404, compactJson(QJsonObject{
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), QStringLiteral("not found")}
+    }));
+}
+
+QByteArray EngineUiControlServer::jsonResponse(int statusCode, const QByteArray& body) const
+{
+    QByteArray response;
+    response += "HTTP/1.1 " + QByteArray::number(statusCode) + " " + reasonPhrase(statusCode).toUtf8() + "\r\n";
+    response += "Content-Type: application/json\r\n";
+    response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+    response += "Connection: close\r\n\r\n";
+    response += body;
+    return response;
+}
+
+}  // namespace motive::ui

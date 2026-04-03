@@ -3,6 +3,9 @@
 #endif
 #include "model.h"
 #include "engine.h"
+#include <QFileInfo>
+#include <QImage>
+#include <QByteArray>
 #include <glm/glm.hpp>
 #include <memory>
 #include <numeric>
@@ -12,8 +15,16 @@
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
+#include <cctype>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
+
+#include "ufbx.h"
+#include "stb_image.h"
+
+#include <vector>
 
 namespace
 {
@@ -22,6 +33,553 @@ struct InstanceGpuData
     glm::vec4 offset = glm::vec4(0.0f);
     glm::vec4 rotation = glm::vec4(0.0f);
 };
+
+bool hasExtension(const std::string& path, const char* ext)
+{
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return std::filesystem::path(lower).extension() == ext;
+}
+
+glm::vec3 toGlmVec3(ufbx_vec3 value)
+{
+    return glm::vec3(static_cast<float>(value.x),
+                     static_cast<float>(value.y),
+                     static_cast<float>(value.z));
+}
+
+glm::vec2 toGlmVec2(ufbx_vec2 value)
+{
+    return glm::vec2(static_cast<float>(value.x),
+                     static_cast<float>(value.y));
+}
+
+glm::vec4 materialMapColor(const ufbx_material_map& map)
+{
+    switch (map.value_components)
+    {
+    case 4:
+        return glm::vec4(static_cast<float>(map.value_vec4.x),
+                         static_cast<float>(map.value_vec4.y),
+                         static_cast<float>(map.value_vec4.z),
+                         static_cast<float>(map.value_vec4.w));
+    case 3:
+        return glm::vec4(static_cast<float>(map.value_vec3.x),
+                         static_cast<float>(map.value_vec3.y),
+                         static_cast<float>(map.value_vec3.z),
+                         1.0f);
+    case 2:
+        return glm::vec4(static_cast<float>(map.value_vec2.x),
+                         static_cast<float>(map.value_vec2.y),
+                         1.0f,
+                         1.0f);
+    case 1:
+        return glm::vec4(static_cast<float>(map.value_real),
+                         static_cast<float>(map.value_real),
+                         static_cast<float>(map.value_real),
+                         1.0f);
+    default:
+        return glm::vec4(1.0f);
+    }
+}
+
+float materialMapScalar(const ufbx_material_map& map, float defaultValue = 1.0f)
+{
+    switch (map.value_components)
+    {
+    case 4:
+        return static_cast<float>(map.value_vec4.x);
+    case 3:
+        return static_cast<float>(map.value_vec3.x);
+    case 2:
+        return static_cast<float>(map.value_vec2.x);
+    case 1:
+        return static_cast<float>(map.value_real);
+    default:
+        return defaultValue;
+    }
+}
+
+float extractFbxMaterialAlpha(const ufbx_material* material)
+{
+    if (!material)
+    {
+        return 1.0f;
+    }
+
+    if (material->pbr.opacity.has_value)
+    {
+        return std::clamp(materialMapScalar(material->pbr.opacity, 1.0f), 0.0f, 1.0f);
+    }
+
+    if (material->fbx.transparency_factor.has_value)
+    {
+        const float transparency = std::clamp(materialMapScalar(material->fbx.transparency_factor, 0.0f), 0.0f, 1.0f);
+        return 1.0f - transparency;
+    }
+
+    if (material->fbx.transparency_color.has_value)
+    {
+        const glm::vec4 transparency = glm::clamp(materialMapColor(material->fbx.transparency_color), glm::vec4(0.0f), glm::vec4(1.0f));
+        return 1.0f - transparency.r;
+    }
+
+    return 1.0f;
+}
+
+bool extractFbxMaterialColor(const ufbx_mesh* mesh, glm::vec4& outColor)
+{
+    if (!mesh || mesh->materials.count == 0 || !mesh->materials.data)
+    {
+        return false;
+    }
+
+    const ufbx_material* material = mesh->materials.data[0];
+    if (!material)
+    {
+        return false;
+    }
+
+    if (material->pbr.base_color.has_value)
+    {
+        outColor = materialMapColor(material->pbr.base_color);
+        if (material->pbr.base_factor.has_value)
+        {
+            const float factor = static_cast<float>(material->pbr.base_factor.value_real);
+            outColor.r *= factor;
+            outColor.g *= factor;
+            outColor.b *= factor;
+        }
+        outColor.a = extractFbxMaterialAlpha(material);
+        outColor = glm::clamp(outColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        return true;
+    }
+
+    if (material->fbx.diffuse_color.has_value)
+    {
+        outColor = materialMapColor(material->fbx.diffuse_color);
+        if (material->fbx.diffuse_factor.has_value)
+        {
+            const float factor = static_cast<float>(material->fbx.diffuse_factor.value_real);
+            outColor.r *= factor;
+            outColor.g *= factor;
+            outColor.b *= factor;
+        }
+        outColor.a = extractFbxMaterialAlpha(material);
+        outColor = glm::clamp(outColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        return true;
+    }
+
+    return false;
+}
+
+QString ufbxStringToQString(ufbx_string value)
+{
+    return QString::fromUtf8(value.data, static_cast<qsizetype>(value.length));
+}
+
+bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
+{
+    if (!texture)
+    {
+        return false;
+    }
+
+    auto loadViaStbFromBytes = [&](const unsigned char* bytes, int size, const QString& sourceLabel) -> bool
+    {
+        if (!bytes || size <= 0)
+        {
+            return false;
+        }
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        stbi_uc* decoded = stbi_load_from_memory(bytes, size, &width, &height, &channels, STBI_rgb_alpha);
+        if (!decoded)
+        {
+            return false;
+        }
+
+        QImage image(decoded, width, height, QImage::Format_RGBA8888);
+        outImage = image.copy();
+        stbi_image_free(decoded);
+        if (!outImage.isNull())
+        {
+            std::cout << "[FBX] Loaded texture via stb_image fallback: "
+                      << sourceLabel.toStdString()
+                      << " (" << width << "x" << height << ")" << std::endl;
+            return true;
+        }
+        return false;
+    };
+
+    if (texture->content.data && texture->content.size > 0)
+    {
+        if (outImage.loadFromData(reinterpret_cast<const uchar*>(texture->content.data),
+                                  static_cast<int>(texture->content.size)))
+        {
+            return true;
+        }
+        if (loadViaStbFromBytes(reinterpret_cast<const unsigned char*>(texture->content.data),
+                                static_cast<int>(texture->content.size),
+                                QStringLiteral("<embedded>")))
+        {
+            return true;
+        }
+    }
+
+    const QStringList candidates = {
+        ufbxStringToQString(texture->filename),
+        ufbxStringToQString(texture->absolute_filename),
+        ufbxStringToQString(texture->relative_filename)
+    };
+
+    for (const QString& candidate : candidates)
+    {
+        if (candidate.isEmpty())
+        {
+            continue;
+        }
+
+        QImage image(candidate);
+        if (!image.isNull())
+        {
+            outImage = image;
+            return true;
+        }
+
+        std::ifstream file(candidate.toStdString(), std::ios::binary);
+        if (!file)
+        {
+            continue;
+        }
+        std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)),
+                                         std::istreambuf_iterator<char>());
+        if (bytes.empty())
+        {
+            continue;
+        }
+        if (loadViaStbFromBytes(bytes.data(),
+                                static_cast<int>(bytes.size()),
+                                candidate))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool applyFbxBaseColorTexture(Mesh& targetMesh, const ufbx_mesh* sourceMesh)
+{
+    if (targetMesh.primitives.empty() || !sourceMesh || sourceMesh->materials.count == 0 || !sourceMesh->materials.data)
+    {
+        return false;
+    }
+
+    const ufbx_material* material = sourceMesh->materials.data[0];
+    if (!material)
+    {
+        return false;
+    }
+
+    const ufbx_texture* texture = nullptr;
+    const ufbx_material_map* sourceMap = nullptr;
+    const ufbx_material_map* opacityMap = nullptr;
+    bool invertOpacityMap = false;
+    if (material->pbr.base_color.texture)
+    {
+        texture = material->pbr.base_color.texture;
+        sourceMap = &material->pbr.base_color;
+    }
+    else if (material->fbx.diffuse_color.texture)
+    {
+        texture = material->fbx.diffuse_color.texture;
+        sourceMap = &material->fbx.diffuse_color;
+    }
+
+    if (!texture || !sourceMap)
+    {
+        return false;
+    }
+
+    if (material->pbr.opacity.texture || material->pbr.opacity.has_value)
+    {
+        opacityMap = &material->pbr.opacity;
+    }
+    else if (material->fbx.transparency_factor.texture || material->fbx.transparency_factor.has_value)
+    {
+        opacityMap = &material->fbx.transparency_factor;
+        invertOpacityMap = true;
+    }
+
+    QImage image;
+    if (!loadImageFromUfbxTexture(texture, image) || image.isNull())
+    {
+        return false;
+    }
+
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+    if (image.isNull())
+    {
+        return false;
+    }
+
+    glm::vec4 factor = materialMapColor(*sourceMap);
+    if (sourceMap == &material->pbr.base_color && material->pbr.base_factor.has_value)
+    {
+        const float scalar = static_cast<float>(material->pbr.base_factor.value_real);
+        factor.r *= scalar;
+        factor.g *= scalar;
+        factor.b *= scalar;
+    }
+    if (sourceMap == &material->fbx.diffuse_color && material->fbx.diffuse_factor.has_value)
+    {
+        const float scalar = static_cast<float>(material->fbx.diffuse_factor.value_real);
+        factor.r *= scalar;
+        factor.g *= scalar;
+        factor.b *= scalar;
+    }
+    factor = glm::clamp(factor, glm::vec4(0.0f), glm::vec4(1.0f));
+
+    float opacityScalar = 1.0f;
+    QImage opacityImage;
+    if (opacityMap)
+    {
+        opacityScalar = std::clamp(materialMapScalar(*opacityMap, 1.0f), 0.0f, 1.0f);
+        if (invertOpacityMap)
+        {
+            opacityScalar = 1.0f - opacityScalar;
+        }
+        if (opacityMap->texture && loadImageFromUfbxTexture(opacityMap->texture, opacityImage) && !opacityImage.isNull())
+        {
+            opacityImage = opacityImage.convertToFormat(QImage::Format_RGBA8888);
+            if (opacityImage.size() != image.size())
+            {
+                opacityImage = opacityImage.scaled(image.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            }
+        }
+    }
+
+    for (int y = 0; y < image.height(); ++y)
+    {
+        uchar* scanline = image.scanLine(y);
+        const uchar* opacityScanline = opacityImage.isNull() ? nullptr : opacityImage.constScanLine(y);
+        for (int x = 0; x < image.width(); ++x)
+        {
+            uchar* pixel = scanline + (x * 4);
+            pixel[0] = static_cast<uchar>(std::clamp((pixel[0] / 255.0f) * factor.r, 0.0f, 1.0f) * 255.0f);
+            pixel[1] = static_cast<uchar>(std::clamp((pixel[1] / 255.0f) * factor.g, 0.0f, 1.0f) * 255.0f);
+            pixel[2] = static_cast<uchar>(std::clamp((pixel[2] / 255.0f) * factor.b, 0.0f, 1.0f) * 255.0f);
+            float alpha = (pixel[3] / 255.0f) * factor.a * opacityScalar;
+            if (opacityScanline)
+            {
+                const uchar* opacityPixel = opacityScanline + (x * 4);
+                float opacitySample = opacityPixel[0] / 255.0f;
+                if (invertOpacityMap)
+                {
+                    opacitySample = 1.0f - opacitySample;
+                }
+                alpha *= opacitySample;
+            }
+            pixel[3] = static_cast<uchar>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+        }
+    }
+
+    Primitive* primitive = targetMesh.primitives.front().get();
+    if (primitive->primitiveDescriptorSet == VK_NULL_HANDLE)
+    {
+        primitive->createTextureFromPixelData(
+            image.constBits(),
+            static_cast<size_t>(image.sizeInBytes()),
+            static_cast<uint32_t>(image.width()),
+            static_cast<uint32_t>(image.height()),
+            VK_FORMAT_R8G8B8A8_SRGB);
+    }
+    else
+    {
+        primitive->updateTextureFromPixelData(
+            image.constBits(),
+            static_cast<size_t>(image.sizeInBytes()),
+            static_cast<uint32_t>(image.width()),
+            static_cast<uint32_t>(image.height()),
+            VK_FORMAT_R8G8B8A8_SRGB);
+    }
+    const bool hasTransparency = !opacityImage.isNull() || factor.a < 0.999f || opacityScalar < 0.999f;
+    primitive->alphaMode = hasTransparency ? PrimitiveAlphaMode::Blend : PrimitiveAlphaMode::Opaque;
+    primitive->alphaCutoff = 0.5f;
+    return true;
+}
+
+void applyFbxMaterialColorFallback(Mesh& targetMesh, const ufbx_mesh* sourceMesh)
+{
+    if (targetMesh.primitives.empty())
+    {
+        return;
+    }
+
+    glm::vec4 color(1.0f);
+    if (!extractFbxMaterialColor(sourceMesh, color))
+    {
+        return;
+    }
+
+    const uint8_t rgba[4] = {
+        static_cast<uint8_t>(std::clamp(color.r, 0.0f, 1.0f) * 255.0f),
+        static_cast<uint8_t>(std::clamp(color.g, 0.0f, 1.0f) * 255.0f),
+        static_cast<uint8_t>(std::clamp(color.b, 0.0f, 1.0f) * 255.0f),
+        static_cast<uint8_t>(std::clamp(color.a, 0.0f, 1.0f) * 255.0f),
+    };
+
+    Primitive* primitive = targetMesh.primitives.front().get();
+    if (primitive->primitiveDescriptorSet == VK_NULL_HANDLE)
+    {
+        primitive->createTextureFromPixelData(
+            rgba,
+            sizeof(rgba),
+            1,
+            1,
+            VK_FORMAT_R8G8B8A8_SRGB);
+    }
+    else
+    {
+        primitive->updateTextureFromPixelData(
+            rgba,
+            sizeof(rgba),
+            1,
+            1,
+            VK_FORMAT_R8G8B8A8_SRGB);
+    }
+    primitive->alphaMode = color.a < 0.999f ? PrimitiveAlphaMode::Blend : PrimitiveAlphaMode::Opaque;
+    primitive->alphaCutoff = 0.5f;
+}
+
+std::vector<Vertex> buildVerticesFromFbxMesh(const ufbx_mesh* mesh)
+{
+    std::vector<Vertex> vertices;
+    if (!mesh || !mesh->vertex_position.exists)
+    {
+        return vertices;
+    }
+
+    std::vector<uint32_t> triIndices(mesh->max_face_triangles * 3);
+    vertices.reserve(mesh->num_triangles * 3);
+
+    for (size_t faceIndex = 0; faceIndex < mesh->faces.count; ++faceIndex)
+    {
+        const ufbx_face face = mesh->faces.data[faceIndex];
+        const uint32_t numTriangles = ufbx_triangulate_face(triIndices.data(), triIndices.size(), mesh, face);
+        for (uint32_t tri = 0; tri < numTriangles * 3; ++tri)
+        {
+            const size_t index = triIndices[tri];
+            Vertex vertex{};
+            vertex.pos = toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_position, index));
+            vertex.normal = mesh->vertex_normal.exists
+                ? toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
+                : glm::vec3(0.0f, 1.0f, 0.0f);
+            vertex.texCoord = mesh->vertex_uv.exists
+                ? toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index))
+                : glm::vec2(0.0f);
+            vertices.push_back(vertex);
+        }
+    }
+
+    return vertices;
+}
+
+bool extractVerticesAndIndicesFromGltfPrimitive(const tinygltf::Model& model,
+                                                const tinygltf::Primitive& primitive,
+                                                std::vector<Vertex>& outVertices,
+                                                std::vector<uint32_t>& outIndices)
+{
+    if (primitive.attributes.count("POSITION") == 0 ||
+        primitive.attributes.count("NORMAL") == 0 ||
+        primitive.attributes.count("TEXCOORD_0") == 0)
+    {
+        std::cerr << "Skipping primitive due to missing attributes.\n";
+        return false;
+    }
+
+    const auto& posAccessor = model.accessors[primitive.attributes.at("POSITION")];
+    const auto& normAccessor = model.accessors[primitive.attributes.at("NORMAL")];
+    const auto& texAccessor = model.accessors[primitive.attributes.at("TEXCOORD_0")];
+
+    const auto& posView = model.bufferViews[posAccessor.bufferView];
+    const auto& normView = model.bufferViews[normAccessor.bufferView];
+    const auto& texView = model.bufferViews[texAccessor.bufferView];
+
+    const float* positions = reinterpret_cast<const float*>(&model.buffers[posView.buffer].data[posView.byteOffset + posAccessor.byteOffset]);
+    const float* normals = reinterpret_cast<const float*>(&model.buffers[normView.buffer].data[normView.byteOffset + normAccessor.byteOffset]);
+    const float* texCoords = reinterpret_cast<const float*>(&model.buffers[texView.buffer].data[texView.byteOffset + texAccessor.byteOffset]);
+
+    if (posAccessor.count != normAccessor.count || posAccessor.count != texAccessor.count)
+    {
+        throw std::runtime_error("GLTF attribute counts mismatch.");
+    }
+
+    outVertices.resize(posAccessor.count);
+    for (size_t i = 0; i < posAccessor.count; ++i)
+    {
+        outVertices[i].pos = glm::vec3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+        outVertices[i].normal = glm::vec3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+        outVertices[i].texCoord = glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]);
+    }
+
+    if (primitive.indices >= 0)
+    {
+        const auto& indexAccessor = model.accessors[primitive.indices];
+        const auto& indexView = model.bufferViews[indexAccessor.bufferView];
+        const auto& indexBufferData = model.buffers[indexView.buffer];
+
+        const uint8_t* dataPtr = reinterpret_cast<const uint8_t*>(
+            &indexBufferData.data[indexView.byteOffset + indexAccessor.byteOffset]);
+
+        auto componentSize = [](int componentType) -> size_t {
+            switch (componentType)
+            {
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                return sizeof(uint8_t);
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                return sizeof(uint16_t);
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                return sizeof(uint32_t);
+            default:
+                throw std::runtime_error("Unsupported index component type in GLTF");
+            }
+        };
+
+        size_t stride = indexView.byteStride ? indexView.byteStride : componentSize(indexAccessor.componentType);
+        outIndices.resize(indexAccessor.count);
+
+        for (size_t i = 0; i < indexAccessor.count; ++i)
+        {
+            const uint8_t* elementPtr = dataPtr + i * stride;
+            switch (indexAccessor.componentType)
+            {
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                outIndices[i] = *reinterpret_cast<const uint8_t*>(elementPtr);
+                break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                outIndices[i] = *reinterpret_cast<const uint16_t*>(elementPtr);
+                break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                outIndices[i] = *reinterpret_cast<const uint32_t*>(elementPtr);
+                break;
+            default:
+                throw std::runtime_error("Unsupported index component type in GLTF");
+            }
+        }
+    }
+    else
+    {
+        outIndices.resize(outVertices.size());
+        std::iota(outIndices.begin(), outIndices.end(), 0u);
+    }
+
+    return true;
+}
 }
 
 VkVertexInputBindingDescription Vertex::getBindingDescription()
@@ -55,7 +613,7 @@ std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescription
     return attributeDescriptions;
 }
 
-Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vertices)
+Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vertices, bool initializeTextureResources)
     : engine(engine),
       mesh(mesh),
       vertexBuffer(VK_NULL_HANDLE),
@@ -113,8 +671,7 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
     vkCmdCopyBuffer(cmdBuffer, stagingBuffer, vertexBuffer, 1, &copyRegion);
     engine->endSingleTimeCommands(cmdBuffer);
 
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
 
     std::vector<uint32_t> sequentialIndices(vertexCount);
     std::iota(sequentialIndices.begin(), sequentialIndices.end(), 0);
@@ -141,7 +698,99 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, const std::vector<Vertex> &vert
     vkMapMemory(engine->logicalDevice, instanceDataBufferMemory, 0, instanceDataBufferSize, 0, &instanceDataBufferMapped);
     std::memset(instanceDataBufferMapped, 0, static_cast<size_t>(instanceDataBufferSize));
 
-    createTextureResources();
+    if (initializeTextureResources)
+    {
+        createTextureResources();
+    }
+}
+
+Primitive::Primitive(Engine *engine,
+                     Mesh *mesh,
+                     const std::vector<Vertex> &vertices,
+                     const std::vector<uint32_t> &indices,
+                     int materialIndex)
+    : engine(engine),
+      mesh(mesh),
+      vertexBuffer(VK_NULL_HANDLE),
+      vertexBufferMemory(VK_NULL_HANDLE),
+      vertexCount(static_cast<uint32_t>(vertices.size())),
+      indexBuffer(VK_NULL_HANDLE),
+      indexBufferMemory(VK_NULL_HANDLE),
+      indexCount(0),
+      transform(glm::mat4(1.0f)),
+      rotation(glm::vec3(0.0f)),
+      textureImage(VK_NULL_HANDLE),
+      textureImageMemory(VK_NULL_HANDLE),
+      textureImageView(VK_NULL_HANDLE),
+      textureImageInactive(VK_NULL_HANDLE),
+      textureImageMemoryInactive(VK_NULL_HANDLE),
+      textureImageViewInactive(VK_NULL_HANDLE),
+      textureSampler(VK_NULL_HANDLE),
+      ObjectTransformUBO(VK_NULL_HANDLE),
+      ObjectTransformUBOBufferMemory(VK_NULL_HANDLE),
+      ObjectTransformUBOMapped(nullptr),
+      primitiveDescriptorSet(VK_NULL_HANDLE)
+{
+    instanceOffsets.fill(glm::vec3(0.0f));
+    instanceRotations.fill(glm::vec4(0.0f));
+
+    cpuVertices = vertices;
+    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+
+    engine->createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer,
+        stagingBufferMemory);
+
+    void *data;
+    vkMapMemory(engine->logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
+    vkUnmapMemory(engine->logicalDevice, stagingBufferMemory);
+
+    engine->createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        vertexBuffer,
+        vertexBufferMemory);
+
+    VkCommandBuffer cmdBuffer = engine->beginSingleTimeCommands();
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(cmdBuffer, stagingBuffer, vertexBuffer, 1, &copyRegion);
+    engine->endSingleTimeCommands(cmdBuffer);
+
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
+    createIndexBuffer(indices);
+
+    VkDeviceSize uboSize = sizeof(ObjectTransform);
+    engine->createBuffer(
+        uboSize,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ObjectTransformUBO,
+        ObjectTransformUBOBufferMemory);
+
+    vkMapMemory(engine->logicalDevice, ObjectTransformUBOBufferMemory, 0, uboSize, 0, &ObjectTransformUBOMapped);
+
+    instanceDataBufferSize = sizeof(InstanceGpuData) * kMaxPrimitiveInstances;
+    engine->createBuffer(
+        instanceDataBufferSize,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        instanceDataBuffer,
+        instanceDataBufferMemory);
+    vkMapMemory(engine->logicalDevice, instanceDataBufferMemory, 0, instanceDataBufferSize, 0, &instanceDataBufferMapped);
+    std::memset(instanceDataBufferMapped, 0, static_cast<size_t>(instanceDataBufferSize));
+
+    tinygltf::Primitive materialPrimitive;
+    materialPrimitive.material = materialIndex;
+    createTextureResources(mesh->model->tgltfModel, materialPrimitive);
 }
 
 Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
@@ -169,39 +818,13 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
 {
     instanceOffsets.fill(glm::vec3(0.0f));
     instanceRotations.fill(glm::vec4(0.0f));
-    // Initialize variables from tinygltf primitive
-    if (tprimitive.attributes.count("POSITION") == 0 ||
-        tprimitive.attributes.count("NORMAL") == 0 ||
-        tprimitive.attributes.count("TEXCOORD_0") == 0)
-    {
-        std::cerr << "Skipping primitive due to missing attributes.\n";
-        return;
-    }
-
-    // Load POSITION, NORMAL, TEXCOORD_0
     Model *model = mesh->model;
     tinygltf::Model *tgltfModel = model->tgltfModel;
-    const auto &posAccessor = tgltfModel->accessors[tprimitive.attributes.at("POSITION")];
-    const auto &normAccessor = tgltfModel->accessors[tprimitive.attributes.at("NORMAL")];
-    const auto &texAccessor = tgltfModel->accessors[tprimitive.attributes.at("TEXCOORD_0")];
-
-    const auto &posView = tgltfModel->bufferViews[posAccessor.bufferView];
-    const auto &normView = tgltfModel->bufferViews[normAccessor.bufferView];
-    const auto &texView = tgltfModel->bufferViews[texAccessor.bufferView];
-
-    const float *positions = reinterpret_cast<const float *>(&tgltfModel->buffers[posView.buffer].data[posView.byteOffset + posAccessor.byteOffset]);
-    const float *normals = reinterpret_cast<const float *>(&tgltfModel->buffers[normView.buffer].data[normView.byteOffset + normAccessor.byteOffset]);
-    const float *texCoords = reinterpret_cast<const float *>(&tgltfModel->buffers[texView.buffer].data[texView.byteOffset + texAccessor.byteOffset]);
-
-    if (posAccessor.count != normAccessor.count || posAccessor.count != texAccessor.count)
-        throw std::runtime_error("GLTF attribute counts mismatch.");
-
-    std::vector<Vertex> vertices(posAccessor.count);
-    for (size_t i = 0; i < posAccessor.count; ++i)
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    if (!extractVerticesAndIndicesFromGltfPrimitive(*tgltfModel, tprimitive, vertices, indices))
     {
-        vertices[i].pos = glm::vec3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-        vertices[i].normal = glm::vec3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
-        vertices[i].texCoord = glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]);
+        return;
     }
 
     cpuVertices = vertices;
@@ -238,60 +861,8 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
     vkCmdCopyBuffer(cmdBuffer, stagingBuffer, vertexBuffer, 1, &copyRegion);
     engine->endSingleTimeCommands(cmdBuffer);
 
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
 
-    std::vector<uint32_t> indices;
-    if (tprimitive.indices >= 0)
-    {
-        const auto &indexAccessor = tgltfModel->accessors[tprimitive.indices];
-        const auto &indexView = tgltfModel->bufferViews[indexAccessor.bufferView];
-        const auto &indexBufferData = tgltfModel->buffers[indexView.buffer];
-
-        const uint8_t *dataPtr = reinterpret_cast<const uint8_t *>(
-            &indexBufferData.data[indexView.byteOffset + indexAccessor.byteOffset]);
-
-        auto componentSize = [](int componentType) -> size_t {
-            switch (componentType)
-            {
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                return sizeof(uint8_t);
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                return sizeof(uint16_t);
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                return sizeof(uint32_t);
-            default:
-                throw std::runtime_error("Unsupported index component type in GLTF");
-            }
-        };
-
-        size_t stride = indexView.byteStride ? indexView.byteStride : componentSize(indexAccessor.componentType);
-        indices.resize(indexAccessor.count);
-
-        for (size_t i = 0; i < indexAccessor.count; ++i)
-        {
-            const uint8_t *elementPtr = dataPtr + i * stride;
-            switch (indexAccessor.componentType)
-            {
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                indices[i] = *reinterpret_cast<const uint8_t *>(elementPtr);
-                break;
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                indices[i] = *reinterpret_cast<const uint16_t *>(elementPtr);
-                break;
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                indices[i] = *reinterpret_cast<const uint32_t *>(elementPtr);
-                break;
-            default:
-                throw std::runtime_error("Unsupported index component type in GLTF");
-            }
-        }
-    }
-    else
-    {
-        indices.resize(vertexCount);
-        std::iota(indices.begin(), indices.end(), 0);
-    }
     createIndexBuffer(indices);
 
     // Create uniform buffer
@@ -360,13 +931,12 @@ void Primitive::createIndexBuffer(const std::vector<uint32_t> &indices)
     vkCmdCopyBuffer(cmdBuffer, stagingBuffer, indexBuffer, 1, &copyRegion);
     engine->endSingleTimeCommands(cmdBuffer);
 
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
 }
 
 Primitive::~Primitive()
 {
-
+    const bool ownsSharedTexture = !sharedTextureResources;
     if (vertexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(engine->logicalDevice, vertexBuffer, nullptr);
@@ -403,19 +973,19 @@ Primitive::~Primitive()
     // Free descriptor set if allocated
     if (primitiveDescriptorSet != VK_NULL_HANDLE)
     {
-        vkFreeDescriptorSets(engine->logicalDevice, engine->descriptorPool, 1, &primitiveDescriptorSet);
+        engine->freeDescriptorSet(engine->descriptorPool, primitiveDescriptorSet);
     }
 
     // Destroy texture resources
-    if (textureImageView != VK_NULL_HANDLE)
+    if (ownsSharedTexture && textureImageView != VK_NULL_HANDLE)
     {
         vkDestroyImageView(engine->logicalDevice, textureImageView, nullptr);
     }
-    if (textureImage != VK_NULL_HANDLE)
+    if (ownsSharedTexture && textureImage != VK_NULL_HANDLE)
     {
         vkDestroyImage(engine->logicalDevice, textureImage, nullptr);
     }
-    if (textureImageMemory != VK_NULL_HANDLE)
+    if (ownsSharedTexture && textureImageMemory != VK_NULL_HANDLE)
     {
         vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
     }
@@ -458,7 +1028,7 @@ Primitive::~Primitive()
     }
 
     // Destroy sampler
-    if (textureSampler != VK_NULL_HANDLE)
+    if (ownsSharedTexture && textureSampler != VK_NULL_HANDLE)
     {
         vkDestroySampler(engine->logicalDevice, textureSampler, nullptr);
     }
@@ -494,6 +1064,8 @@ ObjectTransform Primitive::buildObjectTransformData() const
                                 usesYuvTexture ? yuvChromaDivY : 1u,
                                 usesYuvTexture ? yuvBitDepth : 8u,
                                 0u);
+    data.materialFlags = glm::uvec4(static_cast<uint32_t>(alphaMode), 0u, 0u, 0u);
+    data.materialParams = glm::vec4(alphaCutoff, 0.0f, 0.0f, 0.0f);
     return data;
 }
 
@@ -610,16 +1182,59 @@ void Primitive::enableTextureDoubleBuffering()
 Mesh::Mesh(Engine *engine, Model *model, tinygltf::Mesh gltfmesh)
     : engine(engine), model(model)
 {
+    std::unordered_map<int, size_t> materialToGroupIndex;
+    struct CombinedPrimitiveData
+    {
+        int materialIndex = -1;
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+    };
+    std::vector<CombinedPrimitiveData> combinedGroups;
+
     for (const auto &tprimitive : gltfmesh.primitives)
     {
-        primitives.emplace_back(std::make_unique<Primitive>(engine, this, tprimitive));
+        std::vector<Vertex> primitiveVertices;
+        std::vector<uint32_t> primitiveIndices;
+        if (!extractVerticesAndIndicesFromGltfPrimitive(*model->tgltfModel, tprimitive, primitiveVertices, primitiveIndices))
+        {
+            continue;
+        }
+
+        const int materialIndex = tprimitive.material;
+        auto it = materialToGroupIndex.find(materialIndex);
+        if (it == materialToGroupIndex.end())
+        {
+            const size_t newIndex = combinedGroups.size();
+            materialToGroupIndex.emplace(materialIndex, newIndex);
+            combinedGroups.push_back(CombinedPrimitiveData{materialIndex, {}, {}});
+            it = materialToGroupIndex.find(materialIndex);
+        }
+
+        CombinedPrimitiveData& group = combinedGroups[it->second];
+        const uint32_t vertexOffset = static_cast<uint32_t>(group.vertices.size());
+        group.vertices.insert(group.vertices.end(), primitiveVertices.begin(), primitiveVertices.end());
+        group.indices.reserve(group.indices.size() + primitiveIndices.size());
+        for (uint32_t index : primitiveIndices)
+        {
+            group.indices.push_back(vertexOffset + index);
+        }
+    }
+
+    primitives.reserve(combinedGroups.size());
+    for (auto& group : combinedGroups)
+    {
+        if (group.vertices.empty() || group.indices.empty())
+        {
+            continue;
+        }
+        primitives.emplace_back(std::make_unique<Primitive>(engine, this, group.vertices, group.indices, group.materialIndex));
     }
 }
 
-Mesh::Mesh(Engine *engine, Model *model, const std::vector<Vertex> &vertices)
+Mesh::Mesh(Engine *engine, Model *model, const std::vector<Vertex> &vertices, bool initializeTextureResources)
     : engine(engine), model(model)
 {
-    primitives.emplace_back(std::make_unique<Primitive>(engine, this, vertices));
+    primitives.emplace_back(std::make_unique<Primitive>(engine, this, vertices, initializeTextureResources));
 }
 
 Mesh::Mesh(Mesh &&other) noexcept
@@ -646,22 +1261,78 @@ Mesh::~Mesh()
 
 Model::Model(const std::vector<Vertex> &vertices, Engine *engine) : engine(engine)
 {
+    if (engine) engine->beginBatchUpload();
     std::cout << "[Debug] Creating procedural Model at " << this << " with " << vertices.size() << " vertices." << std::endl;
     // Create a single mesh from the provided vertices
     meshes.emplace_back(engine, this, vertices);
     std::cout << "[Debug] Model " << this << " finished initialization. Mesh count: " << meshes.size() << std::endl;
+    recomputeBounds();
+    if (engine) engine->endBatchUpload();
 }
 
 Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
 {
+    if (engine) engine->beginBatchUpload();
     name = gltfPath;
+    if (hasExtension(gltfPath, ".fbx"))
+    {
+        std::cout << "[Debug] Loading FBX Model at " << this << " from " << gltfPath << std::endl;
+        ufbx_load_opts opts = {};
+        opts.generate_missing_normals = true;
+        ufbx_error error;
+        ufbx_scene* scene = ufbx_load_file(gltfPath.c_str(), &opts, &error);
+        if (!scene)
+        {
+            if (engine) engine->endBatchUpload();
+            throw std::runtime_error("FBX error: " + std::string(error.description.data, error.description.length));
+        }
+
+        for (size_t i = 0; i < scene->meshes.count; ++i)
+        {
+            const ufbx_mesh* mesh = scene->meshes.data[i];
+            const std::vector<Vertex> vertices = buildVerticesFromFbxMesh(mesh);
+            if (!vertices.empty())
+            {
+                meshes.emplace_back(engine, this, vertices, false);
+                Primitive* primitive = meshes.back().primitives.empty() ? nullptr : meshes.back().primitives.front().get();
+                if (!primitive)
+                {
+                    continue;
+                }
+
+                primitive->createTextureSampler();
+                if (!applyFbxBaseColorTexture(meshes.back(), mesh))
+                {
+                    applyFbxMaterialColorFallback(meshes.back(), mesh);
+                }
+                if (primitive->textureImage == VK_NULL_HANDLE)
+                {
+                    primitive->createDefaultTexture();
+                }
+                primitive->finalizeTextureResources();
+            }
+        }
+
+        ufbx_free_scene(scene);
+
+        if (meshes.empty())
+        {
+            if (engine) engine->endBatchUpload();
+            throw std::runtime_error("FBX contains no renderable meshes.");
+        }
+
+        std::cout << "[Debug] FBX Model " << this << " loaded successfully. Mesh count: " << meshes.size() << std::endl;
+        recomputeBounds();
+        if (engine) engine->endBatchUpload();
+        return;
+    }
+
     std::cout << "[Debug] Loading GLTF Model at " << this << " from " << gltfPath << std::endl;
     tinygltf::TinyGLTF loader;
     std::string err, warn;
 
     bool success = false;
     const std::string ext = gltfPath.substr(gltfPath.find_last_of('.'));
-    // initialize the model
     tgltfModel = new tinygltf::Model();
 
     if (ext == ".glb")
@@ -674,35 +1345,41 @@ Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
     }
     else
     {
+        if (engine) engine->endBatchUpload();
         throw std::runtime_error("Unsupported file extension: " + ext);
     }
 
     if (!warn.empty())
         std::cout << "GLTF warning: " << warn << std::endl;
     if (!err.empty())
+    {
+        if (engine) engine->endBatchUpload();
         throw std::runtime_error("GLTF error: " + err);
+    }
     if (!success)
+    {
+        if (engine) engine->endBatchUpload();
         throw std::runtime_error("Failed to load GLTF file: " + gltfPath);
+    }
     if (tgltfModel->meshes.empty())
+    {
+        if (engine) engine->endBatchUpload();
         throw std::runtime_error("GLTF contains no meshes.");
+    }
 
-    // Process all meshes in the GLTF file
+    meshes.reserve(tgltfModel->meshes.size());
     for (const auto &gltfmesh : tgltfModel->meshes)
     {
-        // Create a new Mesh for each GLTF mesh
         meshes.emplace_back(engine, this, gltfmesh);
     }
+    
     std::cout << "[Debug] GLTF Model " << this << " loaded successfully. Mesh count: " << meshes.size() << std::endl;
+    recomputeBounds();
+    if (engine) engine->endBatchUpload();
 }
 
 Model::~Model()
 {
-    // Wait for device to be idle before cleanup
-    if (engine && engine->logicalDevice != VK_NULL_HANDLE)
-    {
-        vkDeviceWaitIdle(engine->logicalDevice);
-    }
-
     // Clear meshes vector - each Mesh's destructor will clean up its resources
     meshes.clear();
 
@@ -784,6 +1461,7 @@ void Model::scaleToUnitBox()
     glm::mat4 translation = glm::translate(glm::mat4(1.0f), -center);
     glm::mat4 scaleMat = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
     glm::mat4 transform = scaleMat * translation;
+    worldTransform = transform;
 
     for (auto &mesh : meshes)
     {
@@ -801,6 +1479,7 @@ void Model::scaleToUnitBox()
         }
     }
 
+    recomputeBounds();
     std::cout << "[Debug] Model " << name << " scaled to unit box (scale=" << scale << ")" << std::endl;
 }
 
@@ -808,6 +1487,11 @@ void Model::resizeToUnitBox()
 {
     // Currently identical to scaleToUnitBox but exposed with the requested name
     scaleToUnitBox();
+}
+
+void Model::scale(const glm::vec3 &factors)
+{
+    applyTransformToPrimitives(glm::scale(glm::mat4(1.0f), factors));
 }
 
 void Model::translate(const glm::vec3 &offset)
@@ -843,6 +1527,7 @@ void Model::rotate(float xDegrees, float yDegrees, float zDegrees)
 
 void Model::applyTransformToPrimitives(const glm::mat4 &transform)
 {
+    worldTransform = transform * worldTransform;
     for (auto &mesh : meshes)
     {
         for (auto &primitive : mesh.primitives)
@@ -861,6 +1546,44 @@ void Model::applyTransformToPrimitives(const glm::mat4 &transform)
             }
         }
     }
+    recomputeBounds();
+}
+
+void Model::recomputeBounds()
+{
+    glm::vec3 localMin(std::numeric_limits<float>::max());
+    glm::vec3 localMax(std::numeric_limits<float>::lowest());
+    bool found = false;
+    for (const auto &mesh : meshes)
+    {
+        for (const auto &primitive : mesh.primitives)
+        {
+            if (!primitive)
+                continue;
+            for (const auto &vertex : primitive->cpuVertices)
+            {
+                localMin = glm::min(localMin, vertex.pos);
+                localMax = glm::max(localMax, vertex.pos);
+                found = true;
+            }
+        }
+    }
+    if (!found)
+    {
+        boundsCenter = glm::vec3(0.0f);
+        boundsRadius = 0.0f;
+        return;
+    }
+    glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+    float localRadius = glm::length(localMax - localMin) * 0.5f;
+
+    boundsCenter = glm::vec3(worldTransform * glm::vec4(localCenter, 1.0f));
+
+    glm::vec3 scale;
+    scale.x = glm::length(glm::vec3(worldTransform[0]));
+    scale.y = glm::length(glm::vec3(worldTransform[1]));
+    scale.z = glm::length(glm::vec3(worldTransform[2]));
+    boundsRadius = localRadius * glm::max(scale.x, glm::max(scale.y, scale.z));
 }
 
 bool Model::computeProceduralBounds(glm::vec3 &minBounds, glm::vec3 &maxBounds) const

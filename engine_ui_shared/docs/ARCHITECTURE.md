@@ -11,16 +11,7 @@ Move `motive3d/` from a GLFW-first demo/runtime into a Qt-hosted engine editor w
 
 ## Source Material
 
-Reference files copied from `editor/` live at the `motive3d/` root as:
-
-- `editor_ref_explorer_pane.*`
-- `editor_ref_preview*`
-- `editor_ref_editor*`
-- `editor_ref_inspector_pane.*`
-- `editor_ref_project_*`
-- `editor_ref_projects.*`
-
-These are inputs, not the final module layout.
+The active implementation lives directly in the `engine_ui_*` modules. Legacy copied reference files have been purged.
 
 ## Target Modules
 
@@ -69,9 +60,9 @@ Responsibilities:
 - file activation callbacks
 - thumbnail generation and caching
 
-Migration source:
+Current implementation:
 
-- primarily `editor_ref_explorer_pane.*`
+- `engine_ui_asset_browser_widget.*`
 
 ### 3. Viewport
 
@@ -95,9 +86,9 @@ Responsibilities:
 - draw shared overlays and selection chrome
 - avoid editor timeline dependencies
 
-Migration source:
+Current implementation:
 
-- shell and interaction ideas from `editor_ref_preview*`
+- `engine_ui_viewport_host_widget.*`
 - rendering backend adapted from `motive3d/display.*`
 
 ### 4. Project
@@ -121,11 +112,9 @@ Responsibilities:
 - per-project UI state
 - asset browser root persistence
 
-Migration source:
+Current implementation:
 
-- `editor_ref_project_state.*`
-- `editor_ref_project_manager.*`
-- `editor_ref_projects.*`
+- `engine_ui_project_session.*`
 
 ### 5. App Bootstrap
 
@@ -177,8 +166,7 @@ Recommended split triggers:
 
 1. Add Qt bootstrap files at the `motive3d/` root with the `engine_ui_` prefix.
 2. Implement the shell layout with placeholder widgets.
-3. Extract browser behavior from `editor_ref_explorer_pane.*`.
-4. Introduce viewport bridge interfaces without changing runtime rendering yet.
-5. Adapt `motive3d/display.*` into a Qt-owned viewport surface.
-6. Add project persistence and recent-project handling.
-7. Replace placeholder widgets one subsystem at a time.
+3. Introduce viewport bridge interfaces without changing runtime rendering yet.
+4. Adapt `motive3d/display.*` into a Qt-owned viewport surface.
+5. Expand project persistence and recent-project handling as needed.
+6. Replace placeholder widgets one subsystem at a time.

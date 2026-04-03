@@ -12,6 +12,8 @@ layout(set = 1, binding = 0) uniform ObjectUBO {
     mat4 model;
     uvec4 instanceData;
     uvec4 yuvParams;
+    uvec4 materialFlags;
+    vec4 materialParams;
 } objectUBO;
 
 struct InstanceTransform {

@@ -28,8 +28,12 @@ public:
 
     void setRootPath(const QString& path);
     QString rootPath() const;
+    QString galleryPath() const;
+    QString selectedAssetPath() const;
+    void restoreGalleryPath(const QString& path);
     void setPreviewAnchorWidget(QWidget* widget);
     void setActivationCallback(std::function<void(const AssetBrowserSelection&)> callback);
+    void setRootPathChangedCallback(std::function<void(const QString&)> callback);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -49,6 +53,7 @@ private:
     QString m_galleryPath;
     AssetBrowserSelection m_lastActivated;
     std::function<void(const AssetBrowserSelection&)> m_activationCallback;
+    std::function<void(const QString&)> m_rootPathChangedCallback;
     QWidget* m_previewAnchorWidget = nullptr;
     QFileSystemModel* m_fsModel = nullptr;
     QTreeView* m_tree = nullptr;
@@ -62,6 +67,7 @@ private:
     QToolButton* m_galleryBackButton = nullptr;
     QHash<QString, QPixmap> m_previewPixmapCache;
     QPoint m_treeDragStartPos;
+    QPoint m_galleryDragStartPos;
 };
 
 }  // namespace motive::ui

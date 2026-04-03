@@ -61,6 +61,10 @@ public:
     float width = 800.0f;
     float height = 600.0f;
 
+    // Cached camera matrices
+    glm::mat4 viewMatrix = glm::mat4(1.0f);
+    glm::mat4 projectionMatrix = glm::mat4(1.0f);
+
     // Getters for camera matrices
     glm::mat4 getViewMatrix() const;
     glm::mat4 getProjectionMatrix() const;

@@ -39,6 +39,7 @@ public:
     void createGraphicsPipeline();
     void handleFramebufferResize(int newWidth, int newHeight);
     void updateCameraViewports();
+    void setBackgroundColor(float r, float g, float b);
 
     // Input handling (forwarded to camera)
     void handleMouseButton(int button, int action, int mods);
@@ -80,6 +81,7 @@ public:
     std::vector<VkFence> imagesInFlight;
 
     bool firstFrame = true;
+    size_t currentFrame = 0;
     std::string vertShaderPath;
     std::string fragShaderPath;
 
@@ -93,6 +95,9 @@ public:
     bool cullingDisabled = false;
     bool use2DPipeline = false;
     bool embeddedMode = false;
+    float bgColorR = 0.2f;
+    float bgColorG = 0.2f;
+    float bgColorB = 0.8f;
 
     // Camera instance
     std::vector<Camera*> cameras;

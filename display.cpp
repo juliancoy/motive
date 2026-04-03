@@ -10,6 +10,63 @@
 #include "camera.h"
 #include "utils.h"
 
+#include <array>
+#include <glm/geometric.hpp>
+
+namespace
+{
+
+struct Frustum
+{
+    std::array<glm::vec4, 6> planes; // left, right, bottom, top, near, far
+};
+
+Frustum extractFrustum(const glm::mat4& vp)
+{
+    Frustum f;
+    // Rows of the matrix (glm is column-major, so we access columns and treat as row vectors for plane extraction)
+    // Actually for plane extraction from clip-space inequalities, we use the transpose approach:
+    // Each plane is a row combination.
+    // Since glm::mat4 is column-major, matrix[i] is the i-th column.
+    // We want row vectors: row i = glm::vec4(matrix[0][i], matrix[1][i], matrix[2][i], matrix[3][i]);
+    const auto row = [&vp](int i) {
+        return glm::vec4(vp[0][i], vp[1][i], vp[2][i], vp[3][i]);
+    };
+
+    glm::vec4 r0 = row(0);
+    glm::vec4 r1 = row(1);
+    glm::vec4 r2 = row(2);
+    glm::vec4 r3 = row(3);
+
+    f.planes[0] = r3 + r0; // left
+    f.planes[1] = r3 - r0; // right
+    f.planes[2] = r3 + r1; // bottom
+    f.planes[3] = r3 - r1; // top
+    f.planes[4] = r2;      // near (for RH_ZO)
+    f.planes[5] = r3 - r2; // far
+
+    for (auto& p : f.planes)
+    {
+        float len = glm::length(glm::vec3(p));
+        if (len > 0.0f)
+            p /= len;
+    }
+    return f;
+}
+
+bool sphereInFrustum(const Frustum& f, const glm::vec3& center, float radius)
+{
+    for (const auto& p : f.planes)
+    {
+        float dist = glm::dot(glm::vec3(p), center) + p.w;
+        if (dist < -radius)
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
 void Display::createCommandPool()
 {
     // Use the command pool from Engine class
@@ -527,6 +584,27 @@ void Display::createWindow(const char *title)
             display->handleFramebufferResize(fbWidth, fbHeight);
         }
     });
+    glfwSetMouseButtonCallback(window, [](GLFWwindow *win, int button, int action, int mods) {
+        auto *display = static_cast<Display *>(glfwGetWindowUserPointer(win));
+        if (display)
+        {
+            display->handleMouseButton(button, action, mods);
+        }
+    });
+    glfwSetCursorPosCallback(window, [](GLFWwindow *win, double xpos, double ypos) {
+        auto *display = static_cast<Display *>(glfwGetWindowUserPointer(win));
+        if (display)
+        {
+            display->handleCursorPos(xpos, ypos);
+        }
+    });
+    glfwSetKeyCallback(window, [](GLFWwindow *win, int key, int scancode, int action, int mods) {
+        auto *display = static_cast<Display *>(glfwGetWindowUserPointer(win));
+        if (display)
+        {
+            display->handleKey(key, scancode, action, mods);
+        }
+    });
 
     createSurface(window);
     if (!surface)
@@ -698,6 +776,27 @@ void Display::cleanupSwapchainResources()
         }
     }
     renderFinishedSemaphores.clear();
+
+    for (auto &sem : imageAvailableSemaphores)
+    {
+        if (sem != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
+            sem = VK_NULL_HANDLE;
+        }
+    }
+    imageAvailableSemaphores.clear();
+
+    for (auto &fence : inFlightFences)
+    {
+        if (fence != VK_NULL_HANDLE)
+        {
+            vkDestroyFence(engine->logicalDevice, fence, nullptr);
+            fence = VK_NULL_HANDLE;
+        }
+    }
+    inFlightFences.clear();
+
     imagesInFlight.clear();
 }
 
@@ -772,9 +871,16 @@ void Display::destroyOverlayBuffer()
 }
 
 void logBitmap(const glyph::OverlayBitmap& bitmap) {
-    std::cout << "[Display] Overlay bitmap generated. "
-              << "Width: " << bitmap.width << ", Height: " << bitmap.height
-              << ", Pixels empty: " << (bitmap.pixels.empty() ? "yes" : "no") << std::endl;
+    // Gated debug: only log if width or height changed significantly or on error
+    static int lastWidth = 0;
+    static int lastHeight = 0;
+    if (bitmap.width != lastWidth || bitmap.height != lastHeight || bitmap.pixels.empty()) {
+        std::cout << "[Display] Overlay bitmap generated. "
+                  << "Width: " << bitmap.width << ", Height: " << bitmap.height
+                  << ", Pixels empty: " << (bitmap.pixels.empty() ? "yes" : "no") << std::endl;
+        lastWidth = bitmap.width;
+        lastHeight = bitmap.height;
+    }
 }
 
 void Display::updateOverlayBitmap(float fps)
@@ -892,6 +998,45 @@ void Display::handleFramebufferResize(int newWidth, int newHeight)
     height = std::max(0, newHeight);
 }
 
+void Display::handleMouseButton(int button, int action, int mods)
+{
+    for (auto *camera : cameras)
+    {
+        if (camera)
+        {
+            camera->handleMouseButton(button, action, mods);
+        }
+    }
+}
+
+void Display::handleCursorPos(double xpos, double ypos)
+{
+    for (auto *camera : cameras)
+    {
+        if (camera)
+        {
+            camera->handleCursorPos(xpos, ypos);
+        }
+    }
+}
+
+void Display::handleKey(int key, int scancode, int action, int mods)
+{
+    if (window && key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+    {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+        return;
+    }
+
+    for (auto *camera : cameras)
+    {
+        if (camera)
+        {
+            camera->handleKey(key, scancode, action, mods);
+        }
+    }
+}
+
 void Display::updateCameraViewports()
 {
     if (cameras.empty())
@@ -938,13 +1083,28 @@ void Display::recreateSwapchain()
     vkDeviceWaitIdle(engine->logicalDevice);
     cleanupSwapchainResources();
     createSwapchain();
+    currentFrame = 0;
+    firstFrame = true;
     updateCameraViewports();
 }
 
+void Display::setBackgroundColor(float r, float g, float b)
+{
+    bgColorR = r;
+    bgColorG = g;
+    bgColorB = b;
+}
 
 void Display::render()
 {
     const int MAX_FRAMES_IN_FLIGHT = 1;
+
+    if (framebufferResized)
+    {
+        framebufferResized = false;
+        recreateSwapchain();
+    }
+
     if (imageAvailableSemaphores.empty())
     {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -993,14 +1153,6 @@ void Display::render()
 
     updateOverlayBitmap(currentFps);
 
-    static size_t currentFrame = 0;
-
-    if (framebufferResized)
-    {
-        framebufferResized = false;
-        recreateSwapchain();
-    }
-
     if (firstFrame)
         firstFrame = false;
     else
@@ -1019,8 +1171,7 @@ void Display::render()
     }
     else if (result == VK_SUBOPTIMAL_KHR)
     {
-        recreateSwapchain();
-        return;
+        // Continue rendering, will check after present
     }
     else if (result != VK_SUCCESS)
     {
@@ -1029,7 +1180,9 @@ void Display::render()
 
     if (imageIndex >= imagesInFlight.size())
     {
-        throw std::runtime_error("Acquired image index out of bounds");
+        // Handle case where imageIndex is out of bounds, possibly due to resize
+        recreateSwapchain();
+        return;
     }
 
     if (imagesInFlight[imageIndex] != VK_NULL_HANDLE)
@@ -1059,7 +1212,7 @@ void Display::render()
     }
 
     std::array<VkClearValue, 3> clearValues = {};
-    clearValues[0].color = {{0.2f, 0.2f, 0.8f, 1.0f}}; // MSAA color clear
+    clearValues[0].color = {{bgColorR, bgColorG, bgColorB, 1.0f}}; // MSAA color clear
     clearValues[1].depthStencil = {1.0f, 0}; // Depth clear
     clearValues[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}}; // Resolve attachment (unused)
 
@@ -1098,9 +1251,16 @@ void Display::render()
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               pipelineLayout, 0, 1, &camera->descriptorSet, 0, nullptr);
 
+        Frustum frustum = extractFrustum(camera->getProjectionMatrix() * camera->getViewMatrix());
+
         for (const auto& modelPtr : engine->models)
         {
-            if (!modelPtr)
+            if (!modelPtr || !modelPtr->visible)
+            {
+                continue;
+            }
+            if (!embeddedMode && !cullingDisabled &&
+                !sphereInFrustum(frustum, modelPtr->boundsCenter, modelPtr->boundsRadius))
             {
                 continue;
             }
@@ -1187,7 +1347,11 @@ void Display::render()
 
     result = vkQueuePresentKHR(graphicsQueue, &presentInfo);
     
-    if (result != VK_SUCCESS)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    {
+        recreateSwapchain();
+    }
+    else if (result != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to present swapchain image");
     }
@@ -1319,7 +1483,13 @@ void Display::createGraphicsPipeline()
     // Color blending
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -1385,6 +1555,14 @@ Display::~Display() {
     // Wait for device to be idle before cleanup
     if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(engine->logicalDevice);
+    }
+
+    if (window != nullptr) {
+        glfwSetFramebufferSizeCallback(window, nullptr);
+        glfwSetMouseButtonCallback(window, nullptr);
+        glfwSetCursorPosCallback(window, nullptr);
+        glfwSetKeyCallback(window, nullptr);
+        glfwSetWindowUserPointer(window, nullptr);
     }
 
     destroyOverlayBuffer();

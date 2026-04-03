@@ -4,6 +4,7 @@
 #include <string>
 #include <array>
 #include <memory>
+#include <mutex>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -55,6 +56,13 @@ public:
     Display* createWindow(int width, int height, const char* title, bool disableCulling = false, bool use2DPipeline = false, bool embeddedMode = false);
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+    VkResult allocateDescriptorSet(VkDescriptorPool pool,
+                                   VkDescriptorSetLayout layout,
+                                   VkDescriptorSet& outSet);
+    VkResult freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet);
+    void beginBatchUpload();
+    void endBatchUpload();
+    void deferStagingBufferDestruction(VkBuffer buffer, VkDeviceMemory memory);
     void nameVulkanObject(uint64_t handle, VkObjectType type, const char* name);
     void createDescriptorSetLayouts();
 
@@ -104,4 +112,10 @@ private:
     VkDeviceMemory lightUBOMemory = VK_NULL_HANDLE;
     void* lightUBOMapped = nullptr;
     VkSampleCountFlagBits msaaSampleCount = VK_SAMPLE_COUNT_1_BIT;
+
+    int batchUploadDepth = 0;
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> pendingStagingBuffers;
+    std::mutex batchMutex;
+    std::mutex queueSubmitMutex;
+    VkCommandBuffer activeBatchCommandBuffer = VK_NULL_HANDLE;
 };

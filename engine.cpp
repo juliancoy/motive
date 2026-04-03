@@ -41,12 +41,96 @@ void Engine::nameVulkanObject(uint64_t handle, VkObjectType type, const char* na
 
 VkCommandBuffer Engine::beginSingleTimeCommands()
 {
+    std::lock_guard<std::mutex> lock(batchMutex);
+    if (batchUploadDepth > 0)
+    {
+        if (activeBatchCommandBuffer == VK_NULL_HANDLE)
+        {
+            activeBatchCommandBuffer = renderDevice.beginSingleTimeCommands();
+        }
+        return activeBatchCommandBuffer;
+    }
     return renderDevice.beginSingleTimeCommands();
 }
 
 void Engine::endSingleTimeCommands(VkCommandBuffer commandBuffer)
 {
+    {
+        std::lock_guard<std::mutex> lock(batchMutex);
+        if (batchUploadDepth > 0 && commandBuffer == activeBatchCommandBuffer)
+        {
+            return;
+        }
+    }
     renderDevice.endSingleTimeCommands(commandBuffer);
+}
+
+VkResult Engine::allocateDescriptorSet(VkDescriptorPool pool,
+                                       VkDescriptorSetLayout layout,
+                                       VkDescriptorSet& outSet)
+{
+    return renderDevice.allocateDescriptorSet(pool, layout, outSet);
+}
+
+VkResult Engine::freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet)
+{
+    return renderDevice.freeDescriptorSet(pool, descriptorSet);
+}
+
+void Engine::beginBatchUpload()
+{
+    std::lock_guard<std::mutex> lock(batchMutex);
+    if (batchUploadDepth++ == 0)
+    {
+        pendingStagingBuffers.clear();
+        activeBatchCommandBuffer = VK_NULL_HANDLE;
+    }
+}
+
+void Engine::endBatchUpload()
+{
+    VkCommandBuffer commandBufferToSubmit = VK_NULL_HANDLE;
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> stagingBuffersToDestroy;
+    {
+        std::lock_guard<std::mutex> lock(batchMutex);
+        if (--batchUploadDepth == 0)
+        {
+            commandBufferToSubmit = activeBatchCommandBuffer;
+            activeBatchCommandBuffer = VK_NULL_HANDLE;
+            stagingBuffersToDestroy.swap(pendingStagingBuffers);
+        }
+    }
+
+    if (commandBufferToSubmit != VK_NULL_HANDLE)
+    {
+        renderDevice.endSingleTimeCommands(commandBufferToSubmit);
+    }
+
+    if (!stagingBuffersToDestroy.empty())
+    {
+        vkDeviceWaitIdle(logicalDevice);
+
+        for (auto& [buffer, memory] : stagingBuffersToDestroy)
+        {
+            vkDestroyBuffer(logicalDevice, buffer, nullptr);
+            vkFreeMemory(logicalDevice, memory, nullptr);
+        }
+    }
+}
+
+void Engine::deferStagingBufferDestruction(VkBuffer buffer, VkDeviceMemory memory)
+{
+    std::lock_guard<std::mutex> lock(batchMutex);
+    if (batchUploadDepth > 0)
+    {
+        pendingStagingBuffers.emplace_back(buffer, memory);
+    }
+    else
+    {
+        // Not in batch mode, destroy immediately
+        vkDestroyBuffer(logicalDevice, buffer, nullptr);
+        vkFreeMemory(logicalDevice, memory, nullptr);
+    }
 }
 
 void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, VkCommandPool commandPool, VkQueue graphicsQueue)

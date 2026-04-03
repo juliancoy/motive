@@ -1,7 +1,9 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class RenderDevice
@@ -15,6 +17,10 @@ public:
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+    VkResult allocateDescriptorSet(VkDescriptorPool pool,
+                                   VkDescriptorSetLayout layout,
+                                   VkDescriptorSet& outSet);
+    VkResult freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet);
     void nameVulkanObject(uint64_t handle, VkObjectType type, const char *name);
     void createDescriptorSetLayouts();
 
@@ -86,4 +92,9 @@ private:
     std::vector<const char *> enabledDeviceExtensionNamePtrs;
 
     VkDebugUtilsMessengerEXT debugMessenger;
+    
+    std::mutex graphicsQueueMutex;
+    std::mutex commandPoolMutex;
+    std::mutex descriptorPoolMutex;
+    std::unordered_map<uint64_t, VkCommandPool> transientCommandPools;
 };

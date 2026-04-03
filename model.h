@@ -3,6 +3,7 @@
 #include <array>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <GLFW/glfw3.h>
 #include <memory>
 #include <../tinygltf/tiny_gltf.h>
@@ -23,6 +24,12 @@ enum class PrimitiveYuvFormat : uint32_t {
     Planar444 = 4
 };
 
+enum class PrimitiveAlphaMode : uint32_t {
+    Opaque = 0,
+    Mask = 1,
+    Blend = 2
+};
+
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 normal;
@@ -32,9 +39,23 @@ struct Vertex {
     static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
 };
 
+struct SharedTextureResources {
+    Engine* engine = nullptr;
+    VkImage textureImage = VK_NULL_HANDLE;
+    VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
+    VkImageView textureImageView = VK_NULL_HANDLE;
+    VkSampler textureSampler = VK_NULL_HANDLE;
+    uint32_t textureWidth = 0;
+    uint32_t textureHeight = 0;
+    VkFormat textureFormat = VK_FORMAT_UNDEFINED;
+
+    ~SharedTextureResources();
+};
+
 class Primitive {
 public:
-    Primitive(Engine* engine, Mesh* mesh, const std::vector<Vertex>& vertices);
+    Primitive(Engine* engine, Mesh* mesh, const std::vector<Vertex>& vertices, bool initializeTextureResources = true);
+    Primitive(Engine* engine, Mesh* mesh, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, int materialIndex);
     Primitive(Engine* engine, Mesh* mesh, tinygltf::Primitive tprimitive);
     ~Primitive();
 
@@ -115,6 +136,9 @@ public:
     bool textureDoubleBuffered = false;
     bool textureInactiveInitialized = false;
     bool chromaInactiveInitialized = false;
+    PrimitiveAlphaMode alphaMode = PrimitiveAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    std::shared_ptr<SharedTextureResources> sharedTextureResources;
     // various info
     VkSamplerCreateInfo samplerInfo{};
     VkDescriptorBufferInfo bufferInfo{};
@@ -145,7 +169,7 @@ public:
 
 class Mesh {
 public:
-    Mesh(Engine* engine, Model* model, const std::vector<Vertex>& vertices);
+    Mesh(Engine* engine, Model* model, const std::vector<Vertex>& vertices, bool initializeTextureResources = true);
     Mesh(Engine* engine, Model* model, tinygltf::Mesh);
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
@@ -165,6 +189,7 @@ public:
     ~Model();
     void scaleToUnitBox();
     void resizeToUnitBox();
+    void scale(const glm::vec3& factors);
     void translate(const glm::vec3& offset);
     void rotate(float angleRadians, const glm::vec3& axis);
     void rotate(float xDegrees, float yDegrees, float zDegrees);
@@ -176,7 +201,14 @@ public:
     Engine* engine;
     GLFWwindow* window;
     std::vector<Texture*> textures;
+    bool visible = true;
+    glm::mat4 worldTransform = glm::mat4(1.0f);
+    glm::vec3 boundsCenter = glm::vec3(0.0f);
+    float boundsRadius = 0.0f;
+    void recomputeBounds();
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);
     bool computeProceduralBounds(glm::vec3& minBounds, glm::vec3& maxBounds) const;
+    std::unordered_map<int, std::weak_ptr<SharedTextureResources>> gltfMaterialTextureCache;
+    friend class Primitive;
 };

@@ -132,34 +132,100 @@ void RenderDevice::shutdown()
 
 VkCommandBuffer RenderDevice::beginSingleTimeCommands()
 {
+    VkCommandPool transientPool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+    if (vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &transientPool) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create transient command pool for single-time commands.");
+    }
+
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = commandPool;
+    allocInfo.commandPool = transientPool;
     allocInfo.commandBufferCount = 1;
 
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer);
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer) != VK_SUCCESS)
+    {
+        vkDestroyCommandPool(logicalDevice, transientPool, nullptr);
+        throw std::runtime_error("Failed to allocate single-time command buffer.");
+    }
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+    {
+        vkFreeCommandBuffers(logicalDevice, transientPool, 1, &commandBuffer);
+        vkDestroyCommandPool(logicalDevice, transientPool, nullptr);
+        throw std::runtime_error("Failed to begin single-time command buffer.");
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(commandPoolMutex);
+        transientCommandPools[reinterpret_cast<uint64_t>(commandBuffer)] = transientPool;
+    }
     return commandBuffer;
 }
 
 void RenderDevice::endSingleTimeCommands(VkCommandBuffer commandBuffer)
 {
-    vkEndCommandBuffer(commandBuffer);
+    VkCommandPool transientPool = VK_NULL_HANDLE;
+    {
+        std::lock_guard<std::mutex> lock(commandPoolMutex);
+        const auto it = transientCommandPools.find(reinterpret_cast<uint64_t>(commandBuffer));
+        if (it == transientCommandPools.end())
+        {
+            throw std::runtime_error("Unknown single-time command buffer pool.");
+        }
+        transientPool = it->second;
+        transientCommandPools.erase(it);
+    }
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+    {
+        vkFreeCommandBuffers(logicalDevice, transientPool, 1, &commandBuffer);
+        vkDestroyCommandPool(logicalDevice, transientPool, nullptr);
+        throw std::runtime_error("Failed to end single-time command buffer.");
+    }
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
-    vkFreeCommandBuffers(logicalDevice, commandPool, 1, &commandBuffer);
+    {
+        std::lock_guard<std::mutex> lock(graphicsQueueMutex);
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphicsQueue);
+    }
+    vkFreeCommandBuffers(logicalDevice, transientPool, 1, &commandBuffer);
+    vkDestroyCommandPool(logicalDevice, transientPool, nullptr);
+}
+
+VkResult RenderDevice::allocateDescriptorSet(VkDescriptorPool pool,
+                                             VkDescriptorSetLayout layout,
+                                             VkDescriptorSet& outSet)
+{
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    std::lock_guard<std::mutex> lock(descriptorPoolMutex);
+    return vkAllocateDescriptorSets(logicalDevice, &allocInfo, &outSet);
+}
+
+VkResult RenderDevice::freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet)
+{
+    std::lock_guard<std::mutex> lock(descriptorPoolMutex);
+    return vkFreeDescriptorSets(logicalDevice, pool, 1, &descriptorSet);
 }
 
 void RenderDevice::nameVulkanObject(uint64_t handle, VkObjectType type, const char *name)
@@ -911,23 +977,29 @@ void RenderDevice::createLogicalDevice()
         throw std::runtime_error("Failed to create command pool!");
     }
 
+    // The editor scene path can load large GLTF/FBX assets with hundreds or thousands
+    // of primitives, each consuming per-primitive uniform and sampler descriptors.
+    // Keep this pool comfortably above the old single-model budget.
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 300;
+    poolSizes[0].descriptorCount = 16384;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = 200;
+    poolSizes[1].descriptorCount = 8192;
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = 100;
+    descriptorPoolInfo.maxSets = 8192;
     descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
     if (vkCreateDescriptorPool(logicalDevice, &descriptorPoolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to create descriptor pool!");
     }
+    std::cout << "[RenderDevice] Descriptor pool created. maxSets=" << descriptorPoolInfo.maxSets
+              << " uniformBuffers=" << poolSizes[0].descriptorCount
+              << " combinedImageSamplers=" << poolSizes[1].descriptorCount << std::endl;
 }
 
 void RenderDevice::createDescriptorSetLayouts()

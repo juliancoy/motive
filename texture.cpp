@@ -3,6 +3,7 @@
 #include "engine.h"
 #include "model.h"
 #include <stdexcept>
+#include <iostream>
 
 namespace
 {
@@ -228,7 +229,43 @@ void ensureInactiveChromaResources(Primitive *primitive, uint32_t width, uint32_
                          primitive->chromaImageMemoryInactive);
     primitive->chromaImageViewInactive = createImageView(primitive, primitive->chromaImageInactive, VK_FORMAT_R8G8_UNORM);
 }
+
+void assignSharedTextureResources(Primitive* primitive, const std::shared_ptr<SharedTextureResources>& shared)
+{
+    primitive->sharedTextureResources = shared;
+    primitive->textureImage = shared ? shared->textureImage : VK_NULL_HANDLE;
+    primitive->textureImageMemory = shared ? shared->textureImageMemory : VK_NULL_HANDLE;
+    primitive->textureImageView = shared ? shared->textureImageView : VK_NULL_HANDLE;
+    primitive->textureSampler = shared ? shared->textureSampler : VK_NULL_HANDLE;
+    primitive->textureWidth = shared ? shared->textureWidth : 0;
+    primitive->textureHeight = shared ? shared->textureHeight : 0;
+    primitive->textureFormat = shared ? shared->textureFormat : VK_FORMAT_UNDEFINED;
+}
 } // namespace
+
+SharedTextureResources::~SharedTextureResources()
+{
+    if (!engine)
+    {
+        return;
+    }
+    if (textureImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(engine->logicalDevice, textureImageView, nullptr);
+    }
+    if (textureImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(engine->logicalDevice, textureImage, nullptr);
+    }
+    if (textureImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(engine->logicalDevice, textureImageMemory, nullptr);
+    }
+    if (textureSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(engine->logicalDevice, textureSampler, nullptr);
+    }
+}
 
 Material::Material(Engine* engine, Model* model, Primitive* primitive, tinygltf::Material /*tmaterial*/){
     
@@ -271,11 +308,58 @@ void Primitive::createTextureResources()
 
 void Primitive::createTextureResources(const tinygltf::Model* model, const tinygltf::Primitive& tprimitive)
 {
+    Model* owningModel = mesh ? mesh->model : nullptr;
+    if (owningModel && tprimitive.material >= 0)
+    {
+        auto cacheIt = owningModel->gltfMaterialTextureCache.find(tprimitive.material);
+        if (cacheIt != owningModel->gltfMaterialTextureCache.end())
+        {
+            if (auto shared = cacheIt->second.lock())
+            {
+                const auto& material = model->materials[tprimitive.material];
+                alphaCutoff = static_cast<float>(material.alphaCutoff);
+                if (material.alphaMode == "MASK")
+                {
+                    alphaMode = PrimitiveAlphaMode::Mask;
+                }
+                else if (material.alphaMode == "BLEND")
+                {
+                    alphaMode = PrimitiveAlphaMode::Blend;
+                }
+                else
+                {
+                    alphaMode = PrimitiveAlphaMode::Opaque;
+                }
+
+                assignSharedTextureResources(this, shared);
+                finalizeTextureResources();
+                return;
+            }
+        }
+    }
+
     createTextureSampler();
     bool loaded = createTextureFromGLTF(model, tprimitive);
     if (!loaded)
     {
         createDefaultTexture();
+    }
+    if (owningModel && tprimitive.material >= 0 &&
+        textureImage != VK_NULL_HANDLE &&
+        textureImageView != VK_NULL_HANDLE &&
+        textureSampler != VK_NULL_HANDLE)
+    {
+        auto shared = std::make_shared<SharedTextureResources>();
+        shared->engine = engine;
+        shared->textureImage = textureImage;
+        shared->textureImageMemory = textureImageMemory;
+        shared->textureImageView = textureImageView;
+        shared->textureSampler = textureSampler;
+        shared->textureWidth = textureWidth;
+        shared->textureHeight = textureHeight;
+        shared->textureFormat = textureFormat;
+        owningModel->gltfMaterialTextureCache[tprimitive.material] = shared;
+        assignSharedTextureResources(this, shared);
     }
     finalizeTextureResources();
 }
@@ -475,9 +559,8 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
     textureHeight = height;
     textureFormat = format;
 
-    // Cleanup staging resources
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingBufferMemory, nullptr);
+    // Cleanup staging resources (deferred if in batch mode)
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
 }
 
 void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format)
@@ -556,8 +639,7 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
         updateDescriptorSet();
     }
 
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingMemory);
 }
 
 void Primitive::updateTextureFromNV12(const uint8_t* nv12Data, size_t dataSize, uint32_t width, uint32_t height)
@@ -751,8 +833,7 @@ void Primitive::updateChromaPlaneTexture(const void* pixelData,
         }
     }
 
-    vkDestroyBuffer(engine->logicalDevice, stagingBuffer, nullptr);
-    vkFreeMemory(engine->logicalDevice, stagingMemory, nullptr);
+    engine->deferStagingBufferDestruction(stagingBuffer, stagingMemory);
 
     chromaWidth = width;
     chromaHeight = height;
@@ -791,10 +872,44 @@ bool Primitive::createTextureFromGLTF(const tinygltf::Model* model, const tinygl
     }
 
     const auto& material = model->materials[tprimitive.material];
+    const auto& baseColorFactor = material.pbrMetallicRoughness.baseColorFactor;
     int textureIndex = material.pbrMetallicRoughness.baseColorTexture.index;
+    alphaCutoff = static_cast<float>(material.alphaCutoff);
+    if (material.alphaMode == "MASK")
+    {
+        alphaMode = PrimitiveAlphaMode::Mask;
+    }
+    else if (material.alphaMode == "BLEND")
+    {
+        alphaMode = PrimitiveAlphaMode::Blend;
+    }
+    else
+    {
+        alphaMode = PrimitiveAlphaMode::Opaque;
+    }
+
+    auto applyBaseColorFactor = [&](std::vector<uint8_t>& rgbaData, size_t pixelCount)
+    {
+        const float factorR = baseColorFactor.size() > 0 ? static_cast<float>(baseColorFactor[0]) : 1.0f;
+        const float factorG = baseColorFactor.size() > 1 ? static_cast<float>(baseColorFactor[1]) : 1.0f;
+        const float factorB = baseColorFactor.size() > 2 ? static_cast<float>(baseColorFactor[2]) : 1.0f;
+        const float factorA = baseColorFactor.size() > 3 ? static_cast<float>(baseColorFactor[3]) : 1.0f;
+
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            rgbaData[i * 4 + 0] = static_cast<uint8_t>(std::clamp((rgbaData[i * 4 + 0] / 255.0f) * factorR, 0.0f, 1.0f) * 255.0f);
+            rgbaData[i * 4 + 1] = static_cast<uint8_t>(std::clamp((rgbaData[i * 4 + 1] / 255.0f) * factorG, 0.0f, 1.0f) * 255.0f);
+            rgbaData[i * 4 + 2] = static_cast<uint8_t>(std::clamp((rgbaData[i * 4 + 2] / 255.0f) * factorB, 0.0f, 1.0f) * 255.0f);
+            rgbaData[i * 4 + 3] = static_cast<uint8_t>(std::clamp((rgbaData[i * 4 + 3] / 255.0f) * factorA, 0.0f, 1.0f) * 255.0f);
+        }
+    };
+
     if (textureIndex < 0 || textureIndex >= static_cast<int>(model->textures.size()))
     {
-        return false;
+        std::vector<uint8_t> rgbaData(4, 255);
+        applyBaseColorFactor(rgbaData, 1);
+        createTextureFromPixelData(rgbaData.data(), rgbaData.size(), 1, 1, VK_FORMAT_R8G8B8A8_SRGB);
+        return true;
     }
 
     const auto& textureInfo = model->textures[textureIndex];
@@ -839,6 +954,7 @@ bool Primitive::createTextureFromGLTF(const tinygltf::Model* model, const tinygl
         return false;
     }
 
+    applyBaseColorFactor(rgbaData, pixelCount);
     createTextureFromPixelData(rgbaData.data(), rgbaData.size(), image.width, image.height, VK_FORMAT_R8G8B8A8_SRGB);
     return true;
 }
@@ -857,14 +973,19 @@ void Primitive::finalizeTextureResources()
         throw std::runtime_error("Failed to finalize texture resources!");
     }
 
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = engine->descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &engine->primitiveDescriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(engine->logicalDevice, &allocInfo, &primitiveDescriptorSet) != VK_SUCCESS)
+    const VkResult allocResult = engine->allocateDescriptorSet(
+        engine->descriptorPool,
+        engine->primitiveDescriptorSetLayout,
+        primitiveDescriptorSet);
+    if (allocResult != VK_SUCCESS)
     {
+        std::cerr << "[Primitive] Descriptor set allocation failed. result=" << allocResult
+                  << " primitive=" << this
+                  << " mesh=" << mesh
+                  << " vertexCount=" << vertexCount
+                  << " textureFormat=" << static_cast<int>(textureFormat)
+                  << " usesYuv=" << (usesYuvTexture ? "yes" : "no")
+                  << std::endl;
         throw std::runtime_error("Failed to allocate texture descriptor set!");
     }
 

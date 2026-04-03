@@ -9,52 +9,6 @@
 
 namespace
 {
-    void ForwardMouseButton(GLFWwindow *window, int button, int action, int mods)
-    {
-        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-        if (!display)
-            return;
-        for (auto *camera : display->cameras)
-        {
-            if (camera)
-            {
-                camera->handleMouseButton(button, action, mods);
-            }
-        }
-    }
-
-    void ForwardCursorPos(GLFWwindow *window, double xpos, double ypos)
-    {
-        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-        if (!display)
-            return;
-        for (auto *camera : display->cameras)
-        {
-            if (camera)
-            {
-                camera->handleCursorPos(xpos, ypos);
-            }
-        }
-    }
-
-    void ForwardKey(GLFWwindow *window, int key, int scancode, int action, int mods)
-    {
-        Display *display = static_cast<Display *>(glfwGetWindowUserPointer(window));
-        if (!display)
-            return;
-        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-            return;
-        }
-        for (auto *camera : display->cameras)
-        {
-            if (camera)
-            {
-                camera->handleKey(key, scancode, action, mods);
-            }
-        }
-    }
 } // namespace
 
 Camera::Camera(Engine *engine,
@@ -174,7 +128,7 @@ void Camera::allocateDescriptorSet()
     descriptorAllocInfo.descriptorSetCount = 1;
     descriptorAllocInfo.pSetLayouts = &engine->descriptorSetLayout;
 
-    if (vkAllocateDescriptorSets(engine->logicalDevice, &descriptorAllocInfo, &descriptorSet) != VK_SUCCESS)
+    if (engine->allocateDescriptorSet(engine->descriptorPool, engine->descriptorSetLayout, descriptorSet) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to allocate camera descriptor set!");
     }
@@ -392,7 +346,8 @@ void Camera::updateCameraMatrices()
         }
     }
 
-    camera0TransformUBO.view = glm::lookAt(cameraPos, cameraPos + front, worldUp);
+    viewMatrix = glm::lookAt(cameraPos, cameraPos + front, worldUp);
+    camera0TransformUBO.view = viewMatrix;
 
     float aspect = (height > 0.0f) ? (width / height) : (800.0f / 600.0f);
 
@@ -400,13 +355,14 @@ void Camera::updateCameraMatrices()
     {
         const float halfWidth = orthoWidth * 0.5f;
         const float halfHeight = orthoHeight * 0.5f;
-        camera0TransformUBO.proj = glm::orthoRH_ZO(-halfWidth, halfWidth, -halfHeight, halfHeight, orthoNear, orthoFar);
+        projectionMatrix = glm::orthoRH_ZO(-halfWidth, halfWidth, -halfHeight, halfHeight, orthoNear, orthoFar);
     }
     else
     {
-        camera0TransformUBO.proj = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        projectionMatrix = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, 0.1f, 100.0f);
     }
-    camera0TransformUBO.proj[1][1] *= -1;
+    projectionMatrix[1][1] *= -1;
+    camera0TransformUBO.proj = projectionMatrix;
 
     if (camera0TransformMappedUBO)
     {
@@ -420,37 +376,20 @@ void Camera::updateCameraMatrices()
 
 void Camera::registerWindowCallbacks()
 {
-    if (!display)
-    {
-        return;
-    }
-    if (!windowHandle)
+    if (!windowHandle && display)
     {
         windowHandle = display->window;
     }
-    if (!windowHandle)
-    {
-        return;
-    }
-
-    glfwSetWindowUserPointer(windowHandle, display);
-    glfwSetMouseButtonCallback(windowHandle, ForwardMouseButton);
-    glfwSetCursorPosCallback(windowHandle, ForwardCursorPos);
-    glfwSetKeyCallback(windowHandle, ForwardKey);
 }
 
 glm::mat4 Camera::getViewMatrix() const
 {
-    // This would return the current view matrix
-    // For now, we'll return identity - this can be implemented based on the updateCameraMatrices logic
-    return glm::mat4(1.0f);
+    return viewMatrix;
 }
 
 glm::mat4 Camera::getProjectionMatrix() const
 {
-    // This would return the current projection matrix
-    // For now, we'll return identity - this can be implemented based on the updateCameraMatrices logic
-    return glm::mat4(1.0f);
+    return projectionMatrix;
 }
 
 void Camera::setOrthographicProjection(float width, float height, float nearPlane, float farPlane)

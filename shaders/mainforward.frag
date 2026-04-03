@@ -11,6 +11,8 @@ layout(set = 1, binding = 0) uniform ObjectUBO {
     mat4 model;
     uvec4 instanceData;
     uvec4 yuvParams;
+    uvec4 materialFlags;
+    vec4 materialParams;
 } objectUBO;
 
 layout(set = 1, binding = 1) uniform sampler2D texSampler;
@@ -58,6 +60,8 @@ vec3 yuvToRgb(float y, float u, float v, uint colorSpace) {
 }
 
 void main() {
+    const uint alphaMode = objectUBO.materialFlags.x;
+    const float alphaCutoff = objectUBO.materialParams.x;
     vec3 normal = normalize(fragNormal);
     vec3 lightDir = normalize(lightUBO.direction.xyz);
     float diff = max(dot(normal, lightDir), 0.0);
@@ -75,9 +79,13 @@ void main() {
         sampledColor = vec4(rgb, 1.0);
     }
 
-    // Sample texture or use fallback color
-    outColor = sampledColor * vec4(lighting, 1.0);
-    if (outColor.a == 0.0) {
-        outColor = vec4(fragNormal * 0.5 + 0.5, 1.0); // Fallback: normal as color
+    if (alphaMode == 1u && sampledColor.a < alphaCutoff) {
+        discard;
     }
+
+    if (alphaMode == 0u || alphaMode == 1u) {
+        sampledColor.a = 1.0;
+    }
+
+    outColor = vec4(sampledColor.rgb * lighting, sampledColor.a);
 }

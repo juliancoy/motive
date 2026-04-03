@@ -1,0 +1,213 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(Motive LANGUAGES C CXX)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(MOTIVE_ENABLE_ASAN "Build with AddressSanitizer" OFF)
+
+if(MOTIVE_ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address -fno-omit-frame-pointer)
+endif()
+
+set(MOTIVE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+set(MOTIVE_FFMPEG_DIR "${MOTIVE_ROOT}/FFmpeg/.build/install")
+set(MOTIVE_SHADER_DIR "${MOTIVE_ROOT}/shaders")
+
+find_package(Threads REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_program(GLSLANG_VALIDATOR NAMES glslangValidator REQUIRED)
+
+function(motive_find_library out_var)
+    set(options REQUIRED)
+    set(oneValueArgs)
+    set(multiValueArgs NAMES PATHS)
+    cmake_parse_arguments(MFL "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    find_library(${out_var}
+        NAMES ${MFL_NAMES}
+        PATHS ${MFL_PATHS}
+    )
+
+    if(NOT ${out_var} AND MFL_REQUIRED)
+        message(FATAL_ERROR "Missing required library: ${MFL_NAMES}")
+    endif()
+endfunction()
+
+set(MOTIVE_INCLUDE_DIRS
+    "${MOTIVE_ROOT}/Vulkan-Headers/include"
+    "${MOTIVE_ROOT}/glfw/include"
+    "${MOTIVE_ROOT}/tinygltf"
+    "${MOTIVE_ROOT}/tinygltf/examples/common/imgui"
+    "${MOTIVE_ROOT}/imgui"
+    "${MOTIVE_ROOT}/glm"
+    "${MOTIVE_FFMPEG_DIR}/include"
+    "${MOTIVE_ROOT}/freetype/include"
+    "${MOTIVE_ROOT}/freetype/build/include"
+    "${MOTIVE_ROOT}/freetype/build/include/freetype2"
+    "${MOTIVE_ROOT}/common_vv/include"
+    "${MOTIVE_ROOT}/common_vv/libs"
+    "${MOTIVE_ROOT}/vk_video_decoder/include"
+    "${MOTIVE_ROOT}/vk_video_decoder/libs"
+    "${MOTIVE_ROOT}/ncnn/include"
+    "${MOTIVE_ROOT}/ncnn/src"
+    "${MOTIVE_ROOT}/ncnn/build/src"
+    "${MOTIVE_ROOT}/ufbx"
+)
+
+set(MOTIVE_LIBRARY_DIRS
+    "${MOTIVE_ROOT}/Vulkan-Headers/lib"
+    "${MOTIVE_ROOT}/glfw/build/src"
+    "${MOTIVE_FFMPEG_DIR}/lib"
+    "${MOTIVE_ROOT}/freetype/build"
+    "${MOTIVE_ROOT}/ncnn/build/src"
+    "${MOTIVE_ROOT}/ncnn/build/glslang/glslang"
+    "${MOTIVE_ROOT}"
+)
+
+motive_find_library(MOTIVE_GLFW_LIBRARY REQUIRED
+    NAMES glfw3
+    PATHS "${MOTIVE_ROOT}/glfw/build/src"
+)
+motive_find_library(MOTIVE_TINYGLTF_LIBRARY REQUIRED
+    NAMES tinygltf
+    PATHS "${MOTIVE_ROOT}"
+)
+motive_find_library(MOTIVE_VULKAN_LIBRARY REQUIRED
+    NAMES vulkan
+    PATHS "${MOTIVE_ROOT}/Vulkan-Headers/lib"
+)
+motive_find_library(MOTIVE_AVFORMAT_LIBRARY REQUIRED NAMES avformat PATHS "${MOTIVE_FFMPEG_DIR}/lib")
+motive_find_library(MOTIVE_AVCODEC_LIBRARY REQUIRED NAMES avcodec PATHS "${MOTIVE_FFMPEG_DIR}/lib")
+motive_find_library(MOTIVE_SWSCALE_LIBRARY REQUIRED NAMES swscale PATHS "${MOTIVE_FFMPEG_DIR}/lib")
+motive_find_library(MOTIVE_AVUTIL_LIBRARY REQUIRED NAMES avutil PATHS "${MOTIVE_FFMPEG_DIR}/lib")
+motive_find_library(MOTIVE_SWRESAMPLE_LIBRARY REQUIRED NAMES swresample PATHS "${MOTIVE_FFMPEG_DIR}/lib")
+motive_find_library(MOTIVE_FREETYPE_LIBRARY REQUIRED NAMES freetype PATHS "${MOTIVE_ROOT}/freetype/build")
+motive_find_library(MOTIVE_NCNN_LIBRARY REQUIRED NAMES ncnn PATHS "${MOTIVE_ROOT}/ncnn/build/src")
+motive_find_library(MOTIVE_GLSLANG_LIBRARY REQUIRED NAMES glslang PATHS "${MOTIVE_ROOT}/ncnn/build/glslang/glslang")
+motive_find_library(MOTIVE_GLSLANG_LIMITS_LIBRARY REQUIRED NAMES glslang-default-resource-limits PATHS "${MOTIVE_ROOT}/ncnn/build/glslang/glslang")
+
+motive_find_library(MOTIVE_PNG_LIBRARY NAMES png PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_BROTLIDEC_LIBRARY NAMES brotlidec PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_BROTLICOMMON_LIBRARY NAMES brotlicommon PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_BZ2_LIBRARY NAMES bz2 PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_LZMA_LIBRARY NAMES lzma PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_DRM_LIBRARY NAMES drm PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_Z_LIBRARY NAMES z PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_OPENCL_LIBRARY NAMES OpenCL PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_X11_LIBRARY NAMES X11 PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_XEXT_LIBRARY NAMES Xext PATHS ${MOTIVE_LIBRARY_DIRS})
+motive_find_library(MOTIVE_VDPAU_LIBRARY NAMES vdpau PATHS ${MOTIVE_LIBRARY_DIRS})
+
+set(MOTIVE_COMMON_LINK_LIBS
+    ${MOTIVE_GLFW_LIBRARY}
+    ${MOTIVE_TINYGLTF_LIBRARY}
+    ${MOTIVE_VULKAN_LIBRARY}
+    ${MOTIVE_AVFORMAT_LIBRARY}
+    ${MOTIVE_AVCODEC_LIBRARY}
+    ${MOTIVE_SWSCALE_LIBRARY}
+    ${MOTIVE_AVUTIL_LIBRARY}
+    ${MOTIVE_SWRESAMPLE_LIBRARY}
+    ${MOTIVE_FREETYPE_LIBRARY}
+    ${MOTIVE_NCNN_LIBRARY}
+    ${MOTIVE_GLSLANG_LIBRARY}
+    ${MOTIVE_GLSLANG_LIMITS_LIBRARY}
+    OpenMP::OpenMP_CXX
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+    m
+)
+
+foreach(optional_lib
+    MOTIVE_PNG_LIBRARY
+    MOTIVE_BROTLIDEC_LIBRARY
+    MOTIVE_BROTLICOMMON_LIBRARY
+    MOTIVE_BZ2_LIBRARY
+    MOTIVE_LZMA_LIBRARY
+    MOTIVE_DRM_LIBRARY
+    MOTIVE_Z_LIBRARY
+    MOTIVE_OPENCL_LIBRARY
+    MOTIVE_X11_LIBRARY
+    MOTIVE_XEXT_LIBRARY
+    MOTIVE_VDPAU_LIBRARY
+)
+    if(${optional_lib})
+        list(APPEND MOTIVE_COMMON_LINK_LIBS ${${optional_lib}})
+    endif()
+endforeach()
+
+file(GLOB MOTIVE_ROOT_CPP CONFIGURE_DEPENDS "${MOTIVE_ROOT}/*.cpp")
+file(GLOB_RECURSE MOTIVE_COMMON_VV_CPP CONFIGURE_DEPENDS "${MOTIVE_ROOT}/common_vv/libs/*.cpp")
+file(GLOB_RECURSE MOTIVE_DECODER_VV_CPP CONFIGURE_DEPENDS "${MOTIVE_ROOT}/vk_video_decoder/libs/*.cpp")
+
+set(MOTIVE_MAIN_SOURCES
+    "${MOTIVE_ROOT}/motive3d.cpp"
+    "${MOTIVE_ROOT}/motive2d.cpp"
+    "${MOTIVE_ROOT}/encode.cpp"
+    "${MOTIVE_ROOT}/asset_load_profile.cpp"
+    "${MOTIVE_ROOT}/engine_ui_motive_editor_main.cpp"
+)
+set(MOTIVE_EXCLUDED_ENGINE_SOURCES
+    "${MOTIVE_ROOT}/brain_viewer_engine.cpp"
+    "${MOTIVE_ROOT}/vulkan_video_bridge.cpp"
+)
+
+list(REMOVE_ITEM MOTIVE_ROOT_CPP ${MOTIVE_MAIN_SOURCES})
+list(REMOVE_ITEM MOTIVE_ROOT_CPP ${MOTIVE_EXCLUDED_ENGINE_SOURCES})
+
+set(MOTIVE_ENGINE_SOURCES
+    ${MOTIVE_ROOT_CPP}
+    ${MOTIVE_COMMON_VV_CPP}
+    ${MOTIVE_DECODER_VV_CPP}
+    "${MOTIVE_ROOT}/ufbx/ufbx.c"
+)
+
+add_library(engine STATIC ${MOTIVE_ENGINE_SOURCES})
+target_include_directories(engine PUBLIC ${MOTIVE_INCLUDE_DIRS})
+target_link_libraries(engine PUBLIC ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets)
+
+foreach(source_file IN LISTS MOTIVE_ENGINE_SOURCES)
+    get_filename_component(source_name "${source_file}" NAME)
+    if(source_name MATCHES "detection|overlay_yolo|motive2d_yolo")
+        set_source_files_properties("${source_file}" PROPERTIES COMPILE_DEFINITIONS "NCNN_AVAILABLE;NCNN_USE_VULKAN=0")
+    endif()
+endforeach()
+
+set(MOTIVE_SHADER_OUTPUTS)
+file(GLOB MOTIVE_SHADER_INPUTS CONFIGURE_DEPENDS
+    "${MOTIVE_SHADER_DIR}/*.vert"
+    "${MOTIVE_SHADER_DIR}/*.frag"
+    "${MOTIVE_SHADER_DIR}/*.comp"
+)
+foreach(shader IN LISTS MOTIVE_SHADER_INPUTS)
+    get_filename_component(shader_name "${shader}" NAME)
+    set(shader_out "${MOTIVE_SHADER_DIR}/${shader_name}.spv")
+    add_custom_command(
+        OUTPUT "${shader_out}"
+        COMMAND ${GLSLANG_VALIDATOR} -V "${shader}" -o "${shader_out}"
+        DEPENDS "${shader}"
+        VERBATIM
+    )
+    list(APPEND MOTIVE_SHADER_OUTPUTS "${shader_out}")
+endforeach()
+add_custom_target(compile_shaders ALL DEPENDS ${MOTIVE_SHADER_OUTPUTS})
+
+function(motive_add_app target source_file)
+    add_executable(${target} "${MOTIVE_ROOT}/${source_file}")
+    target_include_directories(${target} PRIVATE ${MOTIVE_INCLUDE_DIRS})
+    target_link_libraries(${target} PRIVATE engine)
+    add_dependencies(${target} compile_shaders)
+endfunction()
+
+motive_add_app(motive3d motive3d.cpp)
+motive_add_app(motive2d motive2d.cpp)
+motive_add_app(encode encode.cpp)
+motive_add_app(motive_editor engine_ui_motive_editor_main.cpp)
+motive_add_app(asset_load_profile asset_load_profile.cpp)
+target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)

@@ -19,11 +19,18 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QDebug>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QTreeView>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <glm/glm.hpp>
+#include <algorithm>
+#include <limits>
+#include <vector>
+
+#include "ufbx.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -82,9 +89,266 @@ bool isVideoFilePath(const QString& path)
            suffix == QStringLiteral("m4v");
 }
 
+bool isRenderableModelFilePath(const QString& path)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("fbx") ||
+           suffix == QStringLiteral("gltf") ||
+           suffix == QStringLiteral("glb");
+}
+
 bool isPreviewableFilePath(const QString& path)
 {
-    return isImageFilePath(path) || isVideoFilePath(path);
+    return isImageFilePath(path) || isVideoFilePath(path) || isRenderableModelFilePath(path);
+}
+
+glm::vec3 toGlmVec3(ufbx_vec3 value)
+{
+    return glm::vec3(static_cast<float>(value.x),
+                     static_cast<float>(value.y),
+                     static_cast<float>(value.z));
+}
+
+QPixmap modelPreviewCard(const QFileInfo& info, const QSize& size = QSize(480, 300))
+{
+    QPixmap pixmap(size);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QLinearGradient bg(QPointF(0.0, 0.0), QPointF(size.width(), size.height()));
+    bg.setColorAt(0.0, QColor(QStringLiteral("#0d1822")));
+    bg.setColorAt(1.0, QColor(QStringLiteral("#182938")));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(bg);
+    painter.drawRoundedRect(QRectF(0, 0, size.width(), size.height()), 18, 18);
+
+    painter.setBrush(QColor(QStringLiteral("#22384d")));
+    painter.drawRoundedRect(QRectF(26, 24, size.width() - 52, size.height() - 48), 16, 16);
+
+    painter.setPen(QColor(QStringLiteral("#7ec8ff")));
+    QFont badgeFont = painter.font();
+    badgeFont.setBold(true);
+    badgeFont.setPointSizeF(18.0);
+    painter.setFont(badgeFont);
+    painter.drawText(QRectF(42, 40, size.width() - 84, 32), Qt::AlignLeft | Qt::AlignVCenter,
+                     info.suffix().toUpper());
+
+    painter.setPen(QColor(QStringLiteral("#edf5ff")));
+    QFont titleFont = painter.font();
+    titleFont.setBold(true);
+    titleFont.setPointSizeF(15.0);
+    painter.setFont(titleFont);
+    painter.drawText(QRectF(42, 88, size.width() - 84, 56),
+                     Qt::AlignLeft | Qt::TextWordWrap,
+                     info.completeBaseName());
+
+    painter.setPen(QColor(QStringLiteral("#a9c0d6")));
+    QFont metaFont = painter.font();
+    metaFont.setBold(false);
+    metaFont.setPointSizeF(11.0);
+    painter.setFont(metaFont);
+    painter.drawText(QRectF(42, size.height() - 88, size.width() - 84, 48),
+                     Qt::AlignLeft | Qt::TextWordWrap,
+                     QStringLiteral("3D asset preview\nDirect viewport load supported"));
+
+    painter.setPen(QPen(QColor(QStringLiteral("#8ed0ff")), 2.0));
+    painter.setBrush(Qt::NoBrush);
+    const QPointF center(size.width() * 0.72, size.height() * 0.48);
+    const qreal radius = qMin(size.width(), size.height()) * 0.18;
+    painter.drawEllipse(center, radius, radius);
+    painter.drawLine(QPointF(center.x(), center.y() - radius),
+                     QPointF(center.x(), center.y() + radius));
+    painter.drawLine(QPointF(center.x() - radius, center.y()),
+                     QPointF(center.x() + radius, center.y()));
+    painter.drawLine(QPointF(center.x() - radius * 0.7, center.y() - radius * 0.7),
+                     QPointF(center.x() + radius * 0.7, center.y() + radius * 0.7));
+
+    return pixmap;
+}
+
+struct PreviewTriangle
+{
+    glm::vec3 a;
+    glm::vec3 b;
+    glm::vec3 c;
+};
+
+std::vector<PreviewTriangle> loadFbxPreviewTriangles(const QString& filePath)
+{
+    std::vector<PreviewTriangle> triangles;
+    ufbx_load_opts opts = {};
+    opts.generate_missing_normals = true;
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(filePath.toUtf8().constData(), &opts, &error);
+    if (!scene)
+    {
+        return triangles;
+    }
+
+    for (size_t meshIndex = 0; meshIndex < scene->meshes.count; ++meshIndex)
+    {
+        const ufbx_mesh* mesh = scene->meshes.data[meshIndex];
+        if (!mesh || !mesh->vertex_position.exists)
+        {
+            continue;
+        }
+
+        std::vector<uint32_t> triIndices(mesh->max_face_triangles * 3);
+        for (size_t faceIndex = 0; faceIndex < mesh->faces.count; ++faceIndex)
+        {
+            const ufbx_face face = mesh->faces.data[faceIndex];
+            const uint32_t numTriangles = ufbx_triangulate_face(triIndices.data(), triIndices.size(), mesh, face);
+            for (uint32_t tri = 0; tri < numTriangles; ++tri)
+            {
+                const size_t i0 = triIndices[tri * 3 + 0];
+                const size_t i1 = triIndices[tri * 3 + 1];
+                const size_t i2 = triIndices[tri * 3 + 2];
+                triangles.push_back(PreviewTriangle{
+                    toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_position, i0)),
+                    toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_position, i1)),
+                    toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_position, i2)),
+                });
+            }
+        }
+    }
+
+    ufbx_free_scene(scene);
+    return triangles;
+}
+
+QPixmap renderFbxPreview(const QString& filePath, const QSize& size = QSize(480, 300))
+{
+    const std::vector<PreviewTriangle> triangles = loadFbxPreviewTriangles(filePath);
+    if (triangles.empty())
+    {
+        return {};
+    }
+
+    glm::vec3 minBounds(std::numeric_limits<float>::max());
+    glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+    for (const PreviewTriangle& tri : triangles)
+    {
+        minBounds = glm::min(minBounds, glm::min(tri.a, glm::min(tri.b, tri.c)));
+        maxBounds = glm::max(maxBounds, glm::max(tri.a, glm::max(tri.b, tri.c)));
+    }
+
+    const glm::vec3 center = (minBounds + maxBounds) * 0.5f;
+    const glm::vec3 extent = maxBounds - minBounds;
+    const float maxExtent = std::max({extent.x, extent.y, extent.z, 1e-4f});
+    const float scale = 1.75f / maxExtent;
+
+    const float yaw = -0.7f;
+    const float pitch = 0.45f;
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cx = std::cos(pitch);
+    const float sx = std::sin(pitch);
+    const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.4f, 0.6f, 0.7f));
+
+    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(QStringLiteral("#0a1118")));
+    QPainter bgPainter(&image);
+    QLinearGradient bg(QPointF(0.0, 0.0), QPointF(size.width(), size.height()));
+    bg.setColorAt(0.0, QColor(QStringLiteral("#0b1620")));
+    bg.setColorAt(1.0, QColor(QStringLiteral("#1a2e42")));
+    bgPainter.fillRect(image.rect(), bg);
+    bgPainter.end();
+
+    std::vector<float> depth(static_cast<size_t>(size.width() * size.height()),
+                             std::numeric_limits<float>::infinity());
+
+    auto rotatePoint = [&](glm::vec3 p) {
+        p = (p - center) * scale;
+        const float x1 = p.x * cy + p.z * sy;
+        const float z1 = -p.x * sy + p.z * cy;
+        p.x = x1;
+        p.z = z1;
+        const float y2 = p.y * cx - p.z * sx;
+        const float z2 = p.y * sx + p.z * cx;
+        p.y = y2;
+        p.z = z2;
+        return p;
+    };
+
+    struct ScreenVertex
+    {
+        float x;
+        float y;
+        float z;
+    };
+
+    for (const PreviewTriangle& srcTri : triangles)
+    {
+        const glm::vec3 a3 = rotatePoint(srcTri.a);
+        const glm::vec3 b3 = rotatePoint(srcTri.b);
+        const glm::vec3 c3 = rotatePoint(srcTri.c);
+
+        const glm::vec3 normal = glm::normalize(glm::cross(b3 - a3, c3 - a3));
+        if (!std::isfinite(normal.x) || !std::isfinite(normal.y) || !std::isfinite(normal.z))
+        {
+            continue;
+        }
+
+        const float shade = std::clamp(glm::dot(normal, lightDir) * 0.6f + 0.4f, 0.15f, 1.0f);
+        const QColor color = QColor::fromRgbF(0.35f * shade, 0.68f * shade, 0.95f * shade, 1.0f);
+
+        auto project = [&](const glm::vec3& p) -> ScreenVertex {
+            const float perspective = 1.8f / (p.z + 3.2f);
+            const float sxp = p.x * perspective * size.width() * 0.42f + size.width() * 0.5f;
+            const float syp = -p.y * perspective * size.height() * 0.42f + size.height() * 0.56f;
+            return {sxp, syp, p.z};
+        };
+
+        const ScreenVertex a = project(a3);
+        const ScreenVertex b = project(b3);
+        const ScreenVertex c = project(c3);
+
+        const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        if (std::abs(area) < 1e-5f)
+        {
+            continue;
+        }
+
+        const int minX = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+        const int maxX = std::min(size.width() - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+        const int minY = std::max(0, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+        const int maxY = std::min(size.height() - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+
+        for (int y = minY; y <= maxY; ++y)
+        {
+            for (int x = minX; x <= maxX; ++x)
+            {
+                const float px = static_cast<float>(x) + 0.5f;
+                const float py = static_cast<float>(y) + 0.5f;
+                const float w0 = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) / area;
+                const float w1 = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) / area;
+                const float w2 = 1.0f - w0 - w1;
+                if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f)
+                {
+                    continue;
+                }
+
+                const float z = w0 * a.z + w1 * b.z + w2 * c.z;
+                const int idx = y * size.width() + x;
+                if (z >= depth[static_cast<size_t>(idx)])
+                {
+                    continue;
+                }
+                depth[static_cast<size_t>(idx)] = z;
+                image.setPixelColor(x, y, color);
+            }
+        }
+    }
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(QColor(QStringLiteral("#d9f1ff")), 1.2));
+    painter.drawRoundedRect(image.rect().adjusted(0, 0, -1, -1), 16, 16);
+    painter.end();
+
+    return QPixmap::fromImage(image);
 }
 
 QImage decodeFirstVideoFrame(const QString& filePath)
@@ -272,11 +536,35 @@ void AssetBrowserWidget::setRootPath(const QString& path)
     {
         setGalleryPath(m_galleryPath);
     }
+
+    if (m_rootPathChangedCallback)
+    {
+        m_rootPathChangedCallback(m_rootPath);
+    }
 }
 
 QString AssetBrowserWidget::rootPath() const
 {
     return m_rootPath;
+}
+
+QString AssetBrowserWidget::galleryPath() const
+{
+    return m_galleryPath;
+}
+
+QString AssetBrowserWidget::selectedAssetPath() const
+{
+    return m_lastActivated.filePath;
+}
+
+void AssetBrowserWidget::restoreGalleryPath(const QString& path)
+{
+    if (path.isEmpty())
+    {
+        return;
+    }
+    setGalleryPath(path);
 }
 
 void AssetBrowserWidget::setActivationCallback(std::function<void(const AssetBrowserSelection&)> callback)
@@ -287,6 +575,11 @@ void AssetBrowserWidget::setActivationCallback(std::function<void(const AssetBro
 void AssetBrowserWidget::setPreviewAnchorWidget(QWidget* widget)
 {
     m_previewAnchorWidget = widget;
+}
+
+void AssetBrowserWidget::setRootPathChangedCallback(std::function<void(const QString&)> callback)
+{
+    m_rootPathChangedCallback = std::move(callback);
 }
 
 void AssetBrowserWidget::buildUi()
@@ -421,6 +714,9 @@ QWidget* AssetBrowserWidget::buildGalleryPage()
     m_galleryList->setViewMode(QListView::IconMode);
     m_galleryList->setResizeMode(QListView::Adjust);
     m_galleryList->setMovement(QListView::Static);
+    m_galleryList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_galleryList->setDragEnabled(true);
+    m_galleryList->setDragDropMode(QAbstractItemView::DragOnly);
     m_galleryList->setIconSize(QSize(48, 48));
     m_galleryList->setSpacing(8);
     m_galleryList->setMouseTracking(true);
@@ -552,6 +848,17 @@ QPixmap AssetBrowserWidget::previewPixmapForFile(const QString& filePath)
             pixmap = QPixmap::fromImage(frame);
         }
     }
+    else if (isRenderableModelFilePath(filePath))
+    {
+        if (info.suffix().compare(QStringLiteral("fbx"), Qt::CaseInsensitive) == 0)
+        {
+            pixmap = renderFbxPreview(filePath);
+        }
+        if (pixmap.isNull())
+        {
+            pixmap = modelPreviewCard(info);
+        }
+    }
 
     if (!pixmap.isNull())
     {
@@ -658,6 +965,8 @@ bool AssetBrowserWidget::eventFilter(QObject* watched, QEvent* event)
                         const QFileInfo info = m_fsModel->fileInfo(index);
                         if (info.exists() && info.isFile())
                         {
+                            hideHoverPreview();
+                            qDebug() << "[AssetBrowser] Starting tree drag for" << info.absoluteFilePath();
                             auto* mimeData = new QMimeData;
                             mimeData->setUrls({QUrl::fromLocalFile(info.absoluteFilePath())});
                             auto* drag = new QDrag(m_tree);
@@ -677,7 +986,41 @@ bool AssetBrowserWidget::eventFilter(QObject* watched, QEvent* event)
 
     if (watched == (m_galleryList ? m_galleryList->viewport() : nullptr))
     {
-        if (event->type() == QEvent::Leave)
+        if (event->type() == QEvent::MouseButtonPress)
+        {
+            const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton)
+            {
+                m_galleryDragStartPos = mouseEvent->pos();
+            }
+        }
+        else if (event->type() == QEvent::MouseMove && m_galleryList)
+        {
+            const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->buttons() & Qt::LeftButton)
+            {
+                if ((mouseEvent->pos() - m_galleryDragStartPos).manhattanLength() >= QApplication::startDragDistance())
+                {
+                    if (QListWidgetItem* item = m_galleryList->itemAt(m_galleryDragStartPos))
+                    {
+                        const QString path = item->data(Qt::UserRole).toString();
+                        const QFileInfo info(path);
+                        if (info.exists() && info.isFile())
+                        {
+                            hideHoverPreview();
+                            qDebug() << "[AssetBrowser] Starting gallery drag for" << info.absoluteFilePath();
+                            auto* mimeData = new QMimeData;
+                            mimeData->setUrls({QUrl::fromLocalFile(info.absoluteFilePath())});
+                            auto* drag = new QDrag(m_galleryList);
+                            drag->setMimeData(mimeData);
+                            drag->exec(Qt::CopyAction);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        else if (event->type() == QEvent::Leave)
         {
             hideHoverPreview();
         }
