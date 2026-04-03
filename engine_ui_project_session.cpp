@@ -83,9 +83,24 @@ QVector3D ProjectSession::currentCameraRotation() const
     return m_currentCameraRotation;
 }
 
+float ProjectSession::currentCameraSpeed() const
+{
+    return m_currentCameraSpeed;
+}
+
+QJsonObject ProjectSession::currentSceneLight() const
+{
+    return m_currentSceneLight;
+}
+
 QString ProjectSession::currentRenderPath() const
 {
     return m_currentRenderPath;
+}
+
+bool ProjectSession::currentMeshConsolidationEnabled() const
+{
+    return m_currentMeshConsolidationEnabled;
 }
 
 QString ProjectSession::projectsDirPath() const
@@ -233,9 +248,24 @@ void ProjectSession::setCurrentCameraRotation(const QVector3D& rotation)
     m_currentCameraRotation = rotation;
 }
 
+void ProjectSession::setCurrentCameraSpeed(float speed)
+{
+    m_currentCameraSpeed = speed;
+}
+
+void ProjectSession::setCurrentSceneLight(const QJsonObject& light)
+{
+    m_currentSceneLight = light;
+}
+
 void ProjectSession::setCurrentRenderPath(const QString& renderPath)
 {
     m_currentRenderPath = renderPath.trimmed().isEmpty() ? QStringLiteral("forward3d") : renderPath;
+}
+
+void ProjectSession::setCurrentMeshConsolidationEnabled(bool enabled)
+{
+    m_currentMeshConsolidationEnabled = enabled;
 }
 
 void ProjectSession::saveCurrentProject() const
@@ -334,7 +364,10 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("sceneItems"), m_currentSceneItems},
         {QStringLiteral("cameraPosition"), QJsonArray{m_currentCameraPosition.x(), m_currentCameraPosition.y(), m_currentCameraPosition.z()}},
         {QStringLiteral("cameraRotation"), QJsonArray{m_currentCameraRotation.x(), m_currentCameraRotation.y(), m_currentCameraRotation.z()}},
-        {QStringLiteral("renderPath"), m_currentRenderPath}
+        {QStringLiteral("cameraSpeed"), m_currentCameraSpeed},
+        {QStringLiteral("sceneLight"), m_currentSceneLight},
+        {QStringLiteral("renderPath"), m_currentRenderPath},
+        {QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled}
     };
 }
 
@@ -384,7 +417,10 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     appendSetIfChanged(QStringLiteral("sceneItems"), m_currentSceneItems);
     appendSetIfChanged(QStringLiteral("cameraPosition"), QJsonArray{m_currentCameraPosition.x(), m_currentCameraPosition.y(), m_currentCameraPosition.z()});
     appendSetIfChanged(QStringLiteral("cameraRotation"), QJsonArray{m_currentCameraRotation.x(), m_currentCameraRotation.y(), m_currentCameraRotation.z()});
+    appendSetIfChanged(QStringLiteral("cameraSpeed"), m_currentCameraSpeed);
+    appendSetIfChanged(QStringLiteral("sceneLight"), m_currentSceneLight);
     appendSetIfChanged(QStringLiteral("renderPath"), m_currentRenderPath);
+    appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled);
 
     root[QStringLiteral("changes")] = changes;
     return root;
@@ -428,7 +464,8 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("sceneAssetPaths"), root.value(QStringLiteral("sceneAssetPaths")).toArray()},
         {QStringLiteral("cameraPosition"), QJsonArray{0.0, 0.0, 3.0}},
         {QStringLiteral("cameraRotation"), QJsonArray{0.0, 0.0, 0.0}},
-        {QStringLiteral("renderPath"), root.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"))}
+        {QStringLiteral("renderPath"), root.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"))},
+        {QStringLiteral("meshConsolidationEnabled"), root.contains(QStringLiteral("meshConsolidationEnabled")) ? root.value(QStringLiteral("meshConsolidationEnabled")).toBool(true) : true}
     };
 }
 
@@ -475,7 +512,10 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     } else {
         m_currentCameraRotation = QVector3D(0.0f, 0.0f, 0.0f); // default
     }
+    m_currentCameraSpeed = static_cast<float>(state.value(QStringLiteral("cameraSpeed")).toDouble(0.01));
     m_currentRenderPath = state.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"));
+    m_currentMeshConsolidationEnabled = state.value(QStringLiteral("meshConsolidationEnabled")).toBool(true);
+    m_currentSceneLight = state.value(QStringLiteral("sceneLight")).toObject();
     if (m_currentSceneItems.isEmpty())
     {
         const QJsonArray scenePaths = state.value(QStringLiteral("sceneAssetPaths")).toArray();

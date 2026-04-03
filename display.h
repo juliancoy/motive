@@ -9,6 +9,8 @@
 #include <glm/gtx/component_wise.hpp>
 #include <glm/glm.hpp>
 #include <chrono>
+#include <mutex>
+#include <array>
 #include <vector>
 #include <vulkan/vulkan.h>
 #include "glyph.h"
@@ -40,11 +42,13 @@ public:
     void handleFramebufferResize(int newWidth, int newHeight);
     void updateCameraViewports();
     void setBackgroundColor(float r, float g, float b);
+    void shutdown();
 
     // Input handling (forwarded to camera)
     void handleMouseButton(int button, int action, int mods);
     void handleCursorPos(double xpos, double ypos);
     void handleKey(int key, int scancode, int action, int mods);
+    void handleWindowFocusChanged(int focused);
 
     GLFWwindow *window;
     VkSurfaceKHR surface;
@@ -71,7 +75,8 @@ public:
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkRenderPass renderPass;
-    VkPipeline graphicsPipeline;
+    std::array<VkPipeline, 3> graphicsPipelines{};
+    std::array<VkPipeline, 3> transparentGraphicsPipelines{};
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
@@ -117,6 +122,8 @@ private:
     };
 
     Engine* engine;
+    std::mutex renderMutex;
+    bool shuttingDown = false;
     void cleanupSwapchainResources();
     void createOverlayBuffer(VkDeviceSize size);
     void destroyOverlayBuffer();

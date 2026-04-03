@@ -268,6 +268,12 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
     }
 }
 
+void Camera::clearInputState()
+{
+    std::fill(std::begin(keysPressed), std::end(keysPressed), false);
+    rightMouseDown = false;
+}
+
 void Camera::setWindow(GLFWwindow *window)
 {
     windowHandle = window;
@@ -342,7 +348,6 @@ void Camera::updateCameraMatrices()
         if (glm::length(moveDir) > 0.0f)
         {
             cameraPos += glm::normalize(moveDir) * moveSpeed;
-            std::cout << "[Camera] Moving to: (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << ")\n";
         }
     }
 
@@ -415,7 +420,6 @@ void Camera::setControlsEnabled(bool enabled)
     controlsEnabled = enabled;
     if (!controlsEnabled)
     {
-        std::fill(std::begin(keysPressed), std::end(keysPressed), false);
-        rightMouseDown = false;
+        clearInputState();
     }
 }

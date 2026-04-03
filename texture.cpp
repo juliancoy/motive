@@ -2,6 +2,7 @@
 #include "texture.h"
 #include "engine.h"
 #include "model.h"
+#include <QImage>
 #include <stdexcept>
 #include <iostream>
 
@@ -404,6 +405,10 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
     yuvBitDepth = 8;
     yuvColorSpace = 0;
     yuvColorRange = 0;
+    texturePreviewImage = QImage(reinterpret_cast<const uchar*>(pixelData),
+                                 static_cast<int>(width),
+                                 static_cast<int>(height),
+                                 QImage::Format_RGBA8888).copy();
 
     // Create staging buffer
     VkBuffer stagingBuffer;
@@ -573,6 +578,10 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
     usesYuvTexture = false;
     yuvColorSpace = 0;
     yuvColorRange = 0;
+    texturePreviewImage = QImage(reinterpret_cast<const uchar*>(pixelData),
+                                 static_cast<int>(width),
+                                 static_cast<int>(height),
+                                 QImage::Format_RGBA8888).copy();
 
     const bool needsRecreate = (textureImage == VK_NULL_HANDLE) ||
                                (width != textureWidth) ||

@@ -26,3 +26,7 @@ models
 motive2d_yolo
 .build_manifest.json
 motive_editor
+build
+build-asan
+projects
+thirdpersonshooter

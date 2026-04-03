@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QJsonArray>
 #include <QString>
 #include <QVector3D>
 #include <QJsonObject>
@@ -20,6 +21,7 @@ public:
     {
         QString rootPath;
         QList<QJsonObject> sceneItems;
+        QJsonArray hierarchy;
         QVector3D cameraPosition;
         QVector3D cameraRotation;
         int sceneItemCount = 0;
@@ -27,6 +29,7 @@ public:
 
     explicit EngineUiControlServer(std::function<QString()> rootPathProvider,
                                    std::function<ProfileData()> profileDataProvider,
+                                   std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> commandHandler = {},
                                    QObject* parent = nullptr);
     ~EngineUiControlServer() override;
 
@@ -41,6 +44,7 @@ private:
 
     std::function<QString()> m_rootPathProvider;
     std::function<ProfileData()> m_profileDataProvider;
+    std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> m_commandHandler;
     std::atomic<bool> m_running{false};
     int m_serverFd = -1;
     quint16 m_port = 0;

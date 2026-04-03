@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <QImage>
 #include <GLFW/glfw3.h>
 #include <memory>
 #include <../tinygltf/tiny_gltf.h>
@@ -30,6 +31,12 @@ enum class PrimitiveAlphaMode : uint32_t {
     Blend = 2
 };
 
+enum class PrimitiveCullMode : uint32_t {
+    Back = 0,
+    Disabled = 1,
+    Front = 2
+};
+
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 normal;
@@ -37,6 +44,12 @@ struct Vertex {
 
     static VkVertexInputBindingDescription getBindingDescription();
     static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
+};
+
+struct GltfCombinedPrimitiveData {
+    int materialIndex = -1;
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
 };
 
 struct SharedTextureResources {
@@ -137,8 +150,12 @@ public:
     bool textureInactiveInitialized = false;
     bool chromaInactiveInitialized = false;
     PrimitiveAlphaMode alphaMode = PrimitiveAlphaMode::Opaque;
+    PrimitiveCullMode cullMode = PrimitiveCullMode::Back;
     float alphaCutoff = 0.5f;
+    bool paintOverrideEnabled = false;
+    glm::vec3 paintOverrideColor = glm::vec3(1.0f, 0.0f, 1.0f);
     std::shared_ptr<SharedTextureResources> sharedTextureResources;
+    QImage texturePreviewImage;
     // various info
     VkSamplerCreateInfo samplerInfo{};
     VkDescriptorBufferInfo bufferInfo{};
@@ -171,6 +188,7 @@ class Mesh {
 public:
     Mesh(Engine* engine, Model* model, const std::vector<Vertex>& vertices, bool initializeTextureResources = true);
     Mesh(Engine* engine, Model* model, tinygltf::Mesh);
+    Mesh(Engine* engine, Model* model, const std::vector<GltfCombinedPrimitiveData>& combinedPrimitives);
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
     Mesh(Mesh&& other) noexcept;
@@ -184,7 +202,12 @@ public:
 
 class Model {
 public:
-    Model(const std::string& gltfPath, Engine* engine);
+    struct AnimationClipInfo
+    {
+        std::string name;
+    };
+
+    Model(const std::string& gltfPath, Engine* engine, bool consolidateMeshes = true);
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
     void scaleToUnitBox();
@@ -193,6 +216,8 @@ public:
     void translate(const glm::vec3& offset);
     void rotate(float angleRadians, const glm::vec3& axis);
     void rotate(float xDegrees, float yDegrees, float zDegrees);
+    void setSceneTransform(const glm::vec3& translation, const glm::vec3& rotationDegrees, const glm::vec3& scaleFactors);
+    void setPaintOverride(bool enabled, const glm::vec3& color);
 
     tinygltf::Model* tgltfModel = nullptr;
 
@@ -202,9 +227,12 @@ public:
     GLFWwindow* window;
     std::vector<Texture*> textures;
     bool visible = true;
+    glm::mat4 normalizedBaseTransform = glm::mat4(1.0f);
     glm::mat4 worldTransform = glm::mat4(1.0f);
     glm::vec3 boundsCenter = glm::vec3(0.0f);
     float boundsRadius = 0.0f;
+    bool meshConsolidationEnabled = true;
+    std::vector<AnimationClipInfo> animationClips;
     void recomputeBounds();
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);

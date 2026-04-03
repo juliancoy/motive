@@ -73,20 +73,66 @@ int runMotiveEditorApp(int argc, char** argv)
             if (auto* viewport = window.viewportHost())
             {
                 data.sceneItemCount = viewport->sceneItems().size();
-                for (const auto& item : viewport->sceneItems())
+                data.hierarchy = window.hierarchyJson();
+                for (const auto& item : viewport->sceneProfileJson())
                 {
-                    data.sceneItems.append(QJsonObject{
-                        {QStringLiteral("name"), item.name},
-                        {QStringLiteral("sourcePath"), item.sourcePath},
-                        {QStringLiteral("translation"), QJsonArray{item.translation.x(), item.translation.y(), item.translation.z()}},
-                        {QStringLiteral("rotation"), QJsonArray{item.rotation.x(), item.rotation.y(), item.rotation.z()}},
-                        {QStringLiteral("scale"), QJsonArray{item.scale.x(), item.scale.y(), item.scale.z()}}
-                    });
+                    data.sceneItems.append(item.toObject());
                 }
                 data.cameraPosition = viewport->cameraPosition();
                 data.cameraRotation = viewport->cameraRotation();
             }
             return data;
+        },
+        [&window](const QString& command, const QJsonObject& body, QJsonObject& result) -> bool
+        {
+            auto* viewport = window.viewportHost();
+            if (!viewport)
+            {
+                result.insert(QStringLiteral("error"), QStringLiteral("viewport unavailable"));
+                return false;
+            }
+
+            if (command == QStringLiteral("primitive"))
+            {
+                const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+                const int meshIndex = body.value(QStringLiteral("meshIndex")).toInt(-1);
+                const int primitiveIndex = body.value(QStringLiteral("primitiveIndex")).toInt(-1);
+                const QString cullMode = body.value(QStringLiteral("cullMode")).toString();
+                if (sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0 || cullMode.isEmpty())
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex, meshIndex, primitiveIndex, and cullMode are required"));
+                    return false;
+                }
+                viewport->setPrimitiveCullMode(sceneIndex, meshIndex, primitiveIndex, cullMode);
+                result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                result.insert(QStringLiteral("meshIndex"), meshIndex);
+                result.insert(QStringLiteral("primitiveIndex"), primitiveIndex);
+                result.insert(QStringLiteral("cullMode"), cullMode);
+                return true;
+            }
+
+            if (command == QStringLiteral("scene_item"))
+            {
+                const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+                if (sceneIndex < 0)
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex is required"));
+                    return false;
+                }
+                if (body.contains(QStringLiteral("visible")))
+                {
+                    viewport->setSceneItemVisible(sceneIndex, body.value(QStringLiteral("visible")).toBool(true));
+                }
+                if (body.value(QStringLiteral("focus")).toBool(false))
+                {
+                    viewport->focusSceneItem(sceneIndex);
+                }
+                result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                return true;
+            }
+
+            result.insert(QStringLiteral("error"), QStringLiteral("unknown command"));
+            return false;
         },
         &window);
 

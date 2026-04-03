@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -18,7 +19,9 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
-#include <QListWidget>
+#include <QPixmap>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTimer>
@@ -30,6 +33,47 @@
 namespace motive::ui {
 
 namespace {
+
+constexpr int kHierarchyCameraIndex = -1000;
+constexpr int kHierarchyLightIndex = -1001;
+
+QJsonObject sceneLightToJson(const ViewportHostWidget::SceneLight& light)
+{
+    return QJsonObject{
+        {QStringLiteral("type"), light.type},
+        {QStringLiteral("exists"), light.exists},
+        {QStringLiteral("color"), QJsonArray{light.color.x(), light.color.y(), light.color.z()}},
+        {QStringLiteral("brightness"), light.brightness},
+        {QStringLiteral("direction"), QJsonArray{light.direction.x(), light.direction.y(), light.direction.z()}},
+        {QStringLiteral("ambient"), QJsonArray{light.ambient.x(), light.ambient.y(), light.ambient.z()}},
+        {QStringLiteral("diffuse"), QJsonArray{light.diffuse.x(), light.diffuse.y(), light.diffuse.z()}}
+    };
+}
+
+ViewportHostWidget::SceneLight sceneLightFromJson(const QJsonObject& object)
+{
+    auto readVector = [](const QJsonValue& value, const QVector3D& fallback)
+    {
+        const QJsonArray array = value.toArray();
+        if (array.size() != 3)
+        {
+            return fallback;
+        }
+        return QVector3D(static_cast<float>(array.at(0).toDouble(fallback.x())),
+                         static_cast<float>(array.at(1).toDouble(fallback.y())),
+                         static_cast<float>(array.at(2).toDouble(fallback.z())));
+    };
+
+    ViewportHostWidget::SceneLight light;
+    light.type = object.value(QStringLiteral("type")).toString(QStringLiteral("directional"));
+    light.exists = object.value(QStringLiteral("exists")).toBool(false);
+    light.color = readVector(object.value(QStringLiteral("color")), QVector3D(1.0f, 1.0f, 1.0f));
+    light.brightness = static_cast<float>(object.value(QStringLiteral("brightness")).toDouble(1.0));
+    light.direction = readVector(object.value(QStringLiteral("direction")), QVector3D(0.0f, 0.0f, 1.0f));
+    light.ambient = readVector(object.value(QStringLiteral("ambient")), QVector3D(0.1f, 0.1f, 0.1f));
+    light.diffuse = readVector(object.value(QStringLiteral("diffuse")), QVector3D(0.9f, 0.9f, 0.9f));
+    return light;
+}
 
 struct ConversionCommand
 {
@@ -297,25 +341,84 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_assetBrowser = new AssetBrowserWidget(m_leftPane);
     leftLayout->addWidget(m_assetBrowser, 1);
     leftLayout->addWidget(new QLabel(QStringLiteral("Hierarchy"), m_leftPane));
-    m_hierarchyList = new QListWidget(m_leftPane);
-    m_hierarchyList->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_hierarchyList->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_hierarchyList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos)
+    m_hierarchyTree = new QTreeWidget(m_leftPane);
+    m_hierarchyTree->setColumnCount(1);
+    m_hierarchyTree->setHeaderHidden(true);
+    m_hierarchyTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_hierarchyTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_hierarchyTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos)
     {
-        const int row = m_hierarchyList->indexAt(pos).row();
+        QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
+        const int row = item ? item->data(0, Qt::UserRole).toInt() : -1;
+        if (!item)
+        {
+            QMenu menu(this);
+            QAction* createLightAction = menu.addAction(QStringLiteral("Create Light"));
+            if (m_viewportHost && m_viewportHost->hasSceneLight())
+            {
+                createLightAction->setEnabled(false);
+            }
+            if (menu.exec(m_hierarchyTree->mapToGlobal(pos)) == createLightAction && m_viewportHost)
+            {
+                m_viewportHost->createSceneLight();
+                refreshHierarchy(m_viewportHost->sceneItems());
+                QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("Directional Light"), Qt::MatchExactly | Qt::MatchRecursive);
+                if (!matches.isEmpty())
+                {
+                    m_hierarchyTree->setCurrentItem(matches.front());
+                }
+            }
+            return;
+        }
         if (row < 0 || row >= m_sceneItems.size() || !m_viewportHost)
         {
             return;
         }
         QMenu menu(this);
+        QAction* renameAction = menu.addAction(QStringLiteral("Rename"));
+        QAction* focusAction = menu.addAction(QStringLiteral("Focus"));
         QAction* relocateAction = menu.addAction(QStringLiteral("Relocate in front of camera"));
-        if (menu.exec(m_hierarchyList->mapToGlobal(pos)) == relocateAction)
+        QAction* visibilityAction = menu.addAction(m_sceneItems[row].visible ? QStringLiteral("Hide") : QStringLiteral("Show"));
+        QAction* deleteAction = menu.addAction(QStringLiteral("Delete"));
+        QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
+        if (chosen == renameAction)
+        {
+            const QString currentName = m_sceneItems[row].name;
+            bool ok = false;
+            const QString name = QInputDialog::getText(this,
+                                                       QStringLiteral("Rename Element"),
+                                                       QStringLiteral("Name:"),
+                                                       QLineEdit::Normal,
+                                                       currentName,
+                                                       &ok);
+            if (ok && !name.trimmed().isEmpty())
+            {
+                m_viewportHost->renameSceneItem(row, name);
+                updateInspectorForSelection(m_hierarchyTree->currentItem());
+            }
+        }
+        else if (chosen == focusAction)
+        {
+            m_viewportHost->focusSceneItem(row);
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+        else if (chosen == relocateAction)
         {
             m_viewportHost->relocateSceneItemInFrontOfCamera(row);
-            updateInspectorForSelection(row);
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+        else if (chosen == visibilityAction)
+        {
+            m_viewportHost->setSceneItemVisible(row, !m_sceneItems[row].visible);
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+        else if (chosen == deleteAction)
+        {
+            m_viewportHost->deleteSceneItem(row);
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
         }
     });
-    leftLayout->addWidget(m_hierarchyList, 0);
+    leftLayout->addWidget(m_hierarchyTree, 0);
 
     m_viewportHost = new ViewportHostWidget(m_splitter);
     m_assetBrowser->setPreviewAnchorWidget(m_viewportHost);
@@ -337,7 +440,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_viewportHost->setCameraChangedCallback([this]()
     {
         updateCameraSettingsPanel();
-        saveProjectState();
+        if (m_hierarchyTree && m_hierarchyTree->currentItem() &&
+            m_hierarchyTree->currentItem()->data(0, Qt::UserRole).toInt() == kHierarchyCameraIndex)
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
     });
     m_assetBrowser->setRootPathChangedCallback([this](const QString& rootPath)
     {
@@ -361,6 +468,65 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorNameValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue->setWordWrap(true);
+    m_inspectorTexturePreview = new QLabel(QStringLiteral("No texture"), inspectorPanel);
+    m_inspectorTexturePreview->setMinimumSize(160, 160);
+    m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
+    m_inspectorTexturePreview->setFrameShape(QFrame::StyledPanel);
+    m_primitiveCullModeCombo = new QComboBox(inspectorPanel);
+    m_primitiveCullModeCombo->addItem(QStringLiteral("Back"), QStringLiteral("back"));
+    m_primitiveCullModeCombo->addItem(QStringLiteral("None"), QStringLiteral("none"));
+    m_primitiveCullModeCombo->addItem(QStringLiteral("Front"), QStringLiteral("front"));
+    m_paintOverrideCheck = new QCheckBox(QStringLiteral("Paint all verts"), inspectorPanel);
+    m_paintColorWidget = new QWidget(inspectorPanel);
+    m_paintColorWidget->setFixedSize(60, 24);
+    m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: #ff00ff; border: 1px solid #888;"));
+    m_paintColorWidget->setProperty("paintColor", QStringLiteral("#ff00ff"));
+    auto* paintColorButton = new QPushButton(QStringLiteral("Choose"), inspectorPanel);
+    auto* paintColorContainer = new QWidget(inspectorPanel);
+    auto* paintColorLayout = new QHBoxLayout(paintColorContainer);
+    paintColorLayout->setContentsMargins(0, 0, 0, 0);
+    paintColorLayout->addWidget(m_paintColorWidget);
+    paintColorLayout->addWidget(paintColorButton);
+    paintColorLayout->addStretch(1);
+    m_animationControlsWidget = new QWidget(inspectorPanel);
+    auto* animationControlsLayout = new QVBoxLayout(m_animationControlsWidget);
+    animationControlsLayout->setContentsMargins(0, 0, 0, 0);
+    animationControlsLayout->setSpacing(6);
+    m_animationClipCombo = new QComboBox(m_animationControlsWidget);
+    m_animationPlayingCheck = new QCheckBox(QStringLiteral("Playing"), m_animationControlsWidget);
+    m_animationLoopCheck = new QCheckBox(QStringLiteral("Loop"), m_animationControlsWidget);
+    m_animationSpeedSpin = createSpinBox(m_animationControlsWidget, 0.0, 10.0, 0.01);
+    auto* animationFlagsWidget = new QWidget(m_animationControlsWidget);
+    auto* animationFlagsLayout = new QHBoxLayout(animationFlagsWidget);
+    animationFlagsLayout->setContentsMargins(0, 0, 0, 0);
+    animationFlagsLayout->addWidget(m_animationPlayingCheck);
+    animationFlagsLayout->addWidget(m_animationLoopCheck);
+    animationFlagsLayout->addStretch(1);
+    auto* animationSpeedWidget = new QWidget(m_animationControlsWidget);
+    auto* animationSpeedLayout = new QHBoxLayout(animationSpeedWidget);
+    animationSpeedLayout->setContentsMargins(0, 0, 0, 0);
+    animationSpeedLayout->addWidget(new QLabel(QStringLiteral("Speed:"), animationSpeedWidget));
+    animationSpeedLayout->addWidget(m_animationSpeedSpin);
+    animationSpeedLayout->addStretch(1);
+    animationControlsLayout->addWidget(m_animationClipCombo);
+    animationControlsLayout->addWidget(animationFlagsWidget);
+    animationControlsLayout->addWidget(animationSpeedWidget);
+
+    m_lightTypeCombo = new QComboBox(inspectorPanel);
+    m_lightTypeCombo->addItem(QStringLiteral("Directional"), QStringLiteral("directional"));
+    m_lightTypeCombo->addItem(QStringLiteral("Ambient"), QStringLiteral("ambient"));
+    m_lightTypeCombo->addItem(QStringLiteral("Hemispherical"), QStringLiteral("hemispherical"));
+    m_lightBrightnessSpin = createSpinBox(inspectorPanel, 0.0, 100.0, 0.01);
+    m_lightColorWidget = new QWidget(inspectorPanel);
+    m_lightColorWidget->setFixedSize(60, 24);
+    m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: #ffffff; border: 1px solid #888;"));
+    auto* lightColorButton = new QPushButton(QStringLiteral("Change"), inspectorPanel);
+    auto* lightColorContainer = new QWidget(inspectorPanel);
+    auto* lightColorLayout = new QHBoxLayout(lightColorContainer);
+    lightColorLayout->setContentsMargins(0, 0, 0, 0);
+    lightColorLayout->addWidget(m_lightColorWidget);
+    lightColorLayout->addWidget(lightColorButton);
+    lightColorLayout->addStretch(1);
 
     // Create translation spin boxes
     auto* translationWidget = new QWidget(inspectorPanel);
@@ -406,6 +572,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     inspectorLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
     inspectorLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
+    inspectorLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
+    inspectorLayout->addRow(QStringLiteral("Cull Mode"), m_primitiveCullModeCombo);
+    inspectorLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
+    inspectorLayout->addRow(QStringLiteral("Paint Color"), paintColorContainer);
+    inspectorLayout->addRow(QStringLiteral("Animation"), m_animationControlsWidget);
+    inspectorLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
+    inspectorLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
+    inspectorLayout->addRow(QStringLiteral("Color"), lightColorContainer);
     inspectorLayout->addRow(QStringLiteral("Translation"), translationWidget);
     inspectorLayout->addRow(QStringLiteral("Rotation"), rotationWidget);
     inspectorLayout->addRow(QStringLiteral("Scale"), scaleWidget);
@@ -415,31 +589,151 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     setupCameraSettingsPanel();
 
-    connect(m_hierarchyList, &QListWidget::currentRowChanged, this, [this](int row)
+    connect(m_hierarchyTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current)
     {
-        updateInspectorForSelection(row);
+        updateInspectorForSelection(current);
+    });
+
+    auto applyAnimationInspector = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size() || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck || !m_animationSpeedSpin)
+        {
+            return;
+        }
+        m_viewportHost->updateSceneItemAnimationState(row,
+                                                      m_animationClipCombo->currentData().toString(),
+                                                      m_animationPlayingCheck->isChecked(),
+                                                      m_animationLoopCheck->isChecked(),
+                                                      static_cast<float>(m_animationSpeedSpin->value()));
+        m_sceneItems[row].activeAnimationClip = m_animationClipCombo->currentData().toString();
+        m_sceneItems[row].animationPlaying = m_animationPlayingCheck->isChecked();
+        m_sceneItems[row].animationLoop = m_animationLoopCheck->isChecked();
+        m_sceneItems[row].animationSpeed = static_cast<float>(m_animationSpeedSpin->value());
+        saveProjectState();
+    };
+    connect(m_animationClipCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
+    connect(m_animationPlayingCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
+    connect(m_animationLoopCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
+    connect(m_animationSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
+
+    connect(m_primitiveCullModeCombo, &QComboBox::currentIndexChanged, this, [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_primitiveCullModeCombo)
+        {
+            return;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        const int meshIndex = current ? current->data(0, Qt::UserRole + 1).toInt() : -1;
+        const int primitiveIndex = current ? current->data(0, Qt::UserRole + 2).toInt() : -1;
+        if (row < 0 || meshIndex < 0 || primitiveIndex < 0)
+        {
+            return;
+        }
+        m_viewportHost->setPrimitiveCullMode(row, meshIndex, primitiveIndex, m_primitiveCullModeCombo->currentData().toString());
+    });
+
+    auto applyPaintInspector = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_paintOverrideCheck)
+        {
+            return;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size())
+        {
+            return;
+        }
+        QColor color = QColor(m_paintColorWidget && m_paintColorWidget->property("paintColor").isValid()
+                                  ? m_paintColorWidget->property("paintColor").toString()
+                                  : QStringLiteral("#ff00ff"));
+        const QVector3D paintColor(static_cast<float>(color.redF()),
+                                   static_cast<float>(color.greenF()),
+                                   static_cast<float>(color.blueF()));
+        m_viewportHost->updateSceneItemPaintOverride(row, m_paintOverrideCheck->isChecked(), paintColor);
+        m_sceneItems[row].paintOverrideEnabled = m_paintOverrideCheck->isChecked();
+        m_sceneItems[row].paintOverrideColor = paintColor;
+        saveProjectState();
+    };
+    connect(m_paintOverrideCheck, &QCheckBox::toggled, this, [applyPaintInspector](bool) { applyPaintInspector(); });
+    connect(paintColorButton, &QPushButton::clicked, this, [this, applyPaintInspector]() {
+        if (m_updatingInspector || !m_paintColorWidget)
+        {
+            return;
+        }
+        QColor initial = QColor(m_paintColorWidget->property("paintColor").toString());
+        if (!initial.isValid()) initial = QColor(QStringLiteral("#ff00ff"));
+        const QColor color = QColorDialog::getColor(initial, this, QStringLiteral("Select Paint Override Color"));
+        if (!color.isValid())
+        {
+            return;
+        }
+        m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
+        m_paintColorWidget->setProperty("paintColor", color.name());
+        applyPaintInspector();
+    });
+
+    auto applyLightInspector = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_lightTypeCombo || !m_lightBrightnessSpin) return;
+        auto light = m_viewportHost->sceneLight();
+        light.exists = true;
+        light.type = m_lightTypeCombo->currentData().toString();
+        light.brightness = static_cast<float>(m_lightBrightnessSpin->value());
+        m_viewportHost->setSceneLight(light);
+        saveProjectState();
+    };
+    connect(m_lightTypeCombo, &QComboBox::currentIndexChanged, this, [applyLightInspector]() { applyLightInspector(); });
+    connect(m_lightBrightnessSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyLightInspector](double) { applyLightInspector(); });
+    connect(lightColorButton, &QPushButton::clicked, this, [this]() {
+        if (m_updatingInspector || !m_viewportHost) return;
+        auto light = m_viewportHost->sceneLight();
+        const QColor initial = QColor::fromRgbF(light.color.x(), light.color.y(), light.color.z());
+        const QColor color = QColorDialog::getColor(initial, this, QStringLiteral("Select Light Color"));
+        if (!color.isValid())
+        {
+            return;
+        }
+        light.exists = true;
+        light.color = QVector3D(static_cast<float>(color.redF()),
+                                static_cast<float>(color.greenF()),
+                                static_cast<float>(color.blueF()));
+        if (m_lightColorWidget)
+        {
+            m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
+        }
+        m_viewportHost->setSceneLight(light);
+        saveProjectState();
     });
 
     // Connect spin box value changes to update scene items
     auto updateTransform = [this]() {
         if (m_updatingInspector) return;
-        const int row = m_hierarchyList->currentRow();
+        QTreeWidgetItem* current = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        QVector3D translation(
+            m_inspectorTranslationX->value(),
+            m_inspectorTranslationY->value(),
+            m_inspectorTranslationZ->value()
+        );
+        QVector3D rotation(
+            m_inspectorRotationX->value(),
+            m_inspectorRotationY->value(),
+            m_inspectorRotationZ->value()
+        );
+        QVector3D scale(
+            m_inspectorScaleX->value(),
+            m_inspectorScaleY->value(),
+            m_inspectorScaleZ->value()
+        );
+        if (row == kHierarchyCameraIndex && m_viewportHost) {
+            m_viewportHost->setCameraPosition(translation);
+            m_viewportHost->setCameraRotation(rotation);
+            updateCameraSettingsPanel();
+            saveProjectState();
+            return;
+        }
         if (row >= 0 && row < m_sceneItems.size()) {
-            QVector3D translation(
-                m_inspectorTranslationX->value(),
-                m_inspectorTranslationY->value(),
-                m_inspectorTranslationZ->value()
-            );
-            QVector3D rotation(
-                m_inspectorRotationX->value(),
-                m_inspectorRotationY->value(),
-                m_inspectorRotationZ->value()
-            );
-            QVector3D scale(
-                m_inspectorScaleX->value(),
-                m_inspectorScaleY->value(),
-                m_inspectorScaleZ->value()
-            );
             m_viewportHost->updateSceneItemTransform(row, translation, rotation, scale);
             m_sceneItems[row].translation = translation;
             m_sceneItems[row].rotation = rotation;
@@ -481,6 +775,11 @@ AssetBrowserWidget* MainWindowShell::assetBrowser() const
 ViewportHostWidget* MainWindowShell::viewportHost() const
 {
     return m_viewportHost;
+}
+
+QJsonArray MainWindowShell::hierarchyJson() const
+{
+    return m_viewportHost ? m_viewportHost->hierarchyJson() : QJsonArray{};
 }
 
 void MainWindowShell::closeEvent(QCloseEvent* event)
@@ -530,7 +829,10 @@ void MainWindowShell::restoreSessionState()
 
     // Restore camera state
     if (m_viewportHost) {
+        m_viewportHost->setSceneLight(sceneLightFromJson(m_projectSession.currentSceneLight()));
+        m_viewportHost->setMeshConsolidationEnabled(m_projectSession.currentMeshConsolidationEnabled());
         m_viewportHost->setRenderPath(m_projectSession.currentRenderPath());
+        m_viewportHost->setCameraSpeed(m_projectSession.currentCameraSpeed());
         m_viewportHost->setCameraPosition(m_projectSession.currentCameraPosition());
         m_viewportHost->setCameraRotation(m_projectSession.currentCameraRotation());
         updateCameraSettingsPanel();
@@ -608,6 +910,10 @@ void MainWindowShell::createProject()
             m_viewportHost->loadAssetFromPath(m_projectSession.currentViewportAssetPath());
         }
     }
+    if (m_viewportHost)
+    {
+        m_viewportHost->setSceneLight(sceneLightFromJson(m_projectSession.currentSceneLight()));
+    }
     refreshWindowTitle();
 }
 
@@ -660,6 +966,10 @@ void MainWindowShell::switchProject()
             m_viewportHost->loadAssetFromPath(m_projectSession.currentViewportAssetPath());
         }
     }
+    if (m_viewportHost)
+    {
+        m_viewportHost->setSceneLight(sceneLightFromJson(m_projectSession.currentSceneLight()));
+    }
     refreshWindowTitle();
 }
 
@@ -691,7 +1001,10 @@ void MainWindowShell::saveProjectState()
         m_viewportHost ? m_viewportHost->sceneItems() : QList<ViewportHostWidget::SceneItem>{}));
     m_projectSession.setCurrentCameraPosition(m_viewportHost ? m_viewportHost->cameraPosition() : QVector3D(0.0f, 0.0f, 3.0f));
     m_projectSession.setCurrentCameraRotation(m_viewportHost ? m_viewportHost->cameraRotation() : QVector3D(0.0f, 0.0f, 0.0f));
+    m_projectSession.setCurrentCameraSpeed(m_viewportHost ? m_viewportHost->cameraSpeed() : 0.01f);
+    m_projectSession.setCurrentSceneLight(m_viewportHost ? sceneLightToJson(m_viewportHost->sceneLight()) : QJsonObject{});
     m_projectSession.setCurrentRenderPath(m_viewportHost ? m_viewportHost->renderPath() : QStringLiteral("forward3d"));
+    m_projectSession.setCurrentMeshConsolidationEnabled(m_viewportHost ? m_viewportHost->meshConsolidationEnabled() : true);
     qDebug() << "[MainWindowShell] Saving project state"
              << "projectId=" << m_projectSession.currentProjectId()
              << "root=" << (m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath())
@@ -701,64 +1014,112 @@ void MainWindowShell::saveProjectState()
 
 void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem>& items)
 {
-    if (!m_hierarchyList)
+    if (!m_hierarchyTree)
     {
         return;
     }
 
     m_sceneItems = items;
-    const int previousRow = m_hierarchyList->currentRow();
-    m_hierarchyList->clear();
-    for (int i = 0; i < items.size(); ++i)
-    {
-        const auto& item = items[i];
-        auto* container = new QWidget(m_hierarchyList);
-        auto* layout = new QHBoxLayout(container);
-        layout->setContentsMargins(4, 2, 4, 2);
-        layout->setSpacing(6);
+    QTreeWidgetItem* previousItem = m_hierarchyTree->currentItem();
+    const int previousRow = previousItem ? previousItem->data(0, Qt::UserRole).toInt() : -1;
+    const int previousMeshIndex = previousItem ? previousItem->data(0, Qt::UserRole + 1).toInt() : -1;
+    const int previousPrimitiveIndex = previousItem ? previousItem->data(0, Qt::UserRole + 2).toInt() : -1;
+    const int previousType = previousItem ? previousItem->data(0, Qt::UserRole + 3).toInt() : -1;
+    const QString previousClipName = previousItem ? previousItem->data(0, Qt::UserRole + 4).toString() : QString();
+    m_hierarchyTree->clear();
 
-        auto* eyeButton = new QPushButton(container);
-        eyeButton->setFlat(true);
-        eyeButton->setFixedSize(22, 22);
-        eyeButton->setText(item.visible ? QString::fromUtf8("\xF0\x9F\x91\x81") : QString::fromUtf8("\xF0\x9F\x9A\xAB"));
-        eyeButton->setProperty("row", i);
-        connect(eyeButton, &QPushButton::clicked, this, [this, eyeButton]()
+    const QList<ViewportHostWidget::HierarchyNode> hierarchyItems =
+        m_viewportHost ? m_viewportHost->hierarchyItems() : QList<ViewportHostWidget::HierarchyNode>{};
+    for (const auto& node : hierarchyItems)
+    {
+        appendHierarchyNode(nullptr, node, false);
+    }
+
+    if (previousItem)
+    {
+        QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        QTreeWidgetItem* fallbackRowMatch = nullptr;
+        for (QTreeWidgetItem* item : matches)
         {
-            const int row = eyeButton->property("row").toInt();
-            if (row < 0 || row >= m_sceneItems.size() || !m_viewportHost)
+            if (!item || item->data(0, Qt::UserRole).toInt() != previousRow)
             {
+                continue;
+            }
+            if (!fallbackRowMatch)
+            {
+                fallbackRowMatch = item;
+            }
+            if (item->data(0, Qt::UserRole + 1).toInt() == previousMeshIndex &&
+                item->data(0, Qt::UserRole + 2).toInt() == previousPrimitiveIndex &&
+                item->data(0, Qt::UserRole + 3).toInt() == previousType &&
+                item->data(0, Qt::UserRole + 4).toString() == previousClipName)
+            {
+                m_hierarchyTree->setCurrentItem(item);
                 return;
             }
-            const bool willBeVisible = !m_sceneItems[row].visible;
-            m_sceneItems[row].visible = willBeVisible;
-            m_viewportHost->setSceneItemVisible(row, willBeVisible);
-            eyeButton->setText(willBeVisible ? QString::fromUtf8("\xF0\x9F\x91\x81") : QString::fromUtf8("\xF0\x9F\x9A\xAB"));
-        });
-
-        auto* nameLabel = new QLabel(item.name, container);
-        nameLabel->setToolTip(QDir::toNativeSeparators(item.sourcePath));
-        layout->addWidget(eyeButton);
-        layout->addWidget(nameLabel, 1);
-
-        auto* rowItem = new QListWidgetItem(m_hierarchyList);
-        rowItem->setSizeHint(container->sizeHint());
-        m_hierarchyList->addItem(rowItem);
-        m_hierarchyList->setItemWidget(rowItem, container);
+        }
+        if (fallbackRowMatch)
+        {
+            m_hierarchyTree->setCurrentItem(fallbackRowMatch);
+            return;
+        }
     }
+
     if (!items.isEmpty())
     {
-        const int lastRow = static_cast<int>(items.size()) - 1;
-        m_hierarchyList->setCurrentRow(std::clamp(previousRow, 0, lastRow));
+        m_hierarchyTree->setCurrentItem(m_hierarchyTree->topLevelItem(0));
     }
     else
     {
-        updateInspectorForSelection(-1);
+        updateInspectorForSelection(nullptr);
     }
 }
 
-void MainWindowShell::updateInspectorForSelection(int row)
+void MainWindowShell::appendHierarchyNode(QTreeWidgetItem* parent, const ViewportHostWidget::HierarchyNode& node, bool ancestorHidden)
+{
+    if (!m_hierarchyTree)
+    {
+        return;
+    }
+
+    QTreeWidgetItem* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_hierarchyTree);
+    item->setText(0, node.label);
+    item->setData(0, Qt::UserRole, node.sceneIndex);
+    item->setData(0, Qt::UserRole + 1, node.meshIndex);
+    item->setData(0, Qt::UserRole + 2, node.primitiveIndex);
+    item->setData(0, Qt::UserRole + 3, static_cast<int>(node.type));
+    item->setData(0, Qt::UserRole + 4, node.clipName);
+    const bool selfHidden = node.sceneIndex >= 0 && node.sceneIndex < m_sceneItems.size() && !m_sceneItems[node.sceneIndex].visible;
+    const bool hidden = ancestorHidden || selfHidden;
+    QFont font = item->font(0);
+    font.setItalic(hidden);
+    item->setFont(0, font);
+
+    if (node.children.isEmpty() && node.sceneIndex >= 0 && node.sceneIndex < m_sceneItems.size())
+    {
+        const auto& sceneItem = m_sceneItems[node.sceneIndex];
+        item->setToolTip(0, QDir::toNativeSeparators(sceneItem.sourcePath));
+    }
+
+    for (const auto& child : node.children)
+    {
+        appendHierarchyNode(item, child, hidden);
+    }
+
+    if (!node.children.isEmpty())
+    {
+        item->setExpanded(true);
+    }
+}
+
+void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
 {
     m_updatingInspector = true;
+    const int row = currentItem ? currentItem->data(0, Qt::UserRole).toInt() : -1;
+    const int meshIndex = currentItem ? currentItem->data(0, Qt::UserRole + 1).toInt() : -1;
+    const int primitiveIndex = currentItem ? currentItem->data(0, Qt::UserRole + 2).toInt() : -1;
+    const int nodeType = currentItem ? currentItem->data(0, Qt::UserRole + 3).toInt() : -1;
+    const QString clipName = currentItem ? currentItem->data(0, Qt::UserRole + 4).toString() : QString();
     const bool valid = row >= 0 && row < m_sceneItems.size();
     const auto setValue = [](QLabel* label, const QString& value)
     {
@@ -767,9 +1128,150 @@ void MainWindowShell::updateInspectorForSelection(int row)
             label->setText(value);
         }
     };
+    const auto setLightInspectorVisible = [this](bool visible)
+    {
+        if (m_lightTypeCombo) m_lightTypeCombo->setVisible(visible);
+        if (m_lightBrightnessSpin) m_lightBrightnessSpin->setVisible(visible);
+        if (m_lightColorWidget && m_lightColorWidget->parentWidget()) m_lightColorWidget->parentWidget()->setVisible(visible);
+    };
+    const auto setPrimitiveInspectorVisible = [this](bool visible, const QString& cullMode = QStringLiteral("back"))
+    {
+        if (m_primitiveCullModeCombo)
+        {
+            m_primitiveCullModeCombo->setVisible(visible);
+            if (visible)
+            {
+                const int index = m_primitiveCullModeCombo->findData(cullMode);
+                if (index >= 0)
+                {
+                    m_primitiveCullModeCombo->setCurrentIndex(index);
+                }
+            }
+        }
+        if (m_paintOverrideCheck)
+        {
+            m_paintOverrideCheck->setVisible(visible);
+        }
+        if (m_paintColorWidget && m_paintColorWidget->parentWidget())
+        {
+            m_paintColorWidget->parentWidget()->setVisible(visible);
+        }
+    };
+    const auto setAnimationInspector = [this](bool visible,
+                                              const QStringList& clips = {},
+                                              const QString& activeClip = QString(),
+                                              bool playing = true,
+                                              bool loop = true,
+                                              float speed = 1.0f)
+    {
+        if (m_animationControlsWidget)
+        {
+            m_animationControlsWidget->setVisible(visible);
+        }
+        if (!visible || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck || !m_animationSpeedSpin)
+        {
+            return;
+        }
+        m_animationClipCombo->blockSignals(true);
+        m_animationClipCombo->clear();
+        for (const QString& clip : clips)
+        {
+            m_animationClipCombo->addItem(clip, clip);
+        }
+        int clipIndex = activeClip.isEmpty() ? -1 : m_animationClipCombo->findData(activeClip);
+        if (clipIndex < 0 && m_animationClipCombo->count() > 0)
+        {
+            clipIndex = 0;
+        }
+        if (clipIndex >= 0)
+        {
+            m_animationClipCombo->setCurrentIndex(clipIndex);
+        }
+        m_animationClipCombo->blockSignals(false);
+        m_animationPlayingCheck->setChecked(playing);
+        m_animationLoopCheck->setChecked(loop);
+        m_animationSpeedSpin->setValue(speed);
+    };
+    const auto setTexturePreview = [this](const QImage& image)
+    {
+        if (!m_inspectorTexturePreview)
+        {
+            return;
+        }
+        if (image.isNull())
+        {
+            m_inspectorTexturePreview->setPixmap(QPixmap());
+            m_inspectorTexturePreview->setText(QStringLiteral("No texture"));
+            return;
+        }
+        const QPixmap pixmap = QPixmap::fromImage(image);
+        m_inspectorTexturePreview->setPixmap(pixmap.scaled(m_inspectorTexturePreview->size(),
+                                                           Qt::KeepAspectRatio,
+                                                           Qt::SmoothTransformation));
+        m_inspectorTexturePreview->setText(QString());
+    };
 
     if (!valid)
     {
+        if (row == kHierarchyCameraIndex && m_viewportHost)
+        {
+            setValue(m_inspectorNameValue, QStringLiteral("Camera"));
+            setValue(m_inspectorPathValue, QStringLiteral("Viewport Camera"));
+            QVector3D pos = m_viewportHost->cameraPosition();
+            QVector3D rot = m_viewportHost->cameraRotation();
+            if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(pos.x());
+            if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(pos.y());
+            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(pos.z());
+            if (m_inspectorRotationX) m_inspectorRotationX->setValue(rot.x());
+            if (m_inspectorRotationY) m_inspectorRotationY->setValue(rot.y());
+            if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(rot.z());
+            if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
+            if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
+            if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+            if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
+            setPrimitiveInspectorVisible(false);
+            setLightInspectorVisible(false);
+            setAnimationInspector(false);
+            setTexturePreview(QImage());
+            m_updatingInspector = false;
+            return;
+        }
+        if (row == kHierarchyLightIndex)
+        {
+            setValue(m_inspectorNameValue, QStringLiteral("Directional Light"));
+            setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
+            if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
+            if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
+            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
+            if (m_inspectorRotationX) m_inspectorRotationX->setValue(0.0);
+            if (m_inspectorRotationY) m_inspectorRotationY->setValue(0.0);
+            if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(0.0);
+            if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
+            if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
+            if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+            if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
+            setPrimitiveInspectorVisible(false);
+            setLightInspectorVisible(true);
+            setAnimationInspector(false);
+            if (m_viewportHost)
+            {
+                const auto light = m_viewportHost->sceneLight();
+                if (m_lightTypeCombo)
+                {
+                    const int index = m_lightTypeCombo->findData(light.type);
+                    if (index >= 0) m_lightTypeCombo->setCurrentIndex(index);
+                }
+                if (m_lightBrightnessSpin) m_lightBrightnessSpin->setValue(light.brightness);
+                if (m_lightColorWidget)
+                {
+                    const QColor color = QColor::fromRgbF(light.color.x(), light.color.y(), light.color.z());
+                    m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
+                }
+            }
+            setTexturePreview(QImage());
+            m_updatingInspector = false;
+            return;
+        }
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
@@ -781,6 +1283,11 @@ void MainWindowShell::updateInspectorForSelection(int row)
         if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
         if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
         if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+        if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
+        setPrimitiveInspectorVisible(false);
+        setLightInspectorVisible(false);
+        setAnimationInspector(false);
+        setTexturePreview(QImage());
         m_updatingInspector = false;
         return;
     }
@@ -797,6 +1304,36 @@ void MainWindowShell::updateInspectorForSelection(int row)
     if (m_inspectorScaleX) m_inspectorScaleX->setValue(item.scale.x());
     if (m_inspectorScaleY) m_inspectorScaleY->setValue(item.scale.y());
     if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(item.scale.z());
+    if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(item.paintOverrideEnabled);
+    if (m_paintColorWidget)
+    {
+        const QColor color = QColor::fromRgbF(item.paintOverrideColor.x(), item.paintOverrideColor.y(), item.paintOverrideColor.z());
+        m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
+        m_paintColorWidget->setProperty("paintColor", color.name());
+    }
+    setPrimitiveInspectorVisible(m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0,
+                                 m_viewportHost ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
+    setLightInspectorVisible(false);
+    QStringList animationClips = m_viewportHost ? m_viewportHost->animationClipNames(row) : QStringList{};
+    QString selectedClip = clipName;
+    if (selectedClip.isEmpty())
+    {
+        selectedClip = item.activeAnimationClip;
+    }
+    setAnimationInspector(!animationClips.isEmpty(),
+                          animationClips,
+                          selectedClip,
+                          item.animationPlaying,
+                          item.animationLoop,
+                          item.animationSpeed);
+    if (m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0)
+    {
+        setTexturePreview(m_viewportHost->primitiveTexturePreview(row, meshIndex, primitiveIndex));
+    }
+    else
+    {
+        setTexturePreview(QImage());
+    }
     m_updatingInspector = false;
 }
 
@@ -811,6 +1348,12 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("translation"), QJsonArray{item.translation.x(), item.translation.y(), item.translation.z()}},
             {QStringLiteral("rotation"), QJsonArray{item.rotation.x(), item.rotation.y(), item.rotation.z()}},
             {QStringLiteral("scale"), QJsonArray{item.scale.x(), item.scale.y(), item.scale.z()}},
+            {QStringLiteral("paintOverrideEnabled"), item.paintOverrideEnabled},
+            {QStringLiteral("paintOverrideColor"), QJsonArray{item.paintOverrideColor.x(), item.paintOverrideColor.y(), item.paintOverrideColor.z()}},
+            {QStringLiteral("activeAnimationClip"), item.activeAnimationClip},
+            {QStringLiteral("animationPlaying"), item.animationPlaying},
+            {QStringLiteral("animationLoop"), item.animationLoop},
+            {QStringLiteral("animationSpeed"), item.animationSpeed},
             {QStringLiteral("visible"), item.visible}
         });
     }
@@ -846,6 +1389,12 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             readVector(object.value(QStringLiteral("translation")), QVector3D(0.0f, 0.0f, 0.0f)),
             readVector(object.value(QStringLiteral("rotation")), QVector3D(-90.0f, 0.0f, 0.0f)),
             readVector(object.value(QStringLiteral("scale")), QVector3D(1.0f, 1.0f, 1.0f)),
+            object.value(QStringLiteral("paintOverrideEnabled")).toBool(false),
+            readVector(object.value(QStringLiteral("paintOverrideColor")), QVector3D(1.0f, 0.0f, 1.0f)),
+            object.value(QStringLiteral("activeAnimationClip")).toString(),
+            object.value(QStringLiteral("animationPlaying")).toBool(true),
+            object.value(QStringLiteral("animationLoop")).toBool(true),
+            static_cast<float>(object.value(QStringLiteral("animationSpeed")).toDouble(1.0)),
             object.value(QStringLiteral("visible")).toBool(true)
         });
     }
@@ -1001,6 +1550,15 @@ void MainWindowShell::setupCameraSettingsPanel()
         m_viewportHost->setRenderPath(m_renderPathCombo->currentData().toString());
         saveProjectState();
     });
+
+    m_meshConsolidationCheck = new QCheckBox(QStringLiteral("Enable mesh consolidation"), cameraPanel);
+    m_meshConsolidationCheck->setChecked(true);
+    cameraLayout->addRow(QStringLiteral("Import"), m_meshConsolidationCheck);
+    connect(m_meshConsolidationCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_updatingCameraSettings || !m_viewportHost) return;
+        m_viewportHost->setMeshConsolidationEnabled(checked);
+        saveProjectState();
+    });
     
     // Camera speed
     m_cameraSpeedSpin = createSpinBox(cameraPanel, 0.001, 10.0, 0.001);
@@ -1011,56 +1569,6 @@ void MainWindowShell::setupCameraSettingsPanel()
         if (m_updatingCameraSettings || !m_viewportHost) return;
         m_viewportHost->setCameraSpeed(static_cast<float>(m_cameraSpeedSpin->value()));
     });
-    
-    // Camera position
-    auto* camPosWidget = new QWidget(cameraPanel);
-    auto* camPosLayout = new QHBoxLayout(camPosWidget);
-    camPosLayout->setContentsMargins(0, 0, 0, 0);
-    m_cameraPosX = createSpinBox(cameraPanel, -1000.0, 1000.0, 0.01);
-    m_cameraPosY = createSpinBox(cameraPanel, -1000.0, 1000.0, 0.01);
-    m_cameraPosZ = createSpinBox(cameraPanel, -1000.0, 1000.0, 0.01);
-    camPosLayout->addWidget(new QLabel("X:", camPosWidget));
-    camPosLayout->addWidget(m_cameraPosX);
-    camPosLayout->addWidget(new QLabel("Y:", camPosWidget));
-    camPosLayout->addWidget(m_cameraPosY);
-    camPosLayout->addWidget(new QLabel("Z:", camPosWidget));
-    camPosLayout->addWidget(m_cameraPosZ);
-    cameraLayout->addRow(QStringLiteral("Camera Position"), camPosWidget);
-    
-    auto applyCameraPos = [this]() {
-        if (m_updatingCameraSettings || !m_viewportHost) return;
-        QVector3D pos(m_cameraPosX->value(), m_cameraPosY->value(), m_cameraPosZ->value());
-        m_viewportHost->setCameraPosition(pos);
-        saveProjectState();
-    };
-    connect(m_cameraPosX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraPos);
-    connect(m_cameraPosY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraPos);
-    connect(m_cameraPosZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraPos);
-    
-    // Camera rotation
-    auto* camRotWidget = new QWidget(cameraPanel);
-    auto* camRotLayout = new QHBoxLayout(camRotWidget);
-    camRotLayout->setContentsMargins(0, 0, 0, 0);
-    m_cameraRotX = createSpinBox(cameraPanel, -360.0, 360.0, 0.1);
-    m_cameraRotY = createSpinBox(cameraPanel, -360.0, 360.0, 0.1);
-    m_cameraRotZ = createSpinBox(cameraPanel, -360.0, 360.0, 0.1);
-    camRotLayout->addWidget(new QLabel("X:", camRotWidget));
-    camRotLayout->addWidget(m_cameraRotX);
-    camRotLayout->addWidget(new QLabel("Y:", camRotWidget));
-    camRotLayout->addWidget(m_cameraRotY);
-    camRotLayout->addWidget(new QLabel("Z:", camRotWidget));
-    camRotLayout->addWidget(m_cameraRotZ);
-    cameraLayout->addRow(QStringLiteral("Camera Rotation"), camRotWidget);
-    
-    auto applyCameraRot = [this]() {
-        if (m_updatingCameraSettings || !m_viewportHost) return;
-        QVector3D rot(m_cameraRotX->value(), m_cameraRotY->value(), m_cameraRotZ->value());
-        m_viewportHost->setCameraRotation(rot);
-        saveProjectState();
-    };
-    connect(m_cameraRotX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraRot);
-    connect(m_cameraRotY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraRot);
-    connect(m_cameraRotZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyCameraRot);
     
     // Background color
     m_bgColorWidget = new QWidget(cameraPanel);
@@ -1094,23 +1602,13 @@ void MainWindowShell::setupCameraSettingsPanel()
         saveProjectState();
     });
 
-    m_rightTabs->addTab(cameraPanel, QStringLiteral("Camera/Scene"));
+    m_rightTabs->addTab(cameraPanel, QStringLiteral("Global"));
 }
 
 void MainWindowShell::updateCameraSettingsPanel()
 {
     if (!m_viewportHost || m_updatingCameraSettings) return;
     m_updatingCameraSettings = true;
-    
-    QVector3D pos = m_viewportHost->cameraPosition();
-    m_cameraPosX->setValue(pos.x());
-    m_cameraPosY->setValue(pos.y());
-    m_cameraPosZ->setValue(pos.z());
-    
-    QVector3D rot = m_viewportHost->cameraRotation();
-    m_cameraRotX->setValue(rot.x());
-    m_cameraRotY->setValue(rot.y());
-    m_cameraRotZ->setValue(rot.z());
     if (m_renderPathCombo)
     {
         const int index = m_renderPathCombo->findData(m_viewportHost->renderPath());
@@ -1118,6 +1616,14 @@ void MainWindowShell::updateCameraSettingsPanel()
         {
             m_renderPathCombo->setCurrentIndex(index);
         }
+    }
+    if (m_meshConsolidationCheck)
+    {
+        m_meshConsolidationCheck->setChecked(m_viewportHost->meshConsolidationEnabled());
+    }
+    if (m_cameraSpeedSpin)
+    {
+        m_cameraSpeedSpin->setValue(m_viewportHost->cameraSpeed());
     }
     
     m_updatingCameraSettings = false;

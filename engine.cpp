@@ -220,7 +220,9 @@ void Engine::createLightResources()
         throw std::runtime_error("Failed to map light uniform buffer.");
     }
 
-    currentLight = Light();
+    currentLight = Light(glm::vec3(0.0f, 0.0f, 1.0f),
+                         glm::vec3(0.0f),
+                         glm::vec3(0.0f));
     updateLightBuffer();
 }
 

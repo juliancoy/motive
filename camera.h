@@ -31,6 +31,7 @@ public:
     void handleMouseButton(int button, int action, int mods);
     void handleCursorPos(double xpos, double ypos);
     void handleKey(int key, int scancode, int action, int mods);
+    void clearInputState();
     void setWindow(GLFWwindow* window);
     void setViewport(float centerX, float centerY, float viewportWidth, float viewportHeight);
     void setFullscreenViewportEnabled(bool enabled, float xPercent = 1.0f, float yPercent = 1.0f);

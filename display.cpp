@@ -65,6 +65,33 @@ bool sphereInFrustum(const Frustum& f, const glm::vec3& center, float radius)
     return true;
 }
 
+uint32_t pipelineIndexForCullMode(PrimitiveCullMode mode, bool cullingDisabled, bool use2DPipeline)
+{
+    if (cullingDisabled || use2DPipeline)
+    {
+        return static_cast<uint32_t>(PrimitiveCullMode::Disabled);
+    }
+    return static_cast<uint32_t>(mode);
+}
+
+VkCullModeFlags vkCullModeForPrimitiveCullMode(PrimitiveCullMode mode, bool cullingDisabled, bool use2DPipeline)
+{
+    if (cullingDisabled || use2DPipeline)
+    {
+        return VK_CULL_MODE_NONE;
+    }
+    switch (mode)
+    {
+    case PrimitiveCullMode::Back:
+        return VK_CULL_MODE_BACK_BIT;
+    case PrimitiveCullMode::Disabled:
+        return VK_CULL_MODE_NONE;
+    case PrimitiveCullMode::Front:
+        return VK_CULL_MODE_FRONT_BIT;
+    }
+    return VK_CULL_MODE_BACK_BIT;
+}
+
 } // namespace
 
 void Display::createCommandPool()
@@ -107,6 +134,8 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     commandPool = VK_NULL_HANDLE;
     vertShaderModule = VK_NULL_HANDLE;
     fragShaderModule = VK_NULL_HANDLE;
+    graphicsPipelines.fill(VK_NULL_HANDLE);
+    transparentGraphicsPipelines.fill(VK_NULL_HANDLE);
 
     // Create window and surface
     createWindow(title);
@@ -130,7 +159,7 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
 
     // Create graphics pipeline now that swapchain and render pass exist
     createGraphicsPipeline();
-    if (!graphicsPipeline) {
+    if (graphicsPipelines[static_cast<size_t>(PrimitiveCullMode::Back)] == VK_NULL_HANDLE) {
         throw std::runtime_error("Graphics pipeline creation failed");
     }
 
@@ -146,7 +175,7 @@ void Display::addCamera(Camera* camera)
     camera->setFullscreenViewportEnabled(true);
     cameras.push_back(camera);
     updateCameraViewports();
-    if (graphicsPipeline != VK_NULL_HANDLE)
+    if (graphicsPipelines[static_cast<size_t>(PrimitiveCullMode::Back)] != VK_NULL_HANDLE)
     {
         camera->allocateDescriptorSet();
     }
@@ -605,6 +634,13 @@ void Display::createWindow(const char *title)
             display->handleKey(key, scancode, action, mods);
         }
     });
+    glfwSetWindowFocusCallback(window, [](GLFWwindow *win, int focused) {
+        auto *display = static_cast<Display *>(glfwGetWindowUserPointer(win));
+        if (display)
+        {
+            display->handleWindowFocusChanged(focused);
+        }
+    });
 
     createSurface(window);
     if (!surface)
@@ -685,6 +721,9 @@ void Display::cleanupSwapchainResources()
     {
         return;
     }
+
+    vkQueueWaitIdle(graphicsQueue);
+    vkDeviceWaitIdle(engine->logicalDevice);
 
     for (auto framebuffer : swapchainFramebuffers)
     {
@@ -1037,6 +1076,22 @@ void Display::handleKey(int key, int scancode, int action, int mods)
     }
 }
 
+void Display::handleWindowFocusChanged(int focused)
+{
+    if (focused)
+    {
+        return;
+    }
+
+    for (auto *camera : cameras)
+    {
+        if (camera)
+        {
+            camera->clearInputState();
+        }
+    }
+}
+
 void Display::updateCameraViewports()
 {
     if (cameras.empty())
@@ -1097,6 +1152,12 @@ void Display::setBackgroundColor(float r, float g, float b)
 
 void Display::render()
 {
+    std::lock_guard<std::mutex> lock(renderMutex);
+    if (shuttingDown || !engine || engine->logicalDevice == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
     const int MAX_FRAMES_IN_FLIGHT = 1;
 
     if (framebufferResized)
@@ -1225,8 +1286,6 @@ void Display::render()
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
     // Render for each camera
     for (size_t cameraIndex = 0; cameraIndex < cameras.size(); cameraIndex++) {
         auto& camera = cameras[cameraIndex];
@@ -1253,60 +1312,77 @@ void Display::render()
 
         Frustum frustum = extractFrustum(camera->getProjectionMatrix() * camera->getViewMatrix());
 
-        for (const auto& modelPtr : engine->models)
+        auto drawPass = [&](bool transparentPass)
         {
-            if (!modelPtr || !modelPtr->visible)
+            for (const auto& modelPtr : engine->models)
             {
-                continue;
-            }
-            if (!embeddedMode && !cullingDisabled &&
-                !sphereInFrustum(frustum, modelPtr->boundsCenter, modelPtr->boundsRadius))
-            {
-                continue;
-            }
-            const Model& model = *modelPtr;
-            for (const auto& mesh : model.meshes)
-            {
-                for (const auto& primitive : mesh.primitives) {  // This is now unique_ptr<Primitive>
-                    if (primitive->vertexCount == 0) {
-                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to zero vertices." << std::endl;
-                        continue;
-                    }
-                    if (primitive->ObjectTransformUBOBufferMemory == VK_NULL_HANDLE) {
-                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to missing transform buffer memory." << std::endl;
-                        continue;
-                    }
-                    if (primitive->ObjectTransformUBOMapped == nullptr) {
-                        std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to unmapped transform buffer." << std::endl;
-                        continue;
-                    }
-                    primitive->uploadInstanceTransforms();
-                    // Update UBO with object's transform
-                    ObjectTransform perObjectTransformUBO = primitive->buildObjectTransformData();
-                    uint32_t activeInstanceCount = static_cast<uint32_t>(perObjectTransformUBO.instanceData.x);
-                    memcpy(primitive->ObjectTransformUBOMapped, &perObjectTransformUBO, sizeof(perObjectTransformUBO));
+                if (!modelPtr || !modelPtr->visible)
+                {
+                    continue;
+                }
+                if (!embeddedMode && !cullingDisabled &&
+                    !sphereInFrustum(frustum, modelPtr->boundsCenter, modelPtr->boundsRadius))
+                {
+                    continue;
+                }
+                const Model& model = *modelPtr;
+                for (const auto& mesh : model.meshes)
+                {
+                    for (const auto& primitive : mesh.primitives)
+                    {
+                        const bool isTransparent = primitive->alphaMode == PrimitiveAlphaMode::Blend;
+                        if (isTransparent != transparentPass)
+                        {
+                            continue;
+                        }
+                        const uint32_t pipelineIndex = pipelineIndexForCullMode(primitive->cullMode, cullingDisabled, use2DPipeline);
+                        const VkPipeline activePipeline = transparentPass
+                            ? transparentGraphicsPipelines[pipelineIndex]
+                            : graphicsPipelines[pipelineIndex];
+                        vkCmdBindPipeline(commandBuffer,
+                                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          activePipeline);
+                        if (primitive->vertexCount == 0) {
+                            std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to zero vertices." << std::endl;
+                            continue;
+                        }
+                        if (primitive->ObjectTransformUBOBufferMemory == VK_NULL_HANDLE) {
+                            std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to missing transform buffer memory." << std::endl;
+                            continue;
+                        }
+                        if (primitive->ObjectTransformUBOMapped == nullptr) {
+                            std::cerr << "[Warning] Skipping primitive in model " << model.name << " due to unmapped transform buffer." << std::endl;
+                            continue;
+                        }
+                        primitive->uploadInstanceTransforms();
+                        ObjectTransform perObjectTransformUBO = primitive->buildObjectTransformData();
+                        uint32_t activeInstanceCount = static_cast<uint32_t>(perObjectTransformUBO.instanceData.x);
+                        memcpy(primitive->ObjectTransformUBOMapped, &perObjectTransformUBO, sizeof(perObjectTransformUBO));
 
-                    // Bind primitive's texture descriptor set (set 1)
-                    if (primitive->primitiveDescriptorSet != VK_NULL_HANDLE) {
-                        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                              pipelineLayout, 1, 1, &primitive->primitiveDescriptorSet, 0, nullptr);
-                    } else {
-                        throw std::runtime_error("Primitive descriptor set is null");
-                    }
+                        if (primitive->primitiveDescriptorSet != VK_NULL_HANDLE) {
+                            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                  pipelineLayout, 1, 1, &primitive->primitiveDescriptorSet, 0, nullptr);
+                        } else {
+                            throw std::runtime_error("Primitive descriptor set is null");
+                        }
 
-                    VkBuffer vertexBuffers[] = {primitive->vertexBuffer};
-                    VkDeviceSize offsets[] = {0};
-                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+                        VkBuffer vertexBuffers[] = {primitive->vertexBuffer};
+                        VkDeviceSize offsets[] = {0};
+                        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-                    if (primitive->indexCount > 0 && primitive->indexBuffer != VK_NULL_HANDLE) {
-                        vkCmdBindIndexBuffer(commandBuffer, primitive->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                        vkCmdDrawIndexed(commandBuffer, primitive->indexCount, activeInstanceCount, 0, 0, 0);
-                    } else {
-                        vkCmdDraw(commandBuffer, primitive->vertexCount, activeInstanceCount, 0, 0);
+                        if (primitive->indexCount > 0 && primitive->indexBuffer != VK_NULL_HANDLE) {
+                            vkCmdBindIndexBuffer(commandBuffer, primitive->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                            vkCmdDrawIndexed(commandBuffer, primitive->indexCount, activeInstanceCount, 0, 0, 0);
+                        } else {
+                            vkCmdDraw(commandBuffer, primitive->vertexCount, activeInstanceCount, 0, 0);
+                        }
                     }
                 }
             }
-        }
+        };
+
+        drawPass(false);
+        drawPass(true);
     }
 
     vkCmdEndRenderPass(commandBuffer);
@@ -1369,6 +1445,21 @@ void Display::render()
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     glfwPollEvents();
+}
+
+void Display::shutdown()
+{
+    std::lock_guard<std::mutex> lock(renderMutex);
+    if (shuttingDown)
+    {
+        return;
+    }
+    shuttingDown = true;
+    if (engine && engine->logicalDevice != VK_NULL_HANDLE)
+    {
+        vkQueueWaitIdle(graphicsQueue);
+        vkDeviceWaitIdle(engine->logicalDevice);
+    }
 }
 
 
@@ -1456,7 +1547,7 @@ void Display::createGraphicsPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = (cullingDisabled || use2DPipeline) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = vkCullModeForPrimitiveCullMode(PrimitiveCullMode::Back, cullingDisabled, use2DPipeline);
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -1540,9 +1631,22 @@ void Display::createGraphicsPipeline()
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
     pipelineInfo.basePipelineIndex = -1;
 
-    if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS)
+    VkPipelineDepthStencilStateCreateInfo transparentDepthStencil = depthStencil;
+    transparentDepthStencil.depthWriteEnable = VK_FALSE;
+    for (uint32_t i = 0; i < graphicsPipelines.size(); ++i)
     {
-        throw std::runtime_error("Failed to create graphics pipeline!");
+        rasterizer.cullMode = vkCullModeForPrimitiveCullMode(static_cast<PrimitiveCullMode>(i), cullingDisabled, use2DPipeline);
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create graphics pipeline!");
+        }
+
+        pipelineInfo.pDepthStencilState = &transparentDepthStencil;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &transparentGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create transparent graphics pipeline!");
+        }
     }
 
     // Allocate descriptor sets for all cameras now that layout is available
@@ -1552,10 +1656,7 @@ void Display::createGraphicsPipeline()
 }
 
 Display::~Display() {
-    // Wait for device to be idle before cleanup
-    if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(engine->logicalDevice);
-    }
+    shutdown();
 
     if (window != nullptr) {
         glfwSetFramebufferSizeCallback(window, nullptr);
@@ -1569,59 +1670,20 @@ Display::~Display() {
 
     // Cleanup swapchain resources
     if (engine && engine->logicalDevice != VK_NULL_HANDLE) {
-        // Destroy framebuffers
-        for (auto framebuffer : swapchainFramebuffers) {
-            if (framebuffer != VK_NULL_HANDLE) {
-                vkDestroyFramebuffer(engine->logicalDevice, framebuffer, nullptr);
-                framebuffer = VK_NULL_HANDLE;
-            }
-        }
-
-        // Destroy image views
-        for (auto imageView : swapchainImageViews) {
-            if (imageView != VK_NULL_HANDLE) {
-                vkDestroyImageView(engine->logicalDevice, imageView, nullptr);
-                imageView = VK_NULL_HANDLE;
-            }
-        }
-
-        // Destroy swapchain
-        if (swapchain != VK_NULL_HANDLE) {
-            vkDestroySwapchainKHR(engine->logicalDevice, swapchain, nullptr);
-            swapchain = VK_NULL_HANDLE;
-        }
-
-        // Destroy depth resources
-        if (depthImageView != VK_NULL_HANDLE) {
-            vkDestroyImageView(engine->logicalDevice, depthImageView, nullptr);
-            depthImageView = VK_NULL_HANDLE;
-        }
-        if (depthImage != VK_NULL_HANDLE) {
-            vkDestroyImage(engine->logicalDevice, depthImage, nullptr);
-            depthImage = VK_NULL_HANDLE;
-        }
-        if (depthImageMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(engine->logicalDevice, depthImageMemory, nullptr);
-            depthImageMemory = VK_NULL_HANDLE;
-        }
-
-        if (colorImageView != VK_NULL_HANDLE) {
-            vkDestroyImageView(engine->logicalDevice, colorImageView, nullptr);
-            colorImageView = VK_NULL_HANDLE;
-        }
-        if (colorImage != VK_NULL_HANDLE) {
-            vkDestroyImage(engine->logicalDevice, colorImage, nullptr);
-            colorImage = VK_NULL_HANDLE;
-        }
-        if (colorImageMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(engine->logicalDevice, colorImageMemory, nullptr);
-            colorImageMemory = VK_NULL_HANDLE;
-        }
+        cleanupSwapchainResources();
 
         // Destroy pipeline
-        if (graphicsPipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(engine->logicalDevice, graphicsPipeline, nullptr);
-            graphicsPipeline = VK_NULL_HANDLE;
+        for (VkPipeline& pipeline : graphicsPipelines) {
+            if (pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : transparentGraphicsPipelines) {
+            if (pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
         }
 
         // Destroy shader modules
@@ -1632,12 +1694,6 @@ Display::~Display() {
         if (fragShaderModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(engine->logicalDevice, fragShaderModule, nullptr);
             fragShaderModule = VK_NULL_HANDLE;
-        }
-
-        // Destroy render pass
-        if (renderPass != VK_NULL_HANDLE) {
-            vkDestroyRenderPass(engine->logicalDevice, renderPass, nullptr);
-            renderPass = VK_NULL_HANDLE;
         }
 
         // Destroy pipeline layout
@@ -1653,45 +1709,9 @@ Display::~Display() {
         cameras.clear();
 
         // Free command buffers
-        if (swapchainRecreationCmdBuffer != VK_NULL_HANDLE && swapchainCmdPool != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(engine->logicalDevice, swapchainCmdPool, 1, &swapchainRecreationCmdBuffer);
-            swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
-        }
         if (commandBuffer != VK_NULL_HANDLE && commandPool != VK_NULL_HANDLE) {
             vkFreeCommandBuffers(engine->logicalDevice, commandPool, 1, &commandBuffer);
             commandBuffer = VK_NULL_HANDLE;
-        }
-
-        // Destroy swapchain-specific command pool (engine command pool is owned by Engine)
-        if (swapchainCmdPool != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(engine->logicalDevice, swapchainCmdPool, nullptr);
-            swapchainCmdPool = VK_NULL_HANDLE;
-        }
-
-        // Destroy semaphores
-        for (auto &sem : imageAvailableSemaphores) {
-            if (sem != VK_NULL_HANDLE) {
-                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
-                sem = VK_NULL_HANDLE;
-            }
-        }
-        for (auto &sem : renderFinishedSemaphores) {
-            if (sem != VK_NULL_HANDLE) {
-                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
-                sem = VK_NULL_HANDLE;
-            }
-        }
-
-        // Destroy fences
-        for (auto &fence : inFlightFences) {
-            if (fence != VK_NULL_HANDLE) {
-                vkDestroyFence(engine->logicalDevice, fence, nullptr);
-                fence = VK_NULL_HANDLE;
-            }
-        }
-        if (swapchainRecreationFence != VK_NULL_HANDLE) {
-            vkDestroyFence(engine->logicalDevice, swapchainRecreationFence, nullptr);
-            swapchainRecreationFence = VK_NULL_HANDLE;
         }
     }
 

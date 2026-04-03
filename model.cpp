@@ -3,6 +3,7 @@
 #endif
 #include "model.h"
 #include "engine.h"
+#include <QDir>
 #include <QFileInfo>
 #include <QImage>
 #include <QByteArray>
@@ -129,6 +130,91 @@ float extractFbxMaterialAlpha(const ufbx_material* material)
     return 1.0f;
 }
 
+const char* primitiveAlphaModeName(PrimitiveAlphaMode mode)
+{
+    switch (mode)
+    {
+    case PrimitiveAlphaMode::Opaque:
+        return "opaque";
+    case PrimitiveAlphaMode::Mask:
+        return "mask";
+    case PrimitiveAlphaMode::Blend:
+        return "blend";
+    }
+    return "unknown";
+}
+
+const char* primitiveCullModeName(PrimitiveCullMode mode)
+{
+    switch (mode)
+    {
+    case PrimitiveCullMode::Back:
+        return "back";
+    case PrimitiveCullMode::Disabled:
+        return "none";
+    case PrimitiveCullMode::Front:
+        return "front";
+    }
+    return "unknown";
+}
+
+PrimitiveAlphaMode classifyAlphaModeFromImage(const QImage& image,
+                                              float uniformAlpha,
+                                              bool hasOpacityImage)
+{
+    if (image.isNull())
+    {
+        if (uniformAlpha < 0.999f)
+        {
+            return PrimitiveAlphaMode::Blend;
+        }
+        return PrimitiveAlphaMode::Opaque;
+    }
+
+    int opaquePixels = 0;
+    int transparentPixels = 0;
+    int partialPixels = 0;
+    const int pixelCount = image.width() * image.height();
+    for (int y = 0; y < image.height(); ++y)
+    {
+        const uchar* scanline = image.constScanLine(y);
+        for (int x = 0; x < image.width(); ++x)
+        {
+            const uchar alpha = scanline[x * 4 + 3];
+            if (alpha >= 250)
+            {
+                ++opaquePixels;
+            }
+            else if (alpha <= 5)
+            {
+                ++transparentPixels;
+            }
+            else
+            {
+                ++partialPixels;
+            }
+        }
+    }
+
+    if (partialPixels == 0)
+    {
+        if (transparentPixels > 0 || hasOpacityImage)
+        {
+            return PrimitiveAlphaMode::Mask;
+        }
+        return PrimitiveAlphaMode::Opaque;
+    }
+
+    const float partialRatio = pixelCount > 0 ? static_cast<float>(partialPixels) / static_cast<float>(pixelCount) : 1.0f;
+    const float transparentRatio = pixelCount > 0 ? static_cast<float>(transparentPixels) / static_cast<float>(pixelCount) : 0.0f;
+    if (partialRatio <= 0.02f && transparentRatio >= 0.001f)
+    {
+        return PrimitiveAlphaMode::Mask;
+    }
+
+    return PrimitiveAlphaMode::Blend;
+}
+
 bool extractFbxMaterialColor(const ufbx_mesh* mesh, glm::vec4& outColor)
 {
     if (!mesh || mesh->materials.count == 0 || !mesh->materials.data)
@@ -180,7 +266,40 @@ QString ufbxStringToQString(ufbx_string value)
     return QString::fromUtf8(value.data, static_cast<qsizetype>(value.length));
 }
 
-bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
+int maxImportedTextureDimension()
+{
+    static int cached = []() {
+        const char* env = std::getenv("MOTIVE_MAX_IMPORT_TEXTURE_DIM");
+        if (!env || *env == '\0')
+        {
+            return 4096;
+        }
+        const int value = std::atoi(env);
+        return value > 0 ? value : 4096;
+    }();
+    return cached;
+}
+
+void downscaleImportedImageIfNeeded(QImage& image, const QString& sourceLabel)
+{
+    if (image.isNull())
+    {
+        return;
+    }
+    const int maxDim = maxImportedTextureDimension();
+    if (image.width() <= maxDim && image.height() <= maxDim)
+    {
+        return;
+    }
+
+    image = image.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    std::cout << "[Import] Downscaled oversized texture: "
+              << sourceLabel.toStdString()
+              << " -> " << image.width() << "x" << image.height()
+              << " (maxDim=" << maxDim << ")" << std::endl;
+}
+
+bool loadImageFromUfbxTexture(const ufbx_texture* texture, const QString& sourceDirectory, QImage& outImage)
 {
     if (!texture)
     {
@@ -207,6 +326,7 @@ bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
         stbi_image_free(decoded);
         if (!outImage.isNull())
         {
+            downscaleImportedImageIfNeeded(outImage, sourceLabel);
             std::cout << "[FBX] Loaded texture via stb_image fallback: "
                       << sourceLabel.toStdString()
                       << " (" << width << "x" << height << ")" << std::endl;
@@ -220,6 +340,7 @@ bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
         if (outImage.loadFromData(reinterpret_cast<const uchar*>(texture->content.data),
                                   static_cast<int>(texture->content.size)))
         {
+            downscaleImportedImageIfNeeded(outImage, QStringLiteral("<embedded>"));
             return true;
         }
         if (loadViaStbFromBytes(reinterpret_cast<const unsigned char*>(texture->content.data),
@@ -243,14 +364,22 @@ bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
             continue;
         }
 
-        QImage image(candidate);
+        QString resolvedCandidate = candidate;
+        const QFileInfo candidateInfo(candidate);
+        if (candidateInfo.isRelative() && !sourceDirectory.isEmpty())
+        {
+            resolvedCandidate = QDir(sourceDirectory).filePath(candidate);
+        }
+
+        QImage image(resolvedCandidate);
         if (!image.isNull())
         {
             outImage = image;
+            downscaleImportedImageIfNeeded(outImage, resolvedCandidate);
             return true;
         }
 
-        std::ifstream file(candidate.toStdString(), std::ios::binary);
+        std::ifstream file(resolvedCandidate.toStdString(), std::ios::binary);
         if (!file)
         {
             continue;
@@ -263,7 +392,7 @@ bool loadImageFromUfbxTexture(const ufbx_texture* texture, QImage& outImage)
         }
         if (loadViaStbFromBytes(bytes.data(),
                                 static_cast<int>(bytes.size()),
-                                candidate))
+                                resolvedCandidate))
         {
             return true;
         }
@@ -315,8 +444,9 @@ bool applyFbxBaseColorTexture(Mesh& targetMesh, const ufbx_mesh* sourceMesh)
         invertOpacityMap = true;
     }
 
+    const QString sourceDirectory = QFileInfo(QString::fromStdString(targetMesh.model->name)).absolutePath();
     QImage image;
-    if (!loadImageFromUfbxTexture(texture, image) || image.isNull())
+    if (!loadImageFromUfbxTexture(texture, sourceDirectory, image) || image.isNull())
     {
         return false;
     }
@@ -353,7 +483,7 @@ bool applyFbxBaseColorTexture(Mesh& targetMesh, const ufbx_mesh* sourceMesh)
         {
             opacityScalar = 1.0f - opacityScalar;
         }
-        if (opacityMap->texture && loadImageFromUfbxTexture(opacityMap->texture, opacityImage) && !opacityImage.isNull())
+        if (opacityMap->texture && loadImageFromUfbxTexture(opacityMap->texture, sourceDirectory, opacityImage) && !opacityImage.isNull())
         {
             opacityImage = opacityImage.convertToFormat(QImage::Format_RGBA8888);
             if (opacityImage.size() != image.size())
@@ -407,9 +537,17 @@ bool applyFbxBaseColorTexture(Mesh& targetMesh, const ufbx_mesh* sourceMesh)
             static_cast<uint32_t>(image.height()),
             VK_FORMAT_R8G8B8A8_SRGB);
     }
-    const bool hasTransparency = !opacityImage.isNull() || factor.a < 0.999f || opacityScalar < 0.999f;
-    primitive->alphaMode = hasTransparency ? PrimitiveAlphaMode::Blend : PrimitiveAlphaMode::Opaque;
+    primitive->alphaMode = classifyAlphaModeFromImage(image, factor.a * opacityScalar, !opacityImage.isNull());
     primitive->alphaCutoff = 0.5f;
+    std::cout << "[FBX] Material texture applied: mesh=\""
+              << (sourceMesh && sourceMesh->name.data ? std::string(sourceMesh->name.data, sourceMesh->name.length) : std::string("<unnamed>"))
+              << "\" size=" << image.width() << "x" << image.height()
+              << " baseFactor=(" << factor.r << ", " << factor.g << ", " << factor.b << ", " << factor.a << ")"
+              << " opacityScalar=" << opacityScalar
+              << " opacityTexture=" << (!opacityImage.isNull() ? "yes" : "no")
+              << " alphaMode=" << primitiveAlphaModeName(primitive->alphaMode)
+              << " cullMode=" << primitiveCullModeName(primitive->cullMode)
+              << std::endl;
     return true;
 }
 
@@ -454,6 +592,12 @@ void applyFbxMaterialColorFallback(Mesh& targetMesh, const ufbx_mesh* sourceMesh
     }
     primitive->alphaMode = color.a < 0.999f ? PrimitiveAlphaMode::Blend : PrimitiveAlphaMode::Opaque;
     primitive->alphaCutoff = 0.5f;
+    std::cout << "[FBX] Material color fallback: mesh=\""
+              << (sourceMesh && sourceMesh->name.data ? std::string(sourceMesh->name.data, sourceMesh->name.length) : std::string("<unnamed>"))
+              << "\" color=(" << color.r << ", " << color.g << ", " << color.b << ", " << color.a << ")"
+              << " alphaMode=" << primitiveAlphaModeName(primitive->alphaMode)
+              << " cullMode=" << primitiveCullModeName(primitive->cullMode)
+              << std::endl;
 }
 
 std::vector<Vertex> buildVerticesFromFbxMesh(const ufbx_mesh* mesh)
@@ -1064,8 +1208,9 @@ ObjectTransform Primitive::buildObjectTransformData() const
                                 usesYuvTexture ? yuvChromaDivY : 1u,
                                 usesYuvTexture ? yuvBitDepth : 8u,
                                 0u);
-    data.materialFlags = glm::uvec4(static_cast<uint32_t>(alphaMode), 0u, 0u, 0u);
+    data.materialFlags = glm::uvec4(static_cast<uint32_t>(alphaMode), paintOverrideEnabled ? 1u : 0u, 0u, 0u);
     data.materialParams = glm::vec4(alphaCutoff, 0.0f, 0.0f, 0.0f);
+    data.colorOverride = glm::vec4(paintOverrideColor, 1.0f);
     return data;
 }
 
@@ -1231,6 +1376,20 @@ Mesh::Mesh(Engine *engine, Model *model, tinygltf::Mesh gltfmesh)
     }
 }
 
+Mesh::Mesh(Engine *engine, Model *model, const std::vector<GltfCombinedPrimitiveData>& combinedPrimitives)
+    : engine(engine), model(model)
+{
+    primitives.reserve(combinedPrimitives.size());
+    for (const auto& group : combinedPrimitives)
+    {
+        if (group.vertices.empty() || group.indices.empty())
+        {
+            continue;
+        }
+        primitives.emplace_back(std::make_unique<Primitive>(engine, this, group.vertices, group.indices, group.materialIndex));
+    }
+}
+
 Mesh::Mesh(Engine *engine, Model *model, const std::vector<Vertex> &vertices, bool initializeTextureResources)
     : engine(engine), model(model)
 {
@@ -1265,15 +1424,18 @@ Model::Model(const std::vector<Vertex> &vertices, Engine *engine) : engine(engin
     std::cout << "[Debug] Creating procedural Model at " << this << " with " << vertices.size() << " vertices." << std::endl;
     // Create a single mesh from the provided vertices
     meshes.emplace_back(engine, this, vertices);
+    normalizedBaseTransform = glm::mat4(1.0f);
+    worldTransform = normalizedBaseTransform;
     std::cout << "[Debug] Model " << this << " finished initialization. Mesh count: " << meshes.size() << std::endl;
     recomputeBounds();
     if (engine) engine->endBatchUpload();
 }
 
-Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
+Model::Model(const std::string &gltfPath, Engine *engine, bool consolidateMeshes) : engine(engine)
 {
     if (engine) engine->beginBatchUpload();
     name = gltfPath;
+    meshConsolidationEnabled = consolidateMeshes;
     if (hasExtension(gltfPath, ".fbx"))
     {
         std::cout << "[Debug] Loading FBX Model at " << this << " from " << gltfPath << std::endl;
@@ -1286,6 +1448,38 @@ Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
             if (engine) engine->endBatchUpload();
             throw std::runtime_error("FBX error: " + std::string(error.description.data, error.description.length));
         }
+
+        for (size_t i = 0; i < scene->anim_stacks.count; ++i)
+        {
+            const ufbx_anim_stack* animStack = scene->anim_stacks.data[i];
+            if (!animStack)
+            {
+                continue;
+            }
+            std::string clipName = animStack->name.data && animStack->name.length > 0
+                ? std::string(animStack->name.data, animStack->name.length)
+                : ("Animation " + std::to_string(i));
+            if (clipName.empty())
+            {
+                clipName = "Animation " + std::to_string(i);
+            }
+            animationClips.push_back(AnimationClipInfo{clipName});
+        }
+        std::cout << "[FBX] Animation stacks discovered: " << animationClips.size();
+        if (!animationClips.empty())
+        {
+            std::cout << " [";
+            for (size_t i = 0; i < animationClips.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    std::cout << ", ";
+                }
+                std::cout << animationClips[i].name;
+            }
+            std::cout << "]";
+        }
+        std::cout << std::endl;
 
         for (size_t i = 0; i < scene->meshes.count; ++i)
         {
@@ -1300,8 +1494,12 @@ Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
                     continue;
                 }
 
+                // FBX assets arriving from mixed DCC/export pipelines are not yet normalized for winding order,
+                // so default to no culling in the editor/runtime path to avoid disappearing meshes.
+                primitive->cullMode = PrimitiveCullMode::Disabled;
                 primitive->createTextureSampler();
-                if (!applyFbxBaseColorTexture(meshes.back(), mesh))
+                const bool appliedTexture = applyFbxBaseColorTexture(meshes.back(), mesh);
+                if (!appliedTexture)
                 {
                     applyFbxMaterialColorFallback(meshes.back(), mesh);
                 }
@@ -1310,6 +1508,15 @@ Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
                     primitive->createDefaultTexture();
                 }
                 primitive->finalizeTextureResources();
+                std::cout << "[FBX] Mesh import summary: mesh=\""
+                          << (mesh->name.data ? std::string(mesh->name.data, mesh->name.length) : std::string("<unnamed>"))
+                          << "\" verts=" << primitive->vertexCount
+                          << " indices=" << primitive->indexCount
+                          << " textureApplied=" << (appliedTexture ? "yes" : "no")
+                          << " alphaMode=" << primitiveAlphaModeName(primitive->alphaMode)
+                          << " cullMode=" << primitiveCullModeName(primitive->cullMode)
+                          << " alphaCutoff=" << primitive->alphaCutoff
+                          << std::endl;
             }
         }
 
@@ -1367,12 +1574,65 @@ Model::Model(const std::string &gltfPath, Engine *engine) : engine(engine)
         throw std::runtime_error("GLTF contains no meshes.");
     }
 
-    meshes.reserve(tgltfModel->meshes.size());
-    for (const auto &gltfmesh : tgltfModel->meshes)
+    for (size_t i = 0; i < tgltfModel->animations.size(); ++i)
     {
-        meshes.emplace_back(engine, this, gltfmesh);
+        const auto& animation = tgltfModel->animations[i];
+        std::string clipName = animation.name.empty() ? ("Animation " + std::to_string(i)) : animation.name;
+        animationClips.push_back(AnimationClipInfo{clipName});
     }
-    
+
+    if (meshConsolidationEnabled)
+    {
+        std::unordered_map<int, size_t> materialToGroupIndex;
+        std::vector<GltfCombinedPrimitiveData> combinedGroups;
+        for (const auto &gltfmesh : tgltfModel->meshes)
+        {
+            for (const auto &tprimitive : gltfmesh.primitives)
+            {
+                std::vector<Vertex> primitiveVertices;
+                std::vector<uint32_t> primitiveIndices;
+                if (!extractVerticesAndIndicesFromGltfPrimitive(*tgltfModel, tprimitive, primitiveVertices, primitiveIndices))
+                {
+                    continue;
+                }
+
+                const int materialIndex = tprimitive.material;
+                auto it = materialToGroupIndex.find(materialIndex);
+                if (it == materialToGroupIndex.end())
+                {
+                    const size_t newIndex = combinedGroups.size();
+                    materialToGroupIndex.emplace(materialIndex, newIndex);
+                    combinedGroups.push_back(GltfCombinedPrimitiveData{materialIndex, {}, {}});
+                    it = materialToGroupIndex.find(materialIndex);
+                }
+
+                GltfCombinedPrimitiveData& group = combinedGroups[it->second];
+                const uint32_t vertexOffset = static_cast<uint32_t>(group.vertices.size());
+                group.vertices.insert(group.vertices.end(), primitiveVertices.begin(), primitiveVertices.end());
+                group.indices.reserve(group.indices.size() + primitiveIndices.size());
+                for (uint32_t index : primitiveIndices)
+                {
+                    group.indices.push_back(vertexOffset + index);
+                }
+            }
+        }
+
+        meshes.clear();
+        meshes.reserve(combinedGroups.empty() ? 0 : 1);
+        if (!combinedGroups.empty())
+        {
+            meshes.emplace_back(engine, this, combinedGroups);
+        }
+    }
+    else
+    {
+        meshes.reserve(tgltfModel->meshes.size());
+        for (const auto &gltfmesh : tgltfModel->meshes)
+        {
+            meshes.emplace_back(engine, this, gltfmesh);
+        }
+    }
+
     std::cout << "[Debug] GLTF Model " << this << " loaded successfully. Mesh count: " << meshes.size() << std::endl;
     recomputeBounds();
     if (engine) engine->endBatchUpload();
@@ -1461,6 +1721,7 @@ void Model::scaleToUnitBox()
     glm::mat4 translation = glm::translate(glm::mat4(1.0f), -center);
     glm::mat4 scaleMat = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
     glm::mat4 transform = scaleMat * translation;
+    normalizedBaseTransform = transform;
     worldTransform = transform;
 
     for (auto &mesh : meshes)
@@ -1523,6 +1784,56 @@ void Model::rotate(float xDegrees, float yDegrees, float zDegrees)
     }
 
     applyTransformToPrimitives(rotationMat);
+}
+
+void Model::setSceneTransform(const glm::vec3& translation, const glm::vec3& rotationDegrees, const glm::vec3& scaleFactors)
+{
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), translation);
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
+    modelMatrix = glm::scale(modelMatrix, scaleFactors);
+    modelMatrix = modelMatrix * normalizedBaseTransform;
+
+    worldTransform = modelMatrix;
+    for (auto& mesh : meshes)
+    {
+        for (auto& primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+            primitive->transform = modelMatrix;
+            if (primitive->ObjectTransformUBOMapped)
+            {
+                ObjectTransform updated = primitive->buildObjectTransformData();
+                memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+            }
+        }
+    }
+    recomputeBounds();
+}
+
+void Model::setPaintOverride(bool enabled, const glm::vec3& color)
+{
+    for (auto& mesh : meshes)
+    {
+        for (auto& primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+            primitive->paintOverrideEnabled = enabled;
+            primitive->paintOverrideColor = color;
+            if (primitive->ObjectTransformUBOMapped)
+            {
+                ObjectTransform updated = primitive->buildObjectTransformData();
+                memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+            }
+        }
+    }
 }
 
 void Model::applyTransformToPrimitives(const glm::mat4 &transform)

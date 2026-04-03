@@ -113,10 +113,12 @@ QJsonObject buildDirectoryListing(const QString& rootPath)
 
 EngineUiControlServer::EngineUiControlServer(std::function<QString()> rootPathProvider,
                                              std::function<ProfileData()> profileDataProvider,
+                                             std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> commandHandler,
                                              QObject* parent)
     : QObject(parent),
       m_rootPathProvider(std::move(rootPathProvider)),
-      m_profileDataProvider(std::move(profileDataProvider))
+      m_profileDataProvider(std::move(profileDataProvider)),
+      m_commandHandler(std::move(commandHandler))
 {
 }
 
@@ -251,6 +253,45 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
     const QByteArray method = requestLine.at(0);
     const QByteArray path = requestLine.at(1);
 
+    if (method == "POST")
+    {
+        const int headerEnd = request.indexOf("\r\n\r\n");
+        const QByteArray bodyBytes = headerEnd >= 0 ? request.mid(headerEnd + 4) : QByteArray{};
+        const QJsonDocument bodyDoc = QJsonDocument::fromJson(bodyBytes);
+        const QJsonObject body = bodyDoc.isObject() ? bodyDoc.object() : QJsonObject{};
+        if (path == "/controls/primitive")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("primitive"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("primitive control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/scene-item")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("scene_item"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("scene-item control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+
+        return jsonResponse(404, compactJson(QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("not found")}
+        }));
+    }
+
     if (method != "GET")
     {
         return jsonResponse(405, compactJson(QJsonObject{
@@ -295,14 +336,31 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         cameraRotArray.append(data.cameraRotation.y());
         cameraRotArray.append(data.cameraRotation.z());
         
-        return jsonResponse(200, compactJson(QJsonObject{
-            {QStringLiteral("ok"), true},
-            {QStringLiteral("rootPath"), data.rootPath},
-            {QStringLiteral("sceneItemCount"), data.sceneItemCount},
-            {QStringLiteral("sceneItems"), QJsonArray::fromVariantList(QVariantList(data.sceneItems.begin(), data.sceneItems.end()))},
-            {QStringLiteral("cameraPosition"), cameraPosArray},
-            {QStringLiteral("cameraRotation"), cameraRotArray}
-        }));
+        QJsonArray sceneItemsArray;
+        for (const auto& sceneItem : data.sceneItems)
+        {
+            sceneItemsArray.append(sceneItem);
+        }
+
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("rootPath"), data.rootPath);
+        payload.insert(QStringLiteral("sceneItemCount"), data.sceneItemCount);
+        payload.insert(QStringLiteral("sceneItems"), sceneItemsArray);
+        payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        payload.insert(QStringLiteral("cameraPosition"), cameraPosArray);
+        payload.insert(QStringLiteral("cameraRotation"), cameraRotArray);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/hierarchy")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("rootPath"), data.rootPath);
+        payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        return jsonResponse(200, compactJson(payload));
     }
 
     return jsonResponse(404, compactJson(QJsonObject{

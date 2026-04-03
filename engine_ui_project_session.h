@@ -23,7 +23,10 @@ public:
     QJsonArray currentSceneItems() const;
     QVector3D currentCameraPosition() const;
     QVector3D currentCameraRotation() const;
+    float currentCameraSpeed() const;
+    QJsonObject currentSceneLight() const;
     QString currentRenderPath() const;
+    bool currentMeshConsolidationEnabled() const;
     QString projectsDirPath() const;
     QString currentProjectMarkerPath() const;
     QString projectPath(const QString& projectId) const;
@@ -43,7 +46,10 @@ public:
     void setCurrentSceneItems(const QJsonArray& items);
     void setCurrentCameraPosition(const QVector3D& position);
     void setCurrentCameraRotation(const QVector3D& rotation);
+    void setCurrentCameraSpeed(float speed);
+    void setCurrentSceneLight(const QJsonObject& light);
     void setCurrentRenderPath(const QString& renderPath);
+    void setCurrentMeshConsolidationEnabled(bool enabled);
     void saveCurrentProject() const;
 
 private:
@@ -63,7 +69,10 @@ private:
     QJsonArray m_currentSceneItems;
     QVector3D m_currentCameraPosition;
     QVector3D m_currentCameraRotation;
+    float m_currentCameraSpeed = 0.01f;
+    QJsonObject m_currentSceneLight;
     QString m_currentRenderPath = QStringLiteral("forward3d");
+    bool m_currentMeshConsolidationEnabled = true;
 };
 
 }  // namespace motive::ui

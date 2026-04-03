@@ -14,6 +14,7 @@ layout(set = 1, binding = 0) uniform ObjectUBO {
     uvec4 yuvParams;
     uvec4 materialFlags;
     vec4 materialParams;
+    vec4 colorOverride;
 } objectUBO;
 
 struct InstanceTransform {
