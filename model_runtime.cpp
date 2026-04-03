@@ -303,3 +303,171 @@ bool Model::computeProceduralBounds(glm::vec3 &minBounds, glm::vec3 &maxBounds) 
     }
     return found;
 }
+
+
+// ============================================================================
+// Character Controller Implementation
+// ============================================================================
+
+void Model::setCharacterInput(const glm::vec3& moveDir)
+{
+    character.inputDir = moveDir;
+}
+
+void Model::updateCharacterPhysics(float deltaSeconds)
+{
+    if (!character.isControllable)
+    {
+        return;
+    }
+    
+    // Clamp delta to prevent physics explosions on lag spikes
+    const float dt = glm::min(deltaSeconds, 0.1f);
+    
+    // Debug: log input
+    static int inputLogCounter = 0;
+    if (++inputLogCounter % 60 == 0 && glm::length(character.inputDir) > 0.01f)
+    {
+        std::cout << "[CharacterPhysics] Input: " << character.inputDir.x << ", " 
+                  << character.inputDir.y << ", " << character.inputDir.z << std::endl;
+    }
+    
+    // Calculate target velocity from input
+    glm::vec3 targetVelocity(0.0f);
+    if (glm::length(character.inputDir) > 0.01f)
+    {
+        targetVelocity = glm::normalize(character.inputDir) * character.moveSpeed;
+    }
+    
+    // Smoothly interpolate current velocity toward target (for arcade feel)
+    const float accel = 10.0f;
+    character.velocity.x = glm::mix(character.velocity.x, targetVelocity.x, glm::min(accel * dt, 1.0f));
+    character.velocity.z = glm::mix(character.velocity.z, targetVelocity.z, glm::min(accel * dt, 1.0f));
+    
+    // Apply gravity
+    character.velocity.y += character.gravity * dt;
+    
+    // Update position
+    glm::vec3 currentPos = glm::vec3(worldTransform[3]);
+    currentPos += character.velocity * dt;
+    
+    // Ground collision
+    if (currentPos.y < character.groundHeight)
+    {
+        currentPos.y = character.groundHeight;
+        character.velocity.y = 0.0f;
+        character.isGrounded = true;
+    }
+    else
+    {
+        character.isGrounded = false;
+    }
+    
+    // Apply position to world transform
+    worldTransform[3] = glm::vec4(currentPos, 1.0f);
+    applyTransformToPrimitives(worldTransform);
+    
+    // Update animation state based on speed
+    const float horizontalSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
+    
+    // Determine target animation state
+    CharacterController::AnimState targetState;
+    if (horizontalSpeed < character.walkSpeedThreshold)
+    {
+        targetState = CharacterController::AnimState::Idle;
+    }
+    else if (horizontalSpeed < character.runSpeedThreshold)
+    {
+        targetState = CharacterController::AnimState::Walk;
+    }
+    else
+    {
+        targetState = CharacterController::AnimState::Run;
+    }
+    
+    // Smooth animation weight transition
+    float targetWeight = 0.0f;
+    switch (targetState)
+    {
+        case CharacterController::AnimState::Idle:
+            targetWeight = 0.0f;
+            break;
+        case CharacterController::AnimState::Walk:
+            targetWeight = 0.5f;
+            break;
+        case CharacterController::AnimState::Run:
+            targetWeight = 1.0f;
+            break;
+    }
+    
+    character.currentAnimWeight = glm::mix(character.currentAnimWeight, targetWeight, 
+                                           glm::min(character.animBlendSpeed * dt, 1.0f));
+    character.currentAnimState = targetState;
+    
+    // Auto-select animation clips based on state
+    // Note: This assumes clips are named "idle", "walk", "run" or similar
+    if (animated && !animationClips.empty())
+    {
+        std::string targetClip;
+        switch (targetState)
+        {
+            case CharacterController::AnimState::Idle:
+                // Try to find idle clip
+                for (size_t i = 0; i < animationClips.size(); ++i)
+                {
+                    const auto& name = animationClips[i].name;
+                    if (name.find("idle") != std::string::npos || 
+                        name.find("Idle") != std::string::npos ||
+                        name.find("IDLE") != std::string::npos)
+                    {
+                        targetClip = name;
+                        break;
+                    }
+                }
+                break;
+            case CharacterController::AnimState::Walk:
+            case CharacterController::AnimState::Run:
+                // Try to find walk/movement clip
+                for (size_t i = 0; i < animationClips.size(); ++i)
+                {
+                    const auto& name = animationClips[i].name;
+                    if (name.find("walk") != std::string::npos || 
+                        name.find("Walk") != std::string::npos ||
+                        name.find("WALK") != std::string::npos ||
+                        name.find("move") != std::string::npos ||
+                        name.find("Move") != std::string::npos)
+                    {
+                        targetClip = name;
+                        break;
+                    }
+                }
+                // Fall back to first clip if no walk found
+                if (targetClip.empty() && !animationClips.empty())
+                {
+                    targetClip = animationClips[0].name;
+                }
+                break;
+        }
+        
+        // Switch animation if needed (only on state change)
+        if (!targetClip.empty() && fbxAnimationRuntime)
+        {
+            // Check if we need to switch
+            bool needSwitch = false;
+            if (fbxAnimationRuntime->activeClipIndex >= 0 && 
+                fbxAnimationRuntime->activeClipIndex < static_cast<int>(fbxAnimationRuntime->clips.size()))
+            {
+                const auto& currentClip = fbxAnimationRuntime->clips[fbxAnimationRuntime->activeClipIndex];
+                if (currentClip.name != targetClip)
+                {
+                    needSwitch = true;
+                }
+            }
+            
+            if (needSwitch)
+            {
+                setAnimationPlaybackState(targetClip, true, true, 1.0f);
+            }
+        }
+    }
+}

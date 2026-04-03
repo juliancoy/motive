@@ -8,6 +8,7 @@
 // Forward declarations
 class Engine;
 class Display;
+class Model;  // For character controller target
 
 struct CameraTransform {
     glm::mat4 view;
@@ -75,6 +76,10 @@ public:
     void setOrthographicProjection(float width, float height, float nearPlane = 0.1f, float farPlane = 100.0f);
     void setPerspectiveProjection();
     void setControlsEnabled(bool enabled);
+    
+    // Character controller target (WASD moves this model instead of camera)
+    void setCharacterTarget(Model* model);
+    Model* getCharacterTarget() const { return characterTarget; }
 
 private:
     Engine* engine;
@@ -96,4 +101,6 @@ private:
     bool fullscreenViewportEnabled = false;
     float fullscreenPercentX = 1.0f;
     float fullscreenPercentY = 1.0f;
+    
+    Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
 };

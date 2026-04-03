@@ -144,6 +144,74 @@ int runMotiveEditorApp(int argc, char** argv)
                 return true;
             }
 
+            if (command == QStringLiteral("character"))
+            {
+                // Support both sceneIndex and name/label
+                int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+                const QString name = body.value(QStringLiteral("name")).toString();
+                
+                // If name provided, find matching sceneIndex
+                if (!name.isEmpty())
+                {
+                    const auto items = viewport->sceneItems();
+                    for (int i = 0; i < items.size(); ++i)
+                    {
+                        if (items[i].name == name)
+                        {
+                            sceneIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                // If no specific character requested, return list of controllable characters
+                if (sceneIndex < 0 && body.isEmpty())
+                {
+                    QJsonArray characters;
+                    const auto items = viewport->sceneItems();
+                    for (int i = 0; i < items.size(); ++i)
+                    {
+                        QJsonObject charInfo;
+                        charInfo.insert(QStringLiteral("sceneIndex"), i);
+                        charInfo.insert(QStringLiteral("name"), items[i].name);
+                        charInfo.insert(QStringLiteral("isControllable"), viewport->isCharacterControlEnabled(i));
+                        characters.append(charInfo);
+                    }
+                    result.insert(QStringLiteral("characters"), characters);
+                    return true;
+                }
+                
+                if (sceneIndex < 0)
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex or valid name is required"));
+                    return false;
+                }
+                
+                if (body.contains(QStringLiteral("controllable")))
+                {
+                    const bool enabled = body.value(QStringLiteral("controllable")).toBool(false);
+                    viewport->enableCharacterControl(sceneIndex, enabled);
+                    result.insert(QStringLiteral("controllable"), enabled);
+                }
+                
+                result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                result.insert(QStringLiteral("isControllable"), viewport->isCharacterControlEnabled(sceneIndex));
+                return true;
+            }
+
+            if (command == QStringLiteral("camera"))
+            {
+                if (body.contains(QStringLiteral("freeFly")))
+                {
+                    const bool enabled = body.value(QStringLiteral("freeFly")).toBool(true);
+                    viewport->setFreeFlyCameraEnabled(enabled);
+                    result.insert(QStringLiteral("freeFly"), enabled);
+                }
+                
+                result.insert(QStringLiteral("freeFly"), viewport->isFreeFlyCameraEnabled());
+                return true;
+            }
+
             result.insert(QStringLiteral("error"), QStringLiteral("unknown command"));
             return false;
         },

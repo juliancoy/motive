@@ -28,6 +28,7 @@ public:
     QString currentRenderPath() const;
     bool currentMeshConsolidationEnabled() const;
     bool currentValidationLayersEnabled() const;
+    bool currentFreeFlyCameraEnabled() const;
     QString projectsDirPath() const;
     QString currentProjectMarkerPath() const;
     QString projectPath(const QString& projectId) const;
@@ -52,6 +53,7 @@ public:
     void setCurrentRenderPath(const QString& renderPath);
     void setCurrentMeshConsolidationEnabled(bool enabled);
     void setCurrentValidationLayersEnabled(bool enabled);
+    void setCurrentFreeFlyCameraEnabled(bool enabled);
     void saveCurrentProject() const;
 
 private:
@@ -76,6 +78,7 @@ private:
     QString m_currentRenderPath = QStringLiteral("forward3d");
     bool m_currentMeshConsolidationEnabled = true;
     bool m_currentValidationLayersEnabled = true;
+    bool m_currentFreeFlyCameraEnabled = true;  // Default to free fly mode
 };
 
 }  // namespace motive::ui

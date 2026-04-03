@@ -94,6 +94,7 @@ private:
     QCheckBox* m_meshConsolidationCheck = nullptr;
     QCheckBox* m_validationLayersCheck = nullptr;
     QLabel* m_validationRestartLabel = nullptr;
+    QCheckBox* m_freeFlyCameraCheck = nullptr;
     QWidget* m_bgColorWidget = nullptr;
     
     ProjectSession m_projectSession;

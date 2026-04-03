@@ -85,6 +85,28 @@ public:
         std::string name;
     };
 
+    // Character controller for arcade-style physics
+    struct CharacterController {
+        glm::vec3 velocity = glm::vec3(0.0f);
+        glm::vec3 inputDir = glm::vec3(0.0f);  // WASD input direction
+        float moveSpeed = 3.0f;
+        float gravity = -9.8f;
+        float jumpSpeed = 5.0f;
+        float groundHeight = 0.0f;
+        bool isGrounded = false;
+        bool isControllable = false;  // Set true for player character
+        
+        // Animation state
+        enum class AnimState { Idle, Walk, Run };
+        AnimState currentAnimState = AnimState::Idle;
+        float walkSpeedThreshold = 0.1f;
+        float runSpeedThreshold = 4.0f;
+        
+        // For smooth animation blending
+        float currentAnimWeight = 0.0f;  // 0=idle, 1=walk
+        float animBlendSpeed = 5.0f;     // How fast to blend between states
+    };
+
     Model(const std::string& gltfPath, Engine* engine, bool consolidateMeshes = true);
     Model(const std::vector<Vertex>& vertices, Engine* engine);
     ~Model();
@@ -100,6 +122,11 @@ public:
     void setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed);
     void updateAnimation(double deltaSeconds);
     void recomputeBounds();
+    
+    // Character controller methods
+    void updateCharacterPhysics(float deltaSeconds);
+    void setCharacterInput(const glm::vec3& moveDir);  // Called from input handler
+    glm::vec3 getCharacterPosition() const { return glm::vec3(worldTransform[3]); }
 
     tinygltf::Model* tgltfModel = nullptr;
 
@@ -117,6 +144,14 @@ public:
     bool meshConsolidationEnabled = true;
     std::vector<AnimationClipInfo> animationClips;
     std::unique_ptr<motive::animation::FbxRuntime> fbxAnimationRuntime;
+    
+    // Character controller (for player-controlled models)
+    CharacterController character;
+    
+    // Cached animation clip indices for common states
+    int idleClipIndex = -1;
+    int walkClipIndex = -1;
+    int runClipIndex = -1;
 
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);

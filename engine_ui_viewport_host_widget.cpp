@@ -19,6 +19,7 @@
 #include <QDropEvent>
 #include <QFocusEvent>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -317,6 +318,139 @@ ViewportHostWidget::PerformanceMetrics ViewportHostWidget::performanceMetrics() 
     return metrics;
 }
 
+void ViewportHostWidget::enableCharacterControl(int sceneIndex, bool enabled)
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return;
+    }
+    
+    auto& model = m_runtime->engine()->models[sceneIndex];
+    if (!model)
+    {
+        return;
+    }
+    
+    model->character.isControllable = enabled;
+    
+    // When enabling, teleport character up so he drops down by gravity
+    if (enabled)
+    {
+        glm::vec3 pos = glm::vec3(model->worldTransform[3]);
+        pos.y = 5.0f;  // Start 5 units above ground (closer drop)
+        model->worldTransform[3] = glm::vec4(pos, 1.0f);
+        model->character.velocity = glm::vec3(0.0f);
+        model->character.isGrounded = false;
+        qDebug() << "[ViewportHost] Character teleported to Y=5 to drop by gravity";
+        
+        // Immediately position camera behind character
+        if (m_runtime->camera())
+        {
+            const float followDist = 3.0f;
+            const float heightOff = 0.8f;
+            glm::vec3 camPos = pos;
+            camPos.z += followDist;
+            camPos.y += heightOff;
+            m_runtime->camera()->cameraPos = camPos;
+            
+            // Calculate rotation to look at character
+            glm::vec3 lookTarget = pos + glm::vec3(0.0f, 0.8f, 0.0f);
+            glm::vec3 front = glm::normalize(lookTarget - camPos);
+            float yaw = atan2(front.x, front.z) + 3.14159f;
+            float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
+            if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
+            m_runtime->camera()->cameraRotation = glm::vec2(yaw, pitch);
+            m_runtime->camera()->update(0);
+            
+            qDebug() << "[ViewportHost] Camera positioned at:" << camPos.x << camPos.y << camPos.z;
+        }
+    }
+    
+    // Set as camera's character target
+    if (m_runtime->camera())
+    {
+        if (enabled)
+        {
+            m_runtime->camera()->setCharacterTarget(model.get());
+        }
+        else if (m_runtime->camera()->getCharacterTarget() == model.get())
+        {
+            m_runtime->camera()->setCharacterTarget(nullptr);
+        }
+    }
+    
+    qDebug() << "[ViewportHost] Character control" << (enabled ? "enabled" : "disabled") << "for model" << sceneIndex;
+}
+
+bool ViewportHostWidget::isCharacterControlEnabled(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return false;
+    }
+    
+    const auto& model = m_runtime->engine()->models[sceneIndex];
+    if (!model)
+    {
+        return false;
+    }
+    
+    return model->character.isControllable;
+}
+
+void ViewportHostWidget::setFreeFlyCameraEnabled(bool enabled)
+{
+    m_freeFlyCameraEnabled = enabled;
+    qDebug() << "[ViewportHost] Free fly camera" << (enabled ? "enabled" : "disabled");
+    
+    // Update camera behavior based on mode
+    if (m_runtime->camera())
+    {
+        if (enabled)
+        {
+            // Free fly mode: clear character target so WASD moves camera
+            m_runtime->camera()->setCharacterTarget(nullptr);
+        }
+        else
+        {
+            // Character follow mode: restore character target and position camera
+            for (auto& model : m_runtime->engine()->models)
+            {
+                if (model && model->character.isControllable)
+                {
+                    m_runtime->camera()->setCharacterTarget(model.get());
+                    
+                    // Immediately position camera behind character
+                    glm::vec3 charPos = model->getCharacterPosition();
+                    const float followDist = 3.0f;
+                    const float heightOff = 0.8f;
+                    glm::vec3 camPos = charPos;
+                    camPos.z += followDist;
+                    camPos.y += heightOff;
+                    m_runtime->camera()->cameraPos = camPos;
+                    
+                    // Calculate rotation to look at character
+                    glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
+                    glm::vec3 front = glm::normalize(lookTarget - camPos);
+                    float yaw = atan2(front.x, front.z) + 3.14159f;
+                    float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
+                    if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
+                    m_runtime->camera()->cameraRotation = glm::vec2(yaw, pitch);
+                    m_runtime->camera()->update(0);
+                    
+                    qDebug() << "[ViewportHost] Camera positioned behind character at:" << camPos.x << camPos.y << camPos.z;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+bool ViewportHostWidget::isFreeFlyCameraEnabled() const
+{
+    return m_freeFlyCameraEnabled;
+}
+
 void ViewportHostWidget::setCameraPosition(const QVector3D& position)
 {
     m_cameraController->setCameraPosition(position);
@@ -579,7 +713,126 @@ void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
 void ViewportHostWidget::mousePressEvent(QMouseEvent* event)
 {
     setFocus(Qt::MouseFocusReason);
+    
+    // Start orbiting on right-click (only in character follow mode)
+    if (event->button() == Qt::RightButton && !m_freeFlyCameraEnabled)
+    {
+        m_orbiting = true;
+        m_lastMousePos = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+    }
+    
     QWidget::mousePressEvent(event);
+}
+
+void ViewportHostWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_orbiting && !m_freeFlyCameraEnabled)
+    {
+        QPoint delta = event->pos() - m_lastMousePos;
+        m_lastMousePos = event->pos();
+        
+        // Update orbit angles based on mouse movement
+        const float sensitivity = 0.005f;
+        m_orbitYaw -= delta.x() * sensitivity;    // Horizontal rotation
+        m_orbitPitch -= delta.y() * sensitivity;  // Vertical rotation
+        
+        // Clamp pitch to prevent flipping
+        m_orbitPitch = glm::clamp(m_orbitPitch, -0.5f, 1.0f);
+    }
+    
+    QWidget::mouseMoveEvent(event);
+}
+
+void ViewportHostWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::RightButton)
+    {
+        m_orbiting = false;
+        unsetCursor();
+    }
+    
+    QWidget::mouseReleaseEvent(event);
+}
+
+void ViewportHostWidget::wheelEvent(QWheelEvent* event)
+{
+    if (!m_freeFlyCameraEnabled)
+    {
+        // Zoom in/out by changing orbit distance
+        const float zoomSpeed = 0.001f;
+        m_orbitDistance -= event->angleDelta().y() * zoomSpeed;
+        m_orbitDistance = glm::clamp(m_orbitDistance, kMinOrbitDistance, kMaxOrbitDistance);
+    }
+    
+    QWidget::wheelEvent(event);
+}
+
+void ViewportHostWidget::keyPressEvent(QKeyEvent* event)
+{
+    qDebug() << "[ViewportHost] keyPressEvent:" << event->key();
+    
+    if (!m_runtime->camera())
+    {
+        QWidget::keyPressEvent(event);
+        return;
+    }
+    
+    int glfwKey = -1;
+    switch (event->key())
+    {
+        case Qt::Key_W: glfwKey = GLFW_KEY_W; break;
+        case Qt::Key_A: glfwKey = GLFW_KEY_A; break;
+        case Qt::Key_S: glfwKey = GLFW_KEY_S; break;
+        case Qt::Key_D: glfwKey = GLFW_KEY_D; break;
+        case Qt::Key_Q: glfwKey = GLFW_KEY_Q; break;
+        case Qt::Key_E: glfwKey = GLFW_KEY_E; break;
+        case Qt::Key_R: glfwKey = GLFW_KEY_R; break;
+        case Qt::Key_O: glfwKey = GLFW_KEY_O; break;
+        case Qt::Key_P: glfwKey = GLFW_KEY_P; break;
+    }
+    
+    if (glfwKey >= 0)
+    {
+        m_runtime->camera()->handleKey(glfwKey, 0, GLFW_PRESS, 0);
+    }
+    else
+    {
+        QWidget::keyPressEvent(event);
+    }
+}
+
+void ViewportHostWidget::keyReleaseEvent(QKeyEvent* event)
+{
+    if (!m_runtime->camera())
+    {
+        QWidget::keyReleaseEvent(event);
+        return;
+    }
+    
+    // Map Qt key to GLFW key and forward to camera
+    int glfwKey = -1;
+    switch (event->key())
+    {
+        case Qt::Key_W: glfwKey = GLFW_KEY_W; break;
+        case Qt::Key_A: glfwKey = GLFW_KEY_A; break;
+        case Qt::Key_S: glfwKey = GLFW_KEY_S; break;
+        case Qt::Key_D: glfwKey = GLFW_KEY_D; break;
+        case Qt::Key_Q: glfwKey = GLFW_KEY_Q; break;
+        case Qt::Key_E: glfwKey = GLFW_KEY_E; break;
+        case Qt::Key_R: glfwKey = GLFW_KEY_R; break;
+        case Qt::Key_O: glfwKey = GLFW_KEY_O; break;
+        case Qt::Key_P: glfwKey = GLFW_KEY_P; break;
+    }
+    
+    if (glfwKey >= 0)
+    {
+        m_runtime->camera()->handleKey(glfwKey, 0, GLFW_RELEASE, 0);
+    }
+    else
+    {
+        QWidget::keyReleaseEvent(event);
+    }
 }
 
 void ViewportHostWidget::dragEnterEvent(QDragEnterEvent* event)
@@ -716,6 +969,8 @@ void ViewportHostWidget::renderFrame()
     const auto now = std::chrono::steady_clock::now();
     const double deltaSeconds = std::chrono::duration<double>(now - lastFrameTime).count();
     lastFrameTime = now;
+    
+    const float dt = static_cast<float>(deltaSeconds);
 
     if (m_runtime->engine())
     {
@@ -725,17 +980,99 @@ void ViewportHostWidget::renderFrame()
             const auto& entry = entries[static_cast<int>(i)];
             if (m_runtime->engine()->models[i])
             {
-                m_runtime->engine()->models[i]->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
+                auto& model = m_runtime->engine()->models[i];
+                
+                // Update character physics before animation
+                if (model->character.isControllable)
+                {
+                    model->updateCharacterPhysics(dt);
+                }
+                
+                model->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
                                                                          entry.animationPlaying,
                                                                          entry.animationLoop,
                                                                          entry.animationSpeed);
-                m_runtime->engine()->models[i]->updateAnimation(deltaSeconds);
+                model->updateAnimation(deltaSeconds);
             }
         }
+        
+        // Update camera to follow character if enabled
+        updateCameraFollowCharacter(dt);
     }
 
     m_runtime->render();
     notifyCameraChangedIfNeeded();
+}
+
+void ViewportHostWidget::updateCameraFollowCharacter(float dt)
+{
+    // Only follow character in non-free-fly mode
+    if (m_freeFlyCameraEnabled)
+    {
+        return;
+    }
+    
+    if (!m_runtime->camera() || !m_runtime->engine())
+    {
+        qDebug() << "[CameraFollow] No camera or engine";
+        return;
+    }
+    
+    // Find the first controllable character
+    Model* characterModel = nullptr;
+    for (auto& model : m_runtime->engine()->models)
+    {
+        if (model && model->character.isControllable)
+        {
+            characterModel = model.get();
+            break;
+        }
+    }
+    
+    if (!characterModel)
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            qDebug() << "[CameraFollow] No controllable character found";
+            logged = true;
+        }
+        return;
+    }
+    
+    // Get character position
+    const glm::vec3 charPos = characterModel->getCharacterPosition();
+    
+    // Dynamic orbit camera: position based on orbit angles and distance
+    // Calculate camera position on sphere around character
+    glm::vec3 camOffset;
+    camOffset.x = sin(m_orbitYaw) * cos(m_orbitPitch) * m_orbitDistance;
+    camOffset.y = sin(m_orbitPitch) * m_orbitDistance + 0.8f;  // Height offset
+    camOffset.z = cos(m_orbitYaw) * cos(m_orbitPitch) * m_orbitDistance;
+    
+    glm::vec3 targetCamPos = charPos + camOffset;
+    
+    // Smoothly interpolate camera position
+    const float followSpeed = 8.0f;
+    m_runtime->camera()->cameraPos = glm::mix(m_runtime->camera()->cameraPos, targetCamPos, 
+                                               glm::min(followSpeed * dt, 1.0f));
+    
+    // Camera always looks at character
+    const glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
+    const glm::vec3 toTarget = lookTarget - m_runtime->camera()->cameraPos;
+    
+    if (glm::length(toTarget) > 0.001f)
+    {
+        const glm::vec3 front = glm::normalize(toTarget);
+        float yaw = atan2(front.x, front.z) + 3.14159f;
+        float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
+        if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
+        
+        m_runtime->camera()->cameraRotation.x = yaw;
+        m_runtime->camera()->cameraRotation.y = pitch;
+    }
+    
+    m_runtime->camera()->update(0);
 }
 
 void ViewportHostWidget::notifyCameraChangedIfNeeded()

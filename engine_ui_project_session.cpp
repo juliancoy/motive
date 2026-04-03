@@ -108,6 +108,11 @@ bool ProjectSession::currentValidationLayersEnabled() const
     return m_currentValidationLayersEnabled;
 }
 
+bool ProjectSession::currentFreeFlyCameraEnabled() const
+{
+    return m_currentFreeFlyCameraEnabled;
+}
+
 QString ProjectSession::projectsDirPath() const
 {
     return QDir(QDir::currentPath()).filePath(QStringLiteral("projects"));
@@ -278,6 +283,11 @@ void ProjectSession::setCurrentValidationLayersEnabled(bool enabled)
     m_currentValidationLayersEnabled = enabled;
 }
 
+void ProjectSession::setCurrentFreeFlyCameraEnabled(bool enabled)
+{
+    m_currentFreeFlyCameraEnabled = enabled;
+}
+
 void ProjectSession::saveCurrentProject() const
 {
     if (m_currentProjectId.isEmpty())
@@ -378,7 +388,8 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("sceneLight"), m_currentSceneLight},
         {QStringLiteral("renderPath"), m_currentRenderPath},
         {QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled},
-        {QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled}
+        {QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled},
+        {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled}
     };
 }
 
@@ -433,6 +444,7 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     appendSetIfChanged(QStringLiteral("renderPath"), m_currentRenderPath);
     appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled);
     appendSetIfChanged(QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled);
+    appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled);
 
     root[QStringLiteral("changes")] = changes;
     return root;
@@ -478,7 +490,8 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("cameraRotation"), QJsonArray{0.0, 0.0, 0.0}},
         {QStringLiteral("renderPath"), root.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"))},
         {QStringLiteral("meshConsolidationEnabled"), root.contains(QStringLiteral("meshConsolidationEnabled")) ? root.value(QStringLiteral("meshConsolidationEnabled")).toBool(true) : true},
-        {QStringLiteral("validationLayersEnabled"), root.contains(QStringLiteral("validationLayersEnabled")) ? root.value(QStringLiteral("validationLayersEnabled")).toBool(true) : true}
+        {QStringLiteral("validationLayersEnabled"), root.contains(QStringLiteral("validationLayersEnabled")) ? root.value(QStringLiteral("validationLayersEnabled")).toBool(true) : true},
+        {QStringLiteral("freeFlyCameraEnabled"), root.contains(QStringLiteral("freeFlyCameraEnabled")) ? root.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true) : true}
     };
 }
 
@@ -529,6 +542,7 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     m_currentRenderPath = state.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"));
     m_currentMeshConsolidationEnabled = state.value(QStringLiteral("meshConsolidationEnabled")).toBool(true);
     m_currentValidationLayersEnabled = state.value(QStringLiteral("validationLayersEnabled")).toBool(true);
+    m_currentFreeFlyCameraEnabled = state.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true);
     m_currentSceneLight = state.value(QStringLiteral("sceneLight")).toObject();
     if (m_currentSceneItems.isEmpty())
     {

@@ -138,6 +138,14 @@ public:
         int viewportHeight = 0;
     };
     PerformanceMetrics performanceMetrics() const;
+    
+    // Character controller setup
+    void enableCharacterControl(int sceneIndex, bool enabled);
+    bool isCharacterControlEnabled(int sceneIndex) const;
+    
+    // Camera mode
+    void setFreeFlyCameraEnabled(bool enabled);
+    bool isFreeFlyCameraEnabled() const;
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -145,6 +153,11 @@ protected:
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 
@@ -154,12 +167,23 @@ private:
     void notifySceneChanged();
     void notifyCameraChangedIfNeeded();
     void applySceneLightToRuntime();
+    void updateCameraFollowCharacter(float dt);  // Third-person camera follow
 
     QTimer m_renderTimer;
     bool m_initialized = false;
     bool m_initScheduled = false;
     bool m_hasEmittedCameraState = false;
+    bool m_freeFlyCameraEnabled = true;  // Default to free fly mode
     QLabel* m_statusLabel = nullptr;
+    
+    // Camera orbit control (for character follow mode)
+    bool m_orbiting = false;
+    QPoint m_lastMousePos;
+    float m_orbitYaw = 0.0f;      // Horizontal orbit angle
+    float m_orbitPitch = 0.3f;    // Vertical orbit angle (start slightly above)
+    float m_orbitDistance = 3.0f; // Distance from character
+    static constexpr float kMinOrbitDistance = 1.5f;
+    static constexpr float kMaxOrbitDistance = 10.0f;
     std::function<void(const QList<SceneItem>&)> m_sceneChangedCallback;
     std::function<void()> m_cameraChangedCallback;
     QVector3D m_lastEmittedCameraPosition;

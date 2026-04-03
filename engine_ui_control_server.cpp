@@ -353,6 +353,32 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/character")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("character"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("character control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/camera")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("camera"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("camera control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
 
         return jsonResponse(404, compactJson(QJsonObject{
             {QStringLiteral("ok"), false},
@@ -449,6 +475,34 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("rootPath"), data.rootPath);
         payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
         return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/controls/camera")
+    {
+        QJsonObject result;
+        if (!m_commandHandler || !m_commandHandler(QStringLiteral("camera"), QJsonObject{}, result))
+        {
+            return jsonResponse(500, compactJson(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("camera control failed")}
+            }));
+        }
+        result.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(result));
+    }
+
+    if (path == "/controls/character")
+    {
+        QJsonObject result;
+        if (!m_commandHandler || !m_commandHandler(QStringLiteral("character"), QJsonObject{}, result))
+        {
+            return jsonResponse(500, compactJson(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("character control failed")}
+            }));
+        }
+        result.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(result));
     }
 
     return jsonResponse(404, compactJson(QJsonObject{

@@ -233,6 +233,8 @@ void Camera::handleCursorPos(double xpos, double ypos)
     }
 }
 
+#include "model.h"  // For character controller
+
 void Camera::handleKey(int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_P && action == GLFW_PRESS)
@@ -250,6 +252,54 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
     {
         return;
     }
+    
+    // If we have a character target, WASD controls the character
+    if (characterTarget && characterTarget->character.isControllable)
+    {
+        static bool logged = false;
+        if (!logged && (key == GLFW_KEY_W || key == GLFW_KEY_A || key == GLFW_KEY_S || key == GLFW_KEY_D))
+        {
+            std::cout << "[Camera] Routing key " << key << " to character (action=" << action << ")" << std::endl;
+            logged = true;
+        }
+        // Update key states based on action
+        if (key == GLFW_KEY_W)
+            keysPressed[0] = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_A)
+            keysPressed[1] = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_S)
+            keysPressed[2] = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_D)
+            keysPressed[3] = (action != GLFW_RELEASE);
+        
+        // Build input direction from currently pressed keys
+        glm::vec3 inputDir(0.0f);
+        float yaw = cameraRotation.x;
+        glm::vec3 forward(-sin(yaw), 0.0f, cos(yaw));  // Flattened to XZ plane
+        glm::vec3 right(cos(yaw), 0.0f, sin(yaw));
+        
+        if (keysPressed[0]) inputDir += forward;  // W
+        if (keysPressed[1]) inputDir -= right;    // A
+        if (keysPressed[2]) inputDir -= forward;  // S
+        if (keysPressed[3]) inputDir += right;    // D
+        
+        // Set character input direction
+        characterTarget->setCharacterInput(inputDir);
+        
+        // Q/E for up/down (kept for camera vertical movement or jump/crouch)
+        if (key == GLFW_KEY_Q)
+            keysPressed[4] = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_E)
+            keysPressed[5] = (action != GLFW_RELEASE);
+            
+        if (key == GLFW_KEY_R && action == GLFW_PRESS)
+        {
+            reset();
+        }
+        return;
+    }
+    
+    // Otherwise, WASD controls the camera (original behavior)
     if (key == GLFW_KEY_W)
         keysPressed[0] = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_A)
@@ -329,7 +379,8 @@ void Camera::updateCameraMatrices()
     glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
     glm::vec3 up = glm::normalize(glm::cross(right, front));
 
-    if (controlsEnabled)
+    // Only move camera if we're NOT controlling a character
+    if (controlsEnabled && !characterTarget)
     {
         glm::vec3 moveDir(0.0f);
         if (keysPressed[0])
@@ -421,5 +472,16 @@ void Camera::setControlsEnabled(bool enabled)
     if (!controlsEnabled)
     {
         clearInputState();
+    }
+}
+
+
+void Camera::setCharacterTarget(Model* model)
+{
+    characterTarget = model;
+    if (model) {
+        std::cout << "[Camera] Character target set: " << model << " controllable=" << model->character.isControllable << std::endl;
+    } else {
+        std::cout << "[Camera] Character target cleared" << std::endl;
     }
 }
