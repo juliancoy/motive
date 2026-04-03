@@ -23,6 +23,7 @@ public:
     {
         QString name;
         QString sourcePath;
+        bool meshConsolidationEnabled = true;
         QVector3D translation;
         QVector3D rotation;
         QVector3D scale;
@@ -55,6 +56,8 @@ public:
             SceneItem,
             Mesh,
             Primitive,
+            Material,
+            Texture,
             AnimationGroup,
             AnimationClip,
             PendingSceneItem
@@ -81,7 +84,9 @@ public:
     QJsonArray hierarchyJson() const;
     QJsonArray sceneProfileJson() const;
     QImage primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const;
+    QString animationExecutionMode(int sceneIndex, int meshIndex = -1, int primitiveIndex = -1) const;
     QString primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const;
+    bool primitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex) const;
     QStringList animationClipNames(int sceneIndex) const;
     QVector3D cameraPosition() const;
     QVector3D cameraRotation() const;
@@ -100,12 +105,14 @@ public:
     void createSceneLight();
     void setSceneLight(const SceneLight& light);
     void updateSceneItemTransform(int index, const QVector3D& translation, const QVector3D& rotation, const QVector3D& scale);
+    void setSceneItemMeshConsolidationEnabled(int index, bool enabled);
     void updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color);
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
     void setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode);
+    void setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled);
     void relocateSceneItemInFrontOfCamera(int index);
     void focusSceneItem(int index);
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);

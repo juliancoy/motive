@@ -98,7 +98,8 @@ void copyBufferToImage(Primitive *primitive,
                        VkImage targetImage,
                        VkImageLayout oldLayout,
                        uint32_t width,
-                       uint32_t height)
+                       uint32_t height,
+                       uint32_t bufferRowLength = 0)
 {
     VkCommandBuffer cmdBuffer = primitive->engine->beginSingleTimeCommands();
 
@@ -128,7 +129,7 @@ void copyBufferToImage(Primitive *primitive,
 
     VkBufferImageCopy region{};
     region.bufferOffset = 0;
-    region.bufferRowLength = 0;
+    region.bufferRowLength = bufferRowLength;  // Use provided row length (0 = tightly packed)
     region.bufferImageHeight = 0;
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.mipLevel = 0;
@@ -391,7 +392,7 @@ void Primitive::createDefaultTexture()
     createTextureFromPixelData(&pixel, sizeof(pixel), width, height, VK_FORMAT_R8G8B8A8_SRGB);
 }
 
-void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format)
+void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format, uint32_t rowStrideBytes)
 {
     if (!pixelData || dataSize == 0 || width == 0 || height == 0)
     {
@@ -405,9 +406,13 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
     yuvBitDepth = 8;
     yuvColorSpace = 0;
     yuvColorRange = 0;
+    
+    // Use provided row stride for preview image, or assume tightly packed
+    const int bytesPerLine = rowStrideBytes > 0 ? static_cast<int>(rowStrideBytes) : static_cast<int>(width * 4);
     texturePreviewImage = QImage(reinterpret_cast<const uchar*>(pixelData),
                                  static_cast<int>(width),
                                  static_cast<int>(height),
+                                 bytesPerLine,
                                  QImage::Format_RGBA8888).copy();
 
     // Create staging buffer
@@ -506,8 +511,10 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
         1, &imageBarrier);
 
     // Copy buffer to image
+    // Calculate row length in texels from row stride in bytes (4 bytes per RGBA pixel)
+    const uint32_t bufferRowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
     imageCopyRegion.bufferOffset = 0;
-    imageCopyRegion.bufferRowLength = 0;
+    imageCopyRegion.bufferRowLength = bufferRowLength;  // 0 = tightly packed
     imageCopyRegion.bufferImageHeight = 0;
     imageCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageCopyRegion.imageSubresource.mipLevel = 0;
@@ -555,7 +562,8 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
         ensureInactiveTextureResources(this, width, height, format);
         if (textureImageInactive != VK_NULL_HANDLE)
         {
-            copyBufferToImage(this, stagingBuffer, textureImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height);
+            const uint32_t rowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
+            copyBufferToImage(this, stagingBuffer, textureImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height, rowLength);
             textureInactiveInitialized = true;
         }
     }
@@ -568,7 +576,7 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
     engine->deferStagingBufferDestruction(stagingBuffer, stagingBufferMemory);
 }
 
-void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format)
+void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSize, uint32_t width, uint32_t height, VkFormat format, uint32_t rowStrideBytes)
 {
     if (!pixelData || dataSize == 0 || width == 0 || height == 0)
     {
@@ -578,9 +586,12 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
     usesYuvTexture = false;
     yuvColorSpace = 0;
     yuvColorRange = 0;
+    
+    const int bytesPerLine = rowStrideBytes > 0 ? static_cast<int>(rowStrideBytes) : static_cast<int>(width * 4);
     texturePreviewImage = QImage(reinterpret_cast<const uchar*>(pixelData),
                                  static_cast<int>(width),
                                  static_cast<int>(height),
+                                 bytesPerLine,
                                  QImage::Format_RGBA8888).copy();
 
     const bool needsRecreate = (textureImage == VK_NULL_HANDLE) ||
@@ -608,7 +619,7 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
         }
         
         // Create new texture with the updated data
-        createTextureFromPixelData(pixelData, dataSize, width, height, format);
+        createTextureFromPixelData(pixelData, dataSize, width, height, format, rowStrideBytes);
         createTextureImageView();
         updateDescriptorSet();
         return;
@@ -637,7 +648,8 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
         oldLayout = textureInactiveInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
-    copyBufferToImage(this, stagingBuffer, targetImage, oldLayout, width, height);
+    const uint32_t rowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
+    copyBufferToImage(this, stagingBuffer, targetImage, oldLayout, width, height, rowLength);
 
     if (textureDoubleBuffered)
     {

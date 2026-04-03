@@ -10,6 +10,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <filesystem>
+#include <chrono>
 #include <mutex>
 #include <QFileInfo>
 #include <QDragEnterEvent>
@@ -92,6 +93,12 @@ QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
     case ViewportHostWidget::HierarchyNode::Type::Primitive:
         typeString = QStringLiteral("primitive");
         break;
+    case ViewportHostWidget::HierarchyNode::Type::Material:
+        typeString = QStringLiteral("material");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Texture:
+        typeString = QStringLiteral("texture");
+        break;
     case ViewportHostWidget::HierarchyNode::Type::AnimationGroup:
         typeString = QStringLiteral("animation_group");
         break;
@@ -120,6 +127,7 @@ struct EmbeddedViewportState
     {
         QString name;
         QString sourcePath;
+        bool meshConsolidationEnabled = true;
         QVector3D translation;
         QVector3D rotation;
         QVector3D scale;
@@ -217,7 +225,7 @@ void loadModelIntoEngine(EmbeddedViewportState& state, const EmbeddedViewportSta
 
     qDebug() << "[ViewportHost] Loading model into scene:" << entry.sourcePath
              << "existingModels=" << static_cast<int>(state.engine->models.size());
-    auto model = std::make_unique<Model>(entry.sourcePath.toStdString(), state.engine.get(), state.meshConsolidationEnabled);
+    auto model = std::make_unique<Model>(entry.sourcePath.toStdString(), state.engine.get(), entry.meshConsolidationEnabled);
     model->resizeToUnitBox();
     model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
                              glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
@@ -226,6 +234,39 @@ void loadModelIntoEngine(EmbeddedViewportState& state, const EmbeddedViewportSta
                             glm::vec3(entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()));
     model->visible = entry.visible;
     state.engine->addModel(std::move(model));
+}
+
+void ensureModelSlot(EmbeddedViewportState& state, int sceneIndex)
+{
+    if (!state.engine || sceneIndex < 0)
+    {
+        return;
+    }
+    if (sceneIndex >= static_cast<int>(state.engine->models.size()))
+    {
+        state.engine->models.resize(static_cast<size_t>(sceneIndex) + 1);
+    }
+}
+
+bool loadModelIntoEngineSlot(EmbeddedViewportState& state, int sceneIndex, const EmbeddedViewportState::SceneEntry& entry)
+{
+    if (!state.engine || sceneIndex < 0 || entry.sourcePath.isEmpty() || !isRenderableAsset(entry.sourcePath))
+    {
+        return false;
+    }
+
+    auto model = std::make_unique<Model>(entry.sourcePath.toStdString(), state.engine.get(), entry.meshConsolidationEnabled);
+    model->resizeToUnitBox();
+    model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
+                             glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
+                             glm::vec3(entry.scale.x(), entry.scale.y(), entry.scale.z()));
+    model->setPaintOverride(entry.paintOverrideEnabled,
+                            glm::vec3(entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()));
+    model->visible = entry.visible;
+
+    ensureModelSlot(state, sceneIndex);
+    state.engine->models[static_cast<size_t>(sceneIndex)] = std::move(model);
+    return true;
 }
 
 }  // namespace
@@ -281,6 +322,7 @@ void ViewportHostWidget::loadAssetFromPath(const QString& path)
     state.pendingSceneEntries.push_back(EmbeddedViewportState::SceneEntry{
         QFileInfo(path).completeBaseName(),
         QFileInfo(path).absoluteFilePath(),
+        state.meshConsolidationEnabled,
         QVector3D(0.0f, 0.0f, 0.0f),
         QVector3D(-90.0f, 0.0f, 0.0f),
         QVector3D(1.0f, 1.0f, 1.0f),
@@ -316,7 +358,7 @@ void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
     state.pendingSceneEntries.clear();
     for (const SceneItem& item : items)
     {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.translation, item.rotation, item.scale,
+        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
                                              item.paintOverrideEnabled, item.paintOverrideColor,
                                              item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
                                              item.visible});
@@ -336,10 +378,21 @@ void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
     {
         try
         {
-            loadModelIntoEngine(state, entry);
-            if (state.engine && !state.engine->models.empty() && state.engine->models.back() && entry.activeAnimationClip.isEmpty())
+            const int sceneIndex = state.sceneEntries.size();
+            if (entry.visible)
             {
-                const auto& clips = state.engine->models.back()->animationClips;
+                loadModelIntoEngineSlot(state, sceneIndex, entry);
+            }
+            else
+            {
+                ensureModelSlot(state, sceneIndex);
+            }
+            if (state.engine &&
+                sceneIndex < static_cast<int>(state.engine->models.size()) &&
+                state.engine->models[sceneIndex] &&
+                entry.activeAnimationClip.isEmpty())
+            {
+                const auto& clips = state.engine->models[sceneIndex]->animationClips;
                 if (!clips.empty())
                 {
                     entry.activeAnimationClip = QString::fromStdString(clips.front().name);
@@ -370,7 +423,7 @@ QList<ViewportHostWidget::SceneItem> ViewportHostWidget::sceneItems() const
     const auto& entries = state.sceneEntries;
     for (const auto& entry : entries)
     {
-        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.translation, entry.rotation, entry.scale,
+        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
                                   entry.paintOverrideEnabled, entry.paintOverrideColor,
                                   entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
                                   entry.visible});
@@ -378,7 +431,7 @@ QList<ViewportHostWidget::SceneItem> ViewportHostWidget::sceneItems() const
     const auto& pending = state.pendingSceneEntries;
     for (const auto& entry : pending)
     {
-        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.translation, entry.rotation, entry.scale,
+        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
                                   entry.paintOverrideEnabled, entry.paintOverrideColor,
                                   entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
                                   entry.visible});
@@ -431,6 +484,88 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHostWidget::hierarchyItems() co
                     primitiveNode.sceneIndex = i;
                     primitiveNode.meshIndex = static_cast<int>(meshIndex);
                     primitiveNode.primitiveIndex = static_cast<int>(primitiveIndex);
+
+                    if (primitive)
+                    {
+                        HierarchyNode materialNode;
+                        const QString materialName = primitive->sourceMaterialName.isEmpty()
+                            ? (primitive->sourceMaterialIndex >= 0
+                                ? QStringLiteral("material %1").arg(primitive->sourceMaterialIndex)
+                                : QStringLiteral("material"))
+                            : primitive->sourceMaterialName;
+                        materialNode.label = QStringLiteral("Material (%1, %2, cull=%3)")
+                                                 .arg(materialName)
+                                                 .arg([&]() {
+                                                     switch (primitive->alphaMode)
+                                                     {
+                                                     case PrimitiveAlphaMode::Opaque: return QStringLiteral("opaque");
+                                                     case PrimitiveAlphaMode::Mask: return QStringLiteral("mask");
+                                                     case PrimitiveAlphaMode::Blend: return QStringLiteral("blend");
+                                                     }
+                                                     return QStringLiteral("unknown");
+                                                 }())
+                                                 .arg([&]() {
+                                                     switch (primitive->cullMode)
+                                                     {
+                                                     case PrimitiveCullMode::Back: return QStringLiteral("back");
+                                                     case PrimitiveCullMode::Disabled: return QStringLiteral("none");
+                                                     case PrimitiveCullMode::Front: return QStringLiteral("front");
+                                                     }
+                                                     return QStringLiteral("unknown");
+                                                 }());
+                        materialNode.type = HierarchyNode::Type::Material;
+                        materialNode.sceneIndex = i;
+                        materialNode.meshIndex = static_cast<int>(meshIndex);
+                        materialNode.primitiveIndex = static_cast<int>(primitiveIndex);
+
+                        if (primitive->sourceHasOpacityTexture || primitive->sourceOpacityScalar < 0.999f)
+                        {
+                            HierarchyNode opacityNode;
+                            opacityNode.label = primitive->sourceOpacityTextureLabel.isEmpty()
+                                ? QStringLiteral("Opacity (scalar=%1%2)")
+                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
+                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString())
+                                : QStringLiteral("Opacity (%1, scalar=%2%3)")
+                                      .arg(primitive->sourceOpacityTextureLabel)
+                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
+                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString());
+                            opacityNode.type = HierarchyNode::Type::Texture;
+                            opacityNode.sceneIndex = i;
+                            opacityNode.meshIndex = static_cast<int>(meshIndex);
+                            opacityNode.primitiveIndex = static_cast<int>(primitiveIndex);
+                            materialNode.children.push_back(opacityNode);
+                        }
+
+                        if (!primitive->texturePreviewImage.isNull() || primitive->textureWidth > 0 || primitive->textureHeight > 0)
+                        {
+                            HierarchyNode textureNode;
+                            textureNode.label = primitive->sourceTextureLabel.isEmpty()
+                                ? QStringLiteral("Texture (%1x%2)")
+                                      .arg(primitive->textureWidth)
+                                      .arg(primitive->textureHeight)
+                                : QStringLiteral("Texture (%1, %2x%3)")
+                                      .arg(primitive->sourceTextureLabel)
+                                      .arg(primitive->textureWidth)
+                                      .arg(primitive->textureHeight);
+                            textureNode.type = HierarchyNode::Type::Texture;
+                            textureNode.sceneIndex = i;
+                            textureNode.meshIndex = static_cast<int>(meshIndex);
+                            textureNode.primitiveIndex = static_cast<int>(primitiveIndex);
+                            materialNode.children.push_back(textureNode);
+                        }
+                        else
+                        {
+                            HierarchyNode textureNode;
+                            textureNode.label = QStringLiteral("Texture (none)");
+                            textureNode.type = HierarchyNode::Type::Texture;
+                            textureNode.sceneIndex = i;
+                            textureNode.meshIndex = static_cast<int>(meshIndex);
+                            textureNode.primitiveIndex = static_cast<int>(primitiveIndex);
+                            materialNode.children.push_back(textureNode);
+                        }
+
+                        primitiveNode.children.push_back(materialNode);
+                    }
                     meshNode.children.push_back(primitiveNode);
                 }
 
@@ -563,6 +698,13 @@ QJsonArray ViewportHostWidget::sceneProfileJson() const
                         {QStringLiteral("alphaMode"), alphaModeName(primitive->alphaMode)},
                         {QStringLiteral("cullMode"), cullModeName(primitive->cullMode)},
                         {QStringLiteral("alphaCutoff"), primitive->alphaCutoff},
+                        {QStringLiteral("sourceMaterialIndex"), primitive->sourceMaterialIndex},
+                        {QStringLiteral("sourceMaterialName"), primitive->sourceMaterialName},
+                        {QStringLiteral("sourceTextureLabel"), primitive->sourceTextureLabel},
+                        {QStringLiteral("sourceOpacityScalar"), primitive->sourceOpacityScalar},
+                        {QStringLiteral("sourceHasOpacityTexture"), primitive->sourceHasOpacityTexture},
+                        {QStringLiteral("sourceOpacityInverted"), primitive->sourceOpacityInverted},
+                        {QStringLiteral("sourceOpacityTextureLabel"), primitive->sourceOpacityTextureLabel},
                         {QStringLiteral("textureWidth"), static_cast<int>(primitive->textureWidth)},
                         {QStringLiteral("textureHeight"), static_cast<int>(primitive->textureHeight)},
                         {QStringLiteral("hasTexturePreview"), !primitive->texturePreviewImage.isNull()},
@@ -610,6 +752,75 @@ QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex
     return mesh.primitives[primitiveIndex]->texturePreviewImage;
 }
 
+QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex, int primitiveIndex) const
+{
+    auto& state = viewportState();
+    std::lock_guard<std::recursive_mutex> guard(state.mutex);
+    if (!state.engine || sceneIndex < 0 || sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    {
+        return QStringLiteral("Static");
+    }
+
+    const auto& model = state.engine->models[sceneIndex];
+    const auto classifyPrimitive = [](const Primitive* primitive) -> QString
+    {
+        if (!primitive)
+        {
+            return QStringLiteral("Static");
+        }
+        if (primitive->gpuSkinningEnabled && primitive->skinJointCount > 0)
+        {
+            return QStringLiteral("GPU skinning");
+        }
+        if (primitive->skinJointCount > 0)
+        {
+            return QStringLiteral("CPU skinning");
+        }
+        return QStringLiteral("Static");
+    };
+
+    if (meshIndex >= 0 && primitiveIndex >= 0)
+    {
+        if (meshIndex >= static_cast<int>(model->meshes.size()))
+        {
+            return QStringLiteral("Static");
+        }
+        const auto& mesh = model->meshes[meshIndex];
+        if (primitiveIndex >= static_cast<int>(mesh.primitives.size()))
+        {
+            return QStringLiteral("Static");
+        }
+        return classifyPrimitive(mesh.primitives[primitiveIndex].get());
+    }
+
+    bool sawCpu = false;
+    for (const auto& mesh : model->meshes)
+    {
+        for (const auto& primitive : mesh.primitives)
+        {
+            const QString mode = classifyPrimitive(primitive.get());
+            if (mode == QStringLiteral("GPU skinning"))
+            {
+                return mode;
+            }
+            if (mode == QStringLiteral("CPU skinning"))
+            {
+                sawCpu = true;
+            }
+        }
+    }
+
+    if (sawCpu)
+    {
+        return QStringLiteral("CPU skinning");
+    }
+    if (!model->animationClips.empty())
+    {
+        return QStringLiteral("Animated");
+    }
+    return QStringLiteral("Static");
+}
+
 QString ViewportHostWidget::primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
     auto& state = viewportState();
@@ -643,6 +854,31 @@ QString ViewportHostWidget::primitiveCullMode(int sceneIndex, int meshIndex, int
         return QStringLiteral("front");
     }
     return QStringLiteral("back");
+}
+
+bool ViewportHostWidget::primitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex) const
+{
+    auto& state = viewportState();
+    std::lock_guard<std::recursive_mutex> guard(state.mutex);
+    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    {
+        return false;
+    }
+    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    {
+        return false;
+    }
+    const auto& model = state.engine->models[sceneIndex];
+    if (meshIndex >= static_cast<int>(model->meshes.size()))
+    {
+        return false;
+    }
+    const auto& mesh = model->meshes[meshIndex];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    {
+        return false;
+    }
+    return mesh.primitives[primitiveIndex]->forceAlphaOne;
 }
 
 QStringList ViewportHostWidget::animationClipNames(int sceneIndex) const
@@ -792,7 +1028,7 @@ void ViewportHostWidget::setRenderPath(const QString& renderPath)
     state.pendingSceneEntries.clear();
     for (const SceneItem& item : items)
     {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.translation, item.rotation, item.scale,
+        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
                                              item.paintOverrideEnabled, item.paintOverrideColor,
                                              item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
                                              item.visible});
@@ -832,7 +1068,7 @@ void ViewportHostWidget::setMeshConsolidationEnabled(bool enabled)
     state.pendingSceneEntries.clear();
     for (const SceneItem& item : items)
     {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.translation, item.rotation, item.scale,
+        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
                                              item.paintOverrideEnabled, item.paintOverrideColor,
                                              item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
                                              item.visible});
@@ -850,7 +1086,15 @@ void ViewportHostWidget::setMeshConsolidationEnabled(bool enabled)
     {
         try
         {
-            loadModelIntoEngine(state, entry);
+            const int sceneIndex = state.sceneEntries.size();
+            if (entry.visible)
+            {
+                loadModelIntoEngineSlot(state, sceneIndex, entry);
+            }
+            else
+            {
+                ensureModelSlot(state, sceneIndex);
+            }
             state.sceneEntries.push_back(entry);
         }
         catch (const std::exception& ex)
@@ -924,6 +1168,56 @@ void ViewportHostWidget::updateSceneItemTransform(int index, const QVector3D& tr
     notifySceneChanged();
 }
 
+void ViewportHostWidget::setSceneItemMeshConsolidationEnabled(int index, bool enabled)
+{
+    auto& state = viewportState();
+    std::lock_guard<std::recursive_mutex> guard(state.mutex);
+    if (index < 0 || index >= state.sceneEntries.size())
+    {
+        return;
+    }
+    if (state.sceneEntries[index].meshConsolidationEnabled == enabled)
+    {
+        return;
+    }
+
+    state.sceneEntries[index].meshConsolidationEnabled = enabled;
+    if (state.engine)
+    {
+        ensureModelSlot(state, index);
+        if (index < static_cast<int>(state.engine->models.size()) && state.engine->models[static_cast<size_t>(index)])
+        {
+            if (state.engine->logicalDevice != VK_NULL_HANDLE)
+            {
+                vkQueueWaitIdle(state.engine->getGraphicsQueue());
+                vkDeviceWaitIdle(state.engine->logicalDevice);
+            }
+            state.engine->models[static_cast<size_t>(index)].reset();
+        }
+
+        if (state.sceneEntries[index].visible)
+        {
+            try
+            {
+                loadModelIntoEngineSlot(state, index, state.sceneEntries[index]);
+                if (state.engine->models[static_cast<size_t>(index)] && state.sceneEntries[index].activeAnimationClip.isEmpty())
+                {
+                    const auto& clips = state.engine->models[static_cast<size_t>(index)]->animationClips;
+                    if (!clips.empty())
+                    {
+                        state.sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                qWarning() << "[ViewportHost] Failed to reload scene asset after load-parameter change:" << state.sceneEntries[index].sourcePath << ex.what();
+            }
+        }
+    }
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color)
 {
     auto& state = viewportState();
@@ -955,6 +1249,10 @@ void ViewportHostWidget::updateSceneItemAnimationState(int index, const QString&
     state.sceneEntries[index].animationPlaying = playing;
     state.sceneEntries[index].animationLoop = loop;
     state.sceneEntries[index].animationSpeed = speed;
+    if (index < state.engine->models.size() && state.engine->models[index])
+    {
+        state.engine->models[index]->setAnimationPlaybackState(activeClip.toStdString(), playing, loop, speed);
+    }
     notifySceneChanged();
 }
 
@@ -985,8 +1283,33 @@ void ViewportHostWidget::setSceneItemVisible(int index, bool visible)
         return;
     }
     state.sceneEntries[index].visible = visible;
-    if (index < state.engine->models.size()) {
-        state.engine->models[index]->visible = visible;
+    if (state.engine)
+    {
+        ensureModelSlot(state, index);
+        if (visible && !state.engine->models[static_cast<size_t>(index)])
+        {
+            try
+            {
+                loadModelIntoEngineSlot(state, index, state.sceneEntries[index]);
+                if (state.engine->models[static_cast<size_t>(index)] && state.sceneEntries[index].activeAnimationClip.isEmpty())
+                {
+                    const auto& clips = state.engine->models[static_cast<size_t>(index)]->animationClips;
+                    if (!clips.empty())
+                    {
+                        state.sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                qWarning() << "[ViewportHost] Failed to lazy-load hidden scene asset:" << state.sceneEntries[index].sourcePath << ex.what();
+                state.sceneEntries[index].visible = false;
+            }
+        }
+        if (index < static_cast<int>(state.engine->models.size()) && state.engine->models[static_cast<size_t>(index)])
+        {
+            state.engine->models[static_cast<size_t>(index)]->visible = state.sceneEntries[index].visible;
+        }
     }
     notifySceneChanged();
 }
@@ -1059,6 +1382,42 @@ void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int
         mode = PrimitiveCullMode::Front;
     }
     mesh.primitives[primitiveIndex]->cullMode = mode;
+    if (mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped)
+    {
+        const ObjectTransform updated = mesh.primitives[primitiveIndex]->buildObjectTransformData();
+        memcpy(mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped, &updated, sizeof(updated));
+    }
+}
+
+void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled)
+{
+    auto& state = viewportState();
+    std::lock_guard<std::recursive_mutex> guard(state.mutex);
+    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    {
+        return;
+    }
+    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    {
+        return;
+    }
+    auto& model = state.engine->models[sceneIndex];
+    if (meshIndex >= static_cast<int>(model->meshes.size()))
+    {
+        return;
+    }
+    auto& mesh = model->meshes[meshIndex];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    {
+        return;
+    }
+
+    mesh.primitives[primitiveIndex]->forceAlphaOne = enabled;
+    if (mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped)
+    {
+        const ObjectTransform updated = mesh.primitives[primitiveIndex]->buildObjectTransformData();
+        memcpy(mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped, &updated, sizeof(updated));
+    }
 }
 
 void ViewportHostWidget::relocateSceneItemInFrontOfCamera(int index)
@@ -1268,7 +1627,7 @@ void ViewportHostWidget::ensureViewportInitialized()
             QList<SceneItem> items;
             for (const auto& entry : pendingEntries)
             {
-                items.push_back(SceneItem{entry.name, entry.sourcePath, entry.translation, entry.rotation, entry.scale,
+                items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
                                           entry.paintOverrideEnabled, entry.paintOverrideColor,
                                           entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
                                           entry.visible});
@@ -1340,6 +1699,7 @@ void ViewportHostWidget::addAssetToScene(const QString& path)
         EmbeddedViewportState::SceneEntry entry{
             QFileInfo(path).completeBaseName(),
             QFileInfo(path).absoluteFilePath(),
+            state.meshConsolidationEnabled,
             QVector3D(static_cast<float>(state.engine->models.size()) * 1.6f, 0.0f, 0.0f),
             QVector3D(-90.0f, 0.0f, 0.0f),
             QVector3D(1.0f, 1.0f, 1.0f),
@@ -1383,6 +1743,26 @@ void ViewportHostWidget::renderFrame()
     {
         m_renderTimer.stop();
         return;
+    }
+
+    static auto lastFrameTime = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const double deltaSeconds = std::chrono::duration<double>(now - lastFrameTime).count();
+    lastFrameTime = now;
+    if (state.engine)
+    {
+        for (size_t i = 0; i < state.engine->models.size() && i < static_cast<size_t>(state.sceneEntries.size()); ++i)
+        {
+            const auto& entry = state.sceneEntries[static_cast<int>(i)];
+            if (state.engine->models[i])
+            {
+                state.engine->models[i]->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
+                                                                   entry.animationPlaying,
+                                                                   entry.animationLoop,
+                                                                   entry.animationSpeed);
+                state.engine->models[i]->updateAnimation(deltaSeconds);
+            }
+        }
     }
     state.display->render();
     notifyCameraChangedIfNeeded();

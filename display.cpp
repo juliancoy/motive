@@ -133,9 +133,12 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     msaaSamples = engine ? engine->getMsaaSampleCount() : VK_SAMPLE_COUNT_1_BIT;
     commandPool = VK_NULL_HANDLE;
     vertShaderModule = VK_NULL_HANDLE;
+    skinnedVertShaderModule = VK_NULL_HANDLE;
     fragShaderModule = VK_NULL_HANDLE;
     graphicsPipelines.fill(VK_NULL_HANDLE);
     transparentGraphicsPipelines.fill(VK_NULL_HANDLE);
+    skinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
+    transparentSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
 
     // Create window and surface
     createWindow(title);
@@ -1336,9 +1339,12 @@ void Display::render()
                             continue;
                         }
                         const uint32_t pipelineIndex = pipelineIndexForCullMode(primitive->cullMode, cullingDisabled, use2DPipeline);
-                        const VkPipeline activePipeline = transparentPass
-                            ? transparentGraphicsPipelines[pipelineIndex]
-                            : graphicsPipelines[pipelineIndex];
+                        const bool useSkinnedPipeline = primitive->gpuSkinningEnabled && !use2DPipeline;
+                        const VkPipeline activePipeline = useSkinnedPipeline
+                            ? (transparentPass ? transparentSkinnedGraphicsPipelines[pipelineIndex]
+                                               : skinnedGraphicsPipelines[pipelineIndex])
+                            : (transparentPass ? transparentGraphicsPipelines[pipelineIndex]
+                                               : graphicsPipelines[pipelineIndex]);
                         vkCmdBindPipeline(commandBuffer,
                                           VK_PIPELINE_BIND_POINT_GRAPHICS,
                                           activePipeline);
@@ -1467,13 +1473,16 @@ void Display::createGraphicsPipeline()
 {
     // Load compiled SPIR-V shaders
     std::string vertPath = use2DPipeline ? "shaders/flat2d.vert.spv" : "shaders/mainforward.vert.spv";
+    std::string skinnedVertPath = use2DPipeline ? vertPath : "shaders/mainforward_skinned.vert.spv";
     std::string fragPath = use2DPipeline ? "shaders/flat2d.frag.spv" : "shaders/mainforward.frag.spv";
 
     auto vertShaderCode = readSPIRVFile(vertPath);
+    auto skinnedVertShaderCode = readSPIRVFile(skinnedVertPath);
     auto fragShaderCode = readSPIRVFile(fragPath);
 
     // Create shader modules
     vertShaderModule = engine->createShaderModule(vertShaderCode);
+    skinnedVertShaderModule = engine->createShaderModule(skinnedVertShaderCode);
     fragShaderModule = engine->createShaderModule(fragShaderCode);
 
     // Shader stages
@@ -1490,6 +1499,9 @@ void Display::createGraphicsPipeline()
     fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+    VkPipelineShaderStageCreateInfo skinnedVertShaderStageInfo = vertShaderStageInfo;
+    skinnedVertShaderStageInfo.module = skinnedVertShaderModule;
+    VkPipelineShaderStageCreateInfo skinnedShaderStages[] = {skinnedVertShaderStageInfo, fragShaderStageInfo};
 
     // Vertex input
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -1642,10 +1654,24 @@ void Display::createGraphicsPipeline()
             throw std::runtime_error("Failed to create graphics pipeline!");
         }
 
+        VkGraphicsPipelineCreateInfo skinnedPipelineInfo = pipelineInfo;
+        skinnedPipelineInfo.pStages = skinnedShaderStages;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &skinnedPipelineInfo, nullptr, &skinnedGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create skinned graphics pipeline!");
+        }
+
         pipelineInfo.pDepthStencilState = &transparentDepthStencil;
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &transparentGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create transparent graphics pipeline!");
+        }
+
+        VkGraphicsPipelineCreateInfo transparentSkinnedPipelineInfo = pipelineInfo;
+        transparentSkinnedPipelineInfo.pStages = skinnedShaderStages;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &transparentSkinnedPipelineInfo, nullptr, &transparentSkinnedGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create transparent skinned graphics pipeline!");
         }
     }
 
@@ -1685,11 +1711,27 @@ Display::~Display() {
                 pipeline = VK_NULL_HANDLE;
             }
         }
+        for (VkPipeline& pipeline : skinnedGraphicsPipelines) {
+            if (pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : transparentSkinnedGraphicsPipelines) {
+            if (pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
 
         // Destroy shader modules
         if (vertShaderModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(engine->logicalDevice, vertShaderModule, nullptr);
             vertShaderModule = VK_NULL_HANDLE;
+        }
+        if (skinnedVertShaderModule != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(engine->logicalDevice, skinnedVertShaderModule, nullptr);
+            skinnedVertShaderModule = VK_NULL_HANDLE;
         }
         if (fragShaderModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(engine->logicalDevice, fragShaderModule, nullptr);

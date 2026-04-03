@@ -11,7 +11,7 @@ struct ObjectTransform
     glm::mat4 model = glm::mat4(1.0f);
     glm::uvec4 instanceData = glm::uvec4(1, 0, 0, 0); // x = active instance count
     glm::uvec4 yuvParams = glm::uvec4(1, 1, 8, 0);
-    glm::uvec4 materialFlags = glm::uvec4(0, 0, 0, 0); // x = alpha mode, y = paint override enabled
+    glm::uvec4 materialFlags = glm::uvec4(0, 0, 0, 0); // x = alpha mode, y = paint override enabled, z = force alpha 1
     glm::vec4 materialParams = glm::vec4(0.5f, 0.0f, 0.0f, 0.0f); // x = alpha cutoff
     glm::vec4 colorOverride = glm::vec4(1.0f);
 };

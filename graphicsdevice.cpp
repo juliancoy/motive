@@ -995,7 +995,7 @@ void RenderDevice::createLogicalDevice()
     // Keep this pool comfortably above the old single-model budget.
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 16384;
+    poolSizes[0].descriptorCount = 24576;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = 8192;
 
@@ -1044,7 +1044,7 @@ void RenderDevice::createDescriptorSetLayouts()
 
     if (primitiveDescriptorSetLayout == VK_NULL_HANDLE)
     {
-        std::array<VkDescriptorSetLayoutBinding, 4> primitiveBindings{};
+        std::array<VkDescriptorSetLayoutBinding, 5> primitiveBindings{};
         primitiveBindings[0].binding = 0;
         primitiveBindings[0].descriptorCount = 1;
         primitiveBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1061,6 +1061,10 @@ void RenderDevice::createDescriptorSetLayouts()
         primitiveBindings[3].descriptorCount = 1;
         primitiveBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         primitiveBindings[3].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        primitiveBindings[4].binding = 4;
+        primitiveBindings[4].descriptorCount = 1;
+        primitiveBindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        primitiveBindings[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
         VkDescriptorSetLayoutCreateInfo primitiveLayoutInfo{};
         primitiveLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

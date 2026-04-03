@@ -468,6 +468,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorNameValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue->setWordWrap(true);
+    m_animationModeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorTexturePreview = new QLabel(QStringLiteral("No texture"), inspectorPanel);
     m_inspectorTexturePreview->setMinimumSize(160, 160);
     m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
@@ -476,6 +477,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_primitiveCullModeCombo->addItem(QStringLiteral("Back"), QStringLiteral("back"));
     m_primitiveCullModeCombo->addItem(QStringLiteral("None"), QStringLiteral("none"));
     m_primitiveCullModeCombo->addItem(QStringLiteral("Front"), QStringLiteral("front"));
+    m_primitiveForceAlphaButton = new QPushButton(QStringLiteral("Set Alpha 1"), inspectorPanel);
+    m_primitiveForceAlphaButton->setCheckable(true);
+    m_loadMeshConsolidationCheck = new QCheckBox(QStringLiteral("Enable mesh consolidation"), inspectorPanel);
     m_paintOverrideCheck = new QCheckBox(QStringLiteral("Paint all verts"), inspectorPanel);
     m_paintColorWidget = new QWidget(inspectorPanel);
     m_paintColorWidget->setFixedSize(60, 24);
@@ -572,8 +576,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     inspectorLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
     inspectorLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
+    inspectorLayout->addRow(QStringLiteral("Animation Path"), m_animationModeValue);
     inspectorLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
+    inspectorLayout->addRow(QStringLiteral("Load"), m_loadMeshConsolidationCheck);
     inspectorLayout->addRow(QStringLiteral("Cull Mode"), m_primitiveCullModeCombo);
+    inspectorLayout->addRow(QStringLiteral("Opacity"), m_primitiveForceAlphaButton);
     inspectorLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
     inspectorLayout->addRow(QStringLiteral("Paint Color"), paintColorContainer);
     inspectorLayout->addRow(QStringLiteral("Animation"), m_animationControlsWidget);
@@ -632,6 +639,38 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         m_viewportHost->setPrimitiveCullMode(row, meshIndex, primitiveIndex, m_primitiveCullModeCombo->currentData().toString());
+    });
+    connect(m_primitiveForceAlphaButton, &QPushButton::toggled, this, [this](bool enabled) {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree)
+        {
+            return;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        const int meshIndex = current ? current->data(0, Qt::UserRole + 1).toInt() : -1;
+        const int primitiveIndex = current ? current->data(0, Qt::UserRole + 2).toInt() : -1;
+        if (row < 0 || meshIndex < 0 || primitiveIndex < 0)
+        {
+            return;
+        }
+        m_viewportHost->setPrimitiveForceAlphaOne(row, meshIndex, primitiveIndex, enabled);
+        m_primitiveForceAlphaButton->setText(enabled ? QStringLiteral("Alpha forced to 1")
+                                                     : QStringLiteral("Set Alpha 1"));
+    });
+    connect(m_loadMeshConsolidationCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree)
+        {
+            return;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size())
+        {
+            return;
+        }
+        m_viewportHost->setSceneItemMeshConsolidationEnabled(row, checked);
+        m_sceneItems[row].meshConsolidationEnabled = checked;
+        saveProjectState();
     });
 
     auto applyPaintInspector = [this]() {
@@ -1148,6 +1187,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 }
             }
         }
+        if (m_primitiveForceAlphaButton)
+        {
+            m_primitiveForceAlphaButton->setVisible(visible);
+        }
         if (m_paintOverrideCheck)
         {
             m_paintOverrideCheck->setVisible(visible);
@@ -1155,6 +1198,17 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         if (m_paintColorWidget && m_paintColorWidget->parentWidget())
         {
             m_paintColorWidget->parentWidget()->setVisible(visible);
+        }
+    };
+    const auto setLoadInspectorVisible = [this](bool visible, bool meshConsolidationEnabled = true)
+    {
+        if (m_loadMeshConsolidationCheck)
+        {
+            m_loadMeshConsolidationCheck->setVisible(visible);
+            if (visible)
+            {
+                m_loadMeshConsolidationCheck->setChecked(meshConsolidationEnabled);
+            }
         }
     };
     const auto setAnimationInspector = [this](bool visible,
@@ -1217,6 +1271,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         {
             setValue(m_inspectorNameValue, QStringLiteral("Camera"));
             setValue(m_inspectorPathValue, QStringLiteral("Viewport Camera"));
+            setValue(m_animationModeValue, QStringLiteral("Static"));
             QVector3D pos = m_viewportHost->cameraPosition();
             QVector3D rot = m_viewportHost->cameraRotation();
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(pos.x());
@@ -1228,6 +1283,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
             if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
             if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+            setLoadInspectorVisible(false);
+            if (m_primitiveForceAlphaButton) m_primitiveForceAlphaButton->setChecked(false);
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(false);
@@ -1240,6 +1297,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         {
             setValue(m_inspectorNameValue, QStringLiteral("Directional Light"));
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
+            setValue(m_animationModeValue, QStringLiteral("Static"));
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
             if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -1249,6 +1307,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
             if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
             if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+            setLoadInspectorVisible(false);
+            if (m_primitiveForceAlphaButton) m_primitiveForceAlphaButton->setChecked(false);
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(true);
@@ -1274,6 +1334,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         }
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
+        setValue(m_animationModeValue, QStringLiteral("-"));
         if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
         if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
         if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -1283,6 +1344,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
         if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
         if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
+        setLoadInspectorVisible(false);
+        if (m_primitiveForceAlphaButton) m_primitiveForceAlphaButton->setChecked(false);
         if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
         setPrimitiveInspectorVisible(false);
         setLightInspectorVisible(false);
@@ -1295,6 +1358,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     const auto& item = m_sceneItems[row];
     setValue(m_inspectorNameValue, item.name);
     setValue(m_inspectorPathValue, QDir::toNativeSeparators(item.sourcePath));
+    setValue(m_animationModeValue,
+             m_viewportHost ? m_viewportHost->animationExecutionMode(row, meshIndex, primitiveIndex)
+                            : QStringLiteral("-"));
     if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(item.translation.x());
     if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(item.translation.y());
     if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(item.translation.z());
@@ -1311,8 +1377,20 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
         m_paintColorWidget->setProperty("paintColor", color.name());
     }
+    const QString suffix = QFileInfo(item.sourcePath).suffix().toLower();
+    setLoadInspectorVisible(suffix == QStringLiteral("gltf") || suffix == QStringLiteral("glb"),
+                            item.meshConsolidationEnabled);
     setPrimitiveInspectorVisible(m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0,
                                  m_viewportHost ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
+    if (m_primitiveForceAlphaButton)
+    {
+        const bool forceAlphaOne = m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0
+            ? m_viewportHost->primitiveForceAlphaOne(row, meshIndex, primitiveIndex)
+            : false;
+        m_primitiveForceAlphaButton->setChecked(forceAlphaOne);
+        m_primitiveForceAlphaButton->setText(forceAlphaOne ? QStringLiteral("Alpha forced to 1")
+                                                           : QStringLiteral("Set Alpha 1"));
+    }
     setLightInspectorVisible(false);
     QStringList animationClips = m_viewportHost ? m_viewportHost->animationClipNames(row) : QStringList{};
     QString selectedClip = clipName;
@@ -1345,6 +1423,7 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
         array.push_back(QJsonObject{
             {QStringLiteral("name"), item.name},
             {QStringLiteral("sourcePath"), item.sourcePath},
+            {QStringLiteral("meshConsolidationEnabled"), item.meshConsolidationEnabled},
             {QStringLiteral("translation"), QJsonArray{item.translation.x(), item.translation.y(), item.translation.z()}},
             {QStringLiteral("rotation"), QJsonArray{item.rotation.x(), item.rotation.y(), item.rotation.z()}},
             {QStringLiteral("scale"), QJsonArray{item.scale.x(), item.scale.y(), item.scale.z()}},
@@ -1386,6 +1465,7 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
         result.push_back(ViewportHostWidget::SceneItem{
             object.value(QStringLiteral("name")).toString(QFileInfo(sourcePath).completeBaseName()),
             sourcePath,
+            object.value(QStringLiteral("meshConsolidationEnabled")).toBool(true),
             readVector(object.value(QStringLiteral("translation")), QVector3D(0.0f, 0.0f, 0.0f)),
             readVector(object.value(QStringLiteral("rotation")), QVector3D(-90.0f, 0.0f, 0.0f)),
             readVector(object.value(QStringLiteral("scale")), QVector3D(1.0f, 1.0f, 1.0f)),

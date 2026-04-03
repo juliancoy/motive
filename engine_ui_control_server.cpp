@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include <arpa/inet.h>
+#include <signal.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -37,6 +38,14 @@ QString reasonPhrase(int statusCode)
 QByteArray compactJson(const QJsonObject& object)
 {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+QByteArray internalErrorBody(const QString& error)
+{
+    return compactJson(QJsonObject{
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), error}
+    });
 }
 
 QString invokeRootPathProvider(const std::function<QString()>& provider)
@@ -144,6 +153,11 @@ bool EngineUiControlServer::start(quint16 port)
 
     int reuse = 1;
     ::setsockopt(m_serverFd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_NOSIGPIPE
+    int noSigPipe = 1;
+    ::setsockopt(m_serverFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
+    ::signal(SIGPIPE, SIG_IGN);
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -215,39 +229,93 @@ void EngineUiControlServer::run()
 
 void EngineUiControlServer::handleClient(int clientFd) const
 {
-    char buffer[8192];
-    const ssize_t bytesRead = ::recv(clientFd, buffer, sizeof(buffer), 0);
-    if (bytesRead <= 0)
+    try
     {
-        return;
-    }
+        QByteArray request;
+        request.reserve(8192);
+        char buffer[8192];
+        for (;;)
+        {
+            const ssize_t bytesRead = ::recv(clientFd, buffer, sizeof(buffer), 0);
+            if (bytesRead <= 0)
+            {
+                break;
+            }
+            request.append(buffer, static_cast<int>(bytesRead));
+            if (request.contains("\r\n\r\n") || request.size() >= 64 * 1024)
+            {
+                break;
+            }
+        }
 
-    const QByteArray request(buffer, static_cast<int>(bytesRead));
-    const QByteArray response = buildResponse(request);
-    if (!response.isEmpty())
+        if (request.isEmpty())
+        {
+            return;
+        }
+
+        const QByteArray response = buildResponse(request);
+        if (response.isEmpty())
+        {
+            return;
+        }
+
+        qint64 totalSent = 0;
+        while (totalSent < response.size())
+        {
+            const ssize_t bytesSent = ::send(clientFd,
+                                             response.constData() + totalSent,
+                                             static_cast<size_t>(response.size() - totalSent),
+#ifdef MSG_NOSIGNAL
+                                             MSG_NOSIGNAL
+#else
+                                             0
+#endif
+            );
+            if (bytesSent <= 0)
+            {
+                break;
+            }
+            totalSent += bytesSent;
+        }
+    }
+    catch (const std::exception& ex)
     {
-        ::send(clientFd, response.constData(), static_cast<size_t>(response.size()), 0);
+        const QByteArray response = jsonResponse(500, internalErrorBody(QStringLiteral("control server exception: %1").arg(QString::fromUtf8(ex.what()))));
+        ::send(clientFd, response.constData(), static_cast<size_t>(response.size()),
+#ifdef MSG_NOSIGNAL
+               MSG_NOSIGNAL
+#else
+               0
+#endif
+        );
+    }
+    catch (...)
+    {
+        const QByteArray response = jsonResponse(500, internalErrorBody(QStringLiteral("control server exception")));
+        ::send(clientFd, response.constData(), static_cast<size_t>(response.size()),
+#ifdef MSG_NOSIGNAL
+               MSG_NOSIGNAL
+#else
+               0
+#endif
+        );
     }
 }
 
 QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
 {
+    try
+    {
     const QList<QByteArray> lines = request.split('\n');
     if (lines.isEmpty())
     {
-        return jsonResponse(500, compactJson(QJsonObject{
-            {QStringLiteral("ok"), false},
-            {QStringLiteral("error"), QStringLiteral("invalid request")}
-        }));
+        return jsonResponse(500, internalErrorBody(QStringLiteral("invalid request")));
     }
 
     const QList<QByteArray> requestLine = lines.first().trimmed().split(' ');
     if (requestLine.size() < 2)
     {
-        return jsonResponse(500, compactJson(QJsonObject{
-            {QStringLiteral("ok"), false},
-            {QStringLiteral("error"), QStringLiteral("invalid request line")}
-        }));
+        return jsonResponse(500, internalErrorBody(QStringLiteral("invalid request line")));
     }
 
     const QByteArray method = requestLine.at(0);
@@ -367,6 +435,15 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         {QStringLiteral("ok"), false},
         {QStringLiteral("error"), QStringLiteral("not found")}
     }));
+    }
+    catch (const std::exception& ex)
+    {
+        return jsonResponse(500, internalErrorBody(QStringLiteral("buildResponse exception: %1").arg(QString::fromUtf8(ex.what()))));
+    }
+    catch (...)
+    {
+        return jsonResponse(500, internalErrorBody(QStringLiteral("buildResponse exception")));
+    }
 }
 
 QByteArray EngineUiControlServer::jsonResponse(int statusCode, const QByteArray& body) const

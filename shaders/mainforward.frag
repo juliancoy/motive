@@ -63,6 +63,7 @@ vec3 yuvToRgb(float y, float u, float v, uint colorSpace) {
 void main() {
     const uint alphaMode = objectUBO.materialFlags.x;
     const bool useColorOverride = objectUBO.materialFlags.y != 0u;
+    const bool forceAlphaOne = objectUBO.materialFlags.z != 0u;
     const float alphaCutoff = objectUBO.materialParams.x;
     vec3 normal = normalize(fragNormal);
     vec3 lightDir = normalize(lightUBO.direction.xyz);
@@ -81,7 +82,9 @@ void main() {
         sampledColor = vec4(rgb, 1.0);
     }
 
-    if (useColorOverride) {
+    if (forceAlphaOne) {
+        sampledColor.a = 1.0;
+    } else if (useColorOverride) {
         sampledColor = vec4(objectUBO.colorOverride.rgb, 1.0);
     } else {
         if (alphaMode == 1u && sampledColor.a < alphaCutoff) {

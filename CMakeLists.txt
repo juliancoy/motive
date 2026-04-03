@@ -55,9 +55,6 @@ set(MOTIVE_INCLUDE_DIRS
     "${MOTIVE_ROOT}/common_vv/libs"
     "${MOTIVE_ROOT}/vk_video_decoder/include"
     "${MOTIVE_ROOT}/vk_video_decoder/libs"
-    "${MOTIVE_ROOT}/ncnn/include"
-    "${MOTIVE_ROOT}/ncnn/src"
-    "${MOTIVE_ROOT}/ncnn/build/src"
     "${MOTIVE_ROOT}/ufbx"
 )
 

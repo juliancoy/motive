@@ -77,6 +77,8 @@ public:
     VkRenderPass renderPass;
     std::array<VkPipeline, 3> graphicsPipelines{};
     std::array<VkPipeline, 3> transparentGraphicsPipelines{};
+    std::array<VkPipeline, 3> skinnedGraphicsPipelines{};
+    std::array<VkPipeline, 3> transparentSkinnedGraphicsPipelines{};
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
@@ -91,6 +93,7 @@ public:
     std::string fragShaderPath;
 
     VkShaderModule vertShaderModule;
+    VkShaderModule skinnedVertShaderModule;
     VkShaderModule fragShaderModule;
 
     int width;

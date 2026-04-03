@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QMainWindow>
+#include <QPushButton>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QDoubleSpinBox>
@@ -61,8 +62,11 @@ private:
     QTreeWidget* m_hierarchyTree = nullptr;
     QLabel* m_inspectorNameValue = nullptr;
     QLabel* m_inspectorPathValue = nullptr;
+    QLabel* m_animationModeValue = nullptr;
     QLabel* m_inspectorTexturePreview = nullptr;
     QComboBox* m_primitiveCullModeCombo = nullptr;
+    QPushButton* m_primitiveForceAlphaButton = nullptr;
+    QCheckBox* m_loadMeshConsolidationCheck = nullptr;
     QCheckBox* m_paintOverrideCheck = nullptr;
     QWidget* m_paintColorWidget = nullptr;
     QWidget* m_animationControlsWidget = nullptr;
