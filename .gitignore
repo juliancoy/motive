@@ -1,6 +1,4 @@
 .vscode
-build/
-build-asan/
 libtinygltf.a
 main
 P1090533*
@@ -26,6 +24,5 @@ encode
 models
 #motive large binary
 motive2d_yolo
+.build_manifest.json
 motive_editor
-thirdpersonshooter
-projects

@@ -589,7 +589,14 @@ void ViewportHostWidget::ensureViewportInitialized()
     {
         if (m_statusLabel)
         {
-            m_statusLabel->setText(QStringLiteral("Viewport unavailable:\n%1").arg(QString::fromUtf8(ex.what())));
+            const QString baseMessage = QStringLiteral("Viewport unavailable:\n%1").arg(QString::fromUtf8(ex.what()));
+            const QString helpText = QStringLiteral(
+                "\n\nVulkan hardware device not found.\n"
+                "Install drivers and retry:\n"
+                "  - Intel/AMD: sudo apt-get install mesa-vulkan-drivers\n"
+                "  - NVIDIA: install nvidia-driver-XXX\n"
+                "Verify with: vulkaninfo");
+            m_statusLabel->setText(baseMessage + helpText);
             m_statusLabel->show();
         }
         auto& state = viewportState();
