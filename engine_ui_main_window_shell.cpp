@@ -420,6 +420,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
     leftLayout->addWidget(m_hierarchyTree, 0);
 
+    // Apply validation layers setting before viewport initializes
+    if (!m_projectSession.currentValidationLayersEnabled())
+    {
+        qputenv("MOTIVE_DISABLE_VALIDATION", "1");
+    }
+    else
+    {
+        qunsetenv("MOTIVE_DISABLE_VALIDATION");
+    }
+    
     m_viewportHost = new ViewportHostWidget(m_splitter);
     m_assetBrowser->setPreviewAnchorWidget(m_viewportHost);
     m_assetBrowser->setActivationCallback([this](const AssetBrowserSelection& selection)
@@ -1640,6 +1650,27 @@ void MainWindowShell::setupCameraSettingsPanel()
         saveProjectState();
     });
     
+    // Validation layers toggle
+    m_validationLayersCheck = new QCheckBox(QStringLiteral("Enable Vulkan validation layers"), cameraPanel);
+    m_validationLayersCheck->setChecked(true);
+    m_validationRestartLabel = new QLabel(QStringLiteral("(restart required)"), cameraPanel);
+    m_validationRestartLabel->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
+    m_validationRestartLabel->hide();
+    auto* validationLayout = new QHBoxLayout();
+    validationLayout->addWidget(m_validationLayersCheck);
+    validationLayout->addWidget(m_validationRestartLabel);
+    validationLayout->addStretch(1);
+    cameraLayout->addRow(QStringLiteral("Debug"), validationLayout);
+    connect(m_validationLayersCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_updatingCameraSettings) return;
+        m_projectSession.setCurrentValidationLayersEnabled(checked);
+        saveProjectState();
+        // Show restart hint
+        if (m_validationRestartLabel) {
+            m_validationRestartLabel->show();
+        }
+    });
+    
     // Camera speed
     m_cameraSpeedSpin = createSpinBox(cameraPanel, 0.001, 10.0, 0.001);
     m_cameraSpeedSpin->setValue(0.01);
@@ -1704,6 +1735,14 @@ void MainWindowShell::updateCameraSettingsPanel()
     if (m_cameraSpeedSpin)
     {
         m_cameraSpeedSpin->setValue(m_viewportHost->cameraSpeed());
+    }
+    if (m_validationLayersCheck)
+    {
+        m_validationLayersCheck->setChecked(m_projectSession.currentValidationLayersEnabled());
+    }
+    if (m_validationRestartLabel)
+    {
+        m_validationRestartLabel->hide(); // Hide restart hint on initial load
     }
     
     m_updatingCameraSettings = false;

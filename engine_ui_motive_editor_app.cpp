@@ -8,6 +8,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QDebug>
+#include <QImageReader>
 
 #include <limits>
 
@@ -15,6 +16,10 @@ namespace motive::ui {
 
 int runMotiveEditorApp(int argc, char** argv)
 {
+    // Raise image allocation limit to allow 8192x8192 textures
+    // 8192x8192 RGBA = 256MB, so set limit to 512MB to be safe
+    QImageReader::setAllocationLimit(512);
+    
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("MotiveEditor"));
 
@@ -80,6 +85,14 @@ int runMotiveEditorApp(int argc, char** argv)
                 }
                 data.cameraPosition = viewport->cameraPosition();
                 data.cameraRotation = viewport->cameraRotation();
+                
+                // Performance metrics
+                const auto perf = viewport->performanceMetrics();
+                data.currentFps = perf.currentFps;
+                data.renderIntervalMs = perf.renderIntervalMs;
+                data.renderTimerActive = perf.renderTimerActive;
+                data.viewportWidth = perf.viewportWidth;
+                data.viewportHeight = perf.viewportHeight;
             }
             return data;
         },

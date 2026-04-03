@@ -27,6 +27,7 @@ public:
     QJsonObject currentSceneLight() const;
     QString currentRenderPath() const;
     bool currentMeshConsolidationEnabled() const;
+    bool currentValidationLayersEnabled() const;
     QString projectsDirPath() const;
     QString currentProjectMarkerPath() const;
     QString projectPath(const QString& projectId) const;
@@ -50,6 +51,7 @@ public:
     void setCurrentSceneLight(const QJsonObject& light);
     void setCurrentRenderPath(const QString& renderPath);
     void setCurrentMeshConsolidationEnabled(bool enabled);
+    void setCurrentValidationLayersEnabled(bool enabled);
     void saveCurrentProject() const;
 
 private:
@@ -73,6 +75,7 @@ private:
     QJsonObject m_currentSceneLight;
     QString m_currentRenderPath = QStringLiteral("forward3d");
     bool m_currentMeshConsolidationEnabled = true;
+    bool m_currentValidationLayersEnabled = true;
 };
 
 }  // namespace motive::ui

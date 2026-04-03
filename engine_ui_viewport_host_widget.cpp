@@ -1,278 +1,44 @@
 #include "engine_ui_viewport_host_widget.h"
 
+#include "viewport_asset_loader.h"
+#include "viewport_camera_controller.h"
+#include "viewport_hierarchy_builder.h"
+#include "viewport_internal_utils.h"
+#include "viewport_runtime.h"
+#include "viewport_scene_controller.h"
+
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
 #include "light.h"
 #include "model.h"
+#include "object_transform.h"
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-
-#include <filesystem>
-#include <chrono>
-#include <mutex>
-#include <QFileInfo>
+#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QJsonObject>
-#include <QMimeData>
-#include <QDebug>
-#include <QVector3D>
-#include <QVBoxLayout>
-#include <QLabel>
 #include <QFocusEvent>
+#include <QJsonObject>
+#include <QLabel>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QUrl>
+#include <QVBoxLayout>
 
-#ifdef __linux__
-#define GLFW_EXPOSE_NATIVE_X11
-#define Display X11Display
-#include <GLFW/glfw3native.h>
-#include <X11/Xlib.h>
-#undef Display
-#endif
+#include <chrono>
+#include <filesystem>
+#include <vulkan/vulkan.h>
 
 namespace motive::ui {
-namespace {
-
-constexpr int kHierarchyCameraIndex = -1000;
-constexpr int kHierarchyLightIndex = -1001;
-
-Light engineLightFromSceneLight(const ViewportHostWidget::SceneLight& sceneLight)
-{
-    const glm::vec3 direction(sceneLight.direction.x(), sceneLight.direction.y(), sceneLight.direction.z());
-    const glm::vec3 color(sceneLight.color.x(), sceneLight.color.y(), sceneLight.color.z());
-    const float brightness = std::max(0.0f, sceneLight.brightness);
-
-    glm::vec3 ambient(0.0f);
-    glm::vec3 diffuse(0.0f);
-
-    if (sceneLight.type == QStringLiteral("ambient"))
-    {
-        ambient = color * brightness;
-    }
-    else if (sceneLight.type == QStringLiteral("hemispherical"))
-    {
-        ambient = color * brightness * 0.45f;
-        diffuse = color * brightness * 0.55f;
-    }
-    else
-    {
-        ambient = color * brightness * 0.10f;
-        diffuse = color * brightness;
-    }
-
-    return Light(direction, ambient, diffuse);
-}
-
-QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
-{
-    QJsonArray children;
-    for (const auto& child : node.children)
-    {
-        children.append(hierarchyNodeToJson(child));
-    }
-
-    QString typeString = QStringLiteral("scene_item");
-    switch (node.type)
-    {
-    case ViewportHostWidget::HierarchyNode::Type::Camera:
-        typeString = QStringLiteral("camera");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::Light:
-        typeString = QStringLiteral("light");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::SceneItem:
-        typeString = QStringLiteral("scene_item");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::Mesh:
-        typeString = QStringLiteral("mesh");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::Primitive:
-        typeString = QStringLiteral("primitive");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::Material:
-        typeString = QStringLiteral("material");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::Texture:
-        typeString = QStringLiteral("texture");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::AnimationGroup:
-        typeString = QStringLiteral("animation_group");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::AnimationClip:
-        typeString = QStringLiteral("animation_clip");
-        break;
-    case ViewportHostWidget::HierarchyNode::Type::PendingSceneItem:
-        typeString = QStringLiteral("pending_scene_item");
-        break;
-    }
-
-    return QJsonObject{
-        {QStringLiteral("label"), node.label},
-        {QStringLiteral("type"), typeString},
-        {QStringLiteral("sceneIndex"), node.sceneIndex},
-        {QStringLiteral("meshIndex"), node.meshIndex},
-        {QStringLiteral("primitiveIndex"), node.primitiveIndex},
-        {QStringLiteral("clipName"), node.clipName},
-        {QStringLiteral("children"), children}
-    };
-}
-
-struct EmbeddedViewportState
-{
-    struct SceneEntry
-    {
-        QString name;
-        QString sourcePath;
-        bool meshConsolidationEnabled = true;
-        QVector3D translation;
-        QVector3D rotation;
-        QVector3D scale;
-        bool paintOverrideEnabled = false;
-        QVector3D paintOverrideColor = QVector3D(1.0f, 0.0f, 1.0f);
-        QString activeAnimationClip;
-        bool animationPlaying = true;
-        bool animationLoop = true;
-        float animationSpeed = 1.0f;
-        bool visible = true;
-    };
-
-    std::unique_ptr<Engine> engine;
-    Display* display = nullptr;
-    Camera* camera = nullptr;
-    QString currentAssetPath;
-    QList<SceneEntry> pendingSceneEntries;
-    QList<SceneEntry> sceneEntries;
-    bool use2DPipeline = false;
-    float bgColorR = 0.2f;
-    float bgColorG = 0.2f;
-    float bgColorB = 0.8f;
-    float cameraSpeed = 0.01f;
-    bool meshConsolidationEnabled = true;
-    ViewportHostWidget::SceneLight sceneLight;
-    mutable std::recursive_mutex mutex;
-};
-
-EmbeddedViewportState& viewportState()
-{
-    static EmbeddedViewportState state;
-    return state;
-}
-
-bool isRenderableAsset(const QString& path)
-{
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    return suffix == QStringLiteral("gltf") ||
-           suffix == QStringLiteral("glb") ||
-           suffix == QStringLiteral("fbx");
-}
-
-bool vectorsNearlyEqual(const QVector3D& lhs, const QVector3D& rhs, float epsilon = 0.0001f)
-{
-    return std::abs(lhs.x() - rhs.x()) <= epsilon &&
-           std::abs(lhs.y() - rhs.y()) <= epsilon &&
-           std::abs(lhs.z() - rhs.z()) <= epsilon;
-}
-
-glm::vec3 cameraForwardVector(const glm::vec2& cameraRotation)
-{
-    const float yaw = cameraRotation.x;
-    const float pitch = cameraRotation.y;
-    glm::vec3 front;
-    front.x = std::cos(pitch) * std::sin(yaw);
-    front.y = std::sin(pitch);
-    front.z = -std::cos(pitch) * std::cos(yaw);
-    if (glm::length(front) <= 1e-6f)
-    {
-        return glm::vec3(0.0f, 0.0f, -1.0f);
-    }
-    return glm::normalize(front);
-}
-
-glm::vec2 cameraRotationForDirection(const glm::vec3& direction)
-{
-    const glm::vec3 normalized = glm::normalize(direction);
-    const float yaw = std::atan2(normalized.x, -normalized.z);
-    const float pitch = std::asin(glm::clamp(normalized.y, -1.0f, 1.0f));
-    return glm::vec2(yaw, pitch);
-}
-
-float framingDistanceForModel(const Model& model)
-{
-    return std::max(std::max(model.boundsRadius, 0.5f) * 3.0f, 2.0f);
-}
-
-std::filesystem::path defaultScenePath()
-{
-    const std::filesystem::path teapot = std::filesystem::path("the_utah_teapot.glb");
-    if (std::filesystem::exists(teapot))
-    {
-        return teapot;
-    }
-    return {};
-}
-
-void loadModelIntoEngine(EmbeddedViewportState& state, const EmbeddedViewportState::SceneEntry& entry)
-{
-    if (!state.engine || entry.sourcePath.isEmpty() || !isRenderableAsset(entry.sourcePath))
-    {
-        qWarning() << "[ViewportHost] Skipping non-renderable scene path:" << entry.sourcePath;
-        return;
-    }
-
-    qDebug() << "[ViewportHost] Loading model into scene:" << entry.sourcePath
-             << "existingModels=" << static_cast<int>(state.engine->models.size());
-    auto model = std::make_unique<Model>(entry.sourcePath.toStdString(), state.engine.get(), entry.meshConsolidationEnabled);
-    model->resizeToUnitBox();
-    model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
-                             glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
-                             glm::vec3(entry.scale.x(), entry.scale.y(), entry.scale.z()));
-    model->setPaintOverride(entry.paintOverrideEnabled,
-                            glm::vec3(entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()));
-    model->visible = entry.visible;
-    state.engine->addModel(std::move(model));
-}
-
-void ensureModelSlot(EmbeddedViewportState& state, int sceneIndex)
-{
-    if (!state.engine || sceneIndex < 0)
-    {
-        return;
-    }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()))
-    {
-        state.engine->models.resize(static_cast<size_t>(sceneIndex) + 1);
-    }
-}
-
-bool loadModelIntoEngineSlot(EmbeddedViewportState& state, int sceneIndex, const EmbeddedViewportState::SceneEntry& entry)
-{
-    if (!state.engine || sceneIndex < 0 || entry.sourcePath.isEmpty() || !isRenderableAsset(entry.sourcePath))
-    {
-        return false;
-    }
-
-    auto model = std::make_unique<Model>(entry.sourcePath.toStdString(), state.engine.get(), entry.meshConsolidationEnabled);
-    model->resizeToUnitBox();
-    model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
-                             glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
-                             glm::vec3(entry.scale.x(), entry.scale.y(), entry.scale.z()));
-    model->setPaintOverride(entry.paintOverrideEnabled,
-                            glm::vec3(entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()));
-    model->visible = entry.visible;
-
-    ensureModelSlot(state, sceneIndex);
-    state.engine->models[static_cast<size_t>(sceneIndex)] = std::move(model);
-    return true;
-}
-
-}  // namespace
 
 ViewportHostWidget::ViewportHostWidget(QWidget* parent)
     : QWidget(parent)
+    , m_runtime(std::make_unique<ViewportRuntime>())
+    , m_sceneController(std::make_unique<ViewportSceneController>(*m_runtime))
+    , m_cameraController(std::make_unique<ViewportCameraController>(*m_runtime, *m_sceneController))
+    , m_hierarchyBuilder(std::make_unique<ViewportHierarchyBuilder>(*m_runtime, *m_sceneController, m_sceneLight))
 {
     setAttribute(Qt::WA_NativeWindow, true);
     setFocusPolicy(Qt::StrongFocus);
@@ -291,477 +57,85 @@ ViewportHostWidget::ViewportHostWidget(QWidget* parent)
 ViewportHostWidget::~ViewportHostWidget()
 {
     m_renderTimer.stop();
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
     m_initialized = false;
-    if (state.display)
+    if (m_runtime)
     {
-        state.display->shutdown();
+        m_runtime->shutdown();
     }
-    state.display = nullptr;
-    state.camera = nullptr;
-    state.engine.reset();
 }
 
 void ViewportHostWidget::loadAssetFromPath(const QString& path)
 {
     qDebug() << "[ViewportHost] loadAssetFromPath" << path;
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (path.isEmpty())
-    {
-        return;
-    }
-
-    if (state.engine)
-    {
-        state.engine->models.clear();
-    }
-    state.sceneEntries.clear();
-    state.pendingSceneEntries.clear();
-    state.pendingSceneEntries.push_back(EmbeddedViewportState::SceneEntry{
-        QFileInfo(path).completeBaseName(),
-        QFileInfo(path).absoluteFilePath(),
-        state.meshConsolidationEnabled,
-        QVector3D(0.0f, 0.0f, 0.0f),
-        QVector3D(-90.0f, 0.0f, 0.0f),
-        QVector3D(1.0f, 1.0f, 1.0f),
-        false,
-        QVector3D(1.0f, 0.0f, 1.0f),
-        QString(),
-        true,
-        true,
-        1.0f,
-        true
-    });
-    state.currentAssetPath = path;
-    if (!m_initialized || !state.engine)
-    {
-        qDebug() << "[ViewportHost] Deferring single-asset scene until viewport init";
-        return;
-    }
-    addAssetToScene(path);
-    state.pendingSceneEntries.clear();
+    m_sceneController->loadAssetFromPath(path);
 }
 
 void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
     qDebug() << "[ViewportHost] loadSceneFromItems count=" << items.size();
-
-    if (state.engine)
-    {
-        state.engine->models.clear();
-    }
-    state.sceneEntries.clear();
-    state.pendingSceneEntries.clear();
-    for (const SceneItem& item : items)
-    {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
-                                             item.paintOverrideEnabled, item.paintOverrideColor,
-                                             item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
-                                             item.visible});
-    }
-    state.currentAssetPath = items.isEmpty() ? QString() : items.back().sourcePath;
-
-    if (!m_initialized || !state.engine)
-    {
-        qDebug() << "[ViewportHost] Deferring scene restore until viewport init";
-        notifySceneChanged();
-        return;
-    }
-
-    const QList<EmbeddedViewportState::SceneEntry> pendingEntries = state.pendingSceneEntries;
-    state.pendingSceneEntries.clear();
-    for (auto entry : pendingEntries)
-    {
-        try
-        {
-            const int sceneIndex = state.sceneEntries.size();
-            if (entry.visible)
-            {
-                loadModelIntoEngineSlot(state, sceneIndex, entry);
-            }
-            else
-            {
-                ensureModelSlot(state, sceneIndex);
-            }
-            if (state.engine &&
-                sceneIndex < static_cast<int>(state.engine->models.size()) &&
-                state.engine->models[sceneIndex] &&
-                entry.activeAnimationClip.isEmpty())
-            {
-                const auto& clips = state.engine->models[sceneIndex]->animationClips;
-                if (!clips.empty())
-                {
-                    entry.activeAnimationClip = QString::fromStdString(clips.front().name);
-                }
-            }
-            state.sceneEntries.push_back(entry);
-        }
-        catch (const std::exception& ex)
-        {
-            qWarning() << "[ViewportHost] Failed to restore scene asset:" << entry.sourcePath << ex.what();
-        }
-    }
+    m_sceneController->loadSceneFromItems(items);
     notifySceneChanged();
 }
 
 QString ViewportHostWidget::currentAssetPath() const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.currentAssetPath;
+    return m_sceneController->currentAssetPath();
 }
 
 QList<ViewportHostWidget::SceneItem> ViewportHostWidget::sceneItems() const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    QList<SceneItem> items;
-    const auto& entries = state.sceneEntries;
-    for (const auto& entry : entries)
-    {
-        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
-                                  entry.paintOverrideEnabled, entry.paintOverrideColor,
-                                  entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
-                                  entry.visible});
-    }
-    const auto& pending = state.pendingSceneEntries;
-    for (const auto& entry : pending)
-    {
-        items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
-                                  entry.paintOverrideEnabled, entry.paintOverrideColor,
-                                  entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
-                                  entry.visible});
-    }
-    return items;
+    return m_sceneController->sceneItems();
 }
 
 QList<ViewportHostWidget::HierarchyNode> ViewportHostWidget::hierarchyItems() const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-
-    QList<HierarchyNode> items;
-    items.push_back(HierarchyNode{QStringLiteral("Camera"), HierarchyNode::Type::Camera, kHierarchyCameraIndex, -1, -1, QString(), {}});
-    if (state.sceneLight.exists)
-    {
-        items.push_back(HierarchyNode{QStringLiteral("Directional Light"), HierarchyNode::Type::Light, kHierarchyLightIndex, -1, -1, QString(), {}});
-    }
-    const int loadedCount = state.engine ? static_cast<int>(state.engine->models.size()) : 0;
-
-    for (int i = 0; i < state.sceneEntries.size(); ++i)
-    {
-        const auto& entry = state.sceneEntries[i];
-        HierarchyNode sceneNode;
-        sceneNode.label = entry.name;
-        sceneNode.type = HierarchyNode::Type::SceneItem;
-        sceneNode.sceneIndex = i;
-
-        if (i < loadedCount && state.engine && state.engine->models[i])
-        {
-            const auto& model = state.engine->models[i];
-            for (size_t meshIndex = 0; meshIndex < model->meshes.size(); ++meshIndex)
-            {
-                const auto& mesh = model->meshes[meshIndex];
-                HierarchyNode meshNode;
-                meshNode.label = QStringLiteral("Mesh %1").arg(meshIndex);
-                meshNode.type = HierarchyNode::Type::Mesh;
-                meshNode.sceneIndex = i;
-                meshNode.meshIndex = static_cast<int>(meshIndex);
-
-                for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
-                {
-                    const auto& primitive = mesh.primitives[primitiveIndex];
-                    HierarchyNode primitiveNode;
-                    primitiveNode.label = QStringLiteral("Primitive %1 (%2 verts, %3 indices)")
-                                              .arg(primitiveIndex)
-                                              .arg(primitive ? primitive->vertexCount : 0)
-                                              .arg(primitive ? primitive->indexCount : 0);
-                    primitiveNode.type = HierarchyNode::Type::Primitive;
-                    primitiveNode.sceneIndex = i;
-                    primitiveNode.meshIndex = static_cast<int>(meshIndex);
-                    primitiveNode.primitiveIndex = static_cast<int>(primitiveIndex);
-
-                    if (primitive)
-                    {
-                        HierarchyNode materialNode;
-                        const QString materialName = primitive->sourceMaterialName.isEmpty()
-                            ? (primitive->sourceMaterialIndex >= 0
-                                ? QStringLiteral("material %1").arg(primitive->sourceMaterialIndex)
-                                : QStringLiteral("material"))
-                            : primitive->sourceMaterialName;
-                        materialNode.label = QStringLiteral("Material (%1, %2, cull=%3)")
-                                                 .arg(materialName)
-                                                 .arg([&]() {
-                                                     switch (primitive->alphaMode)
-                                                     {
-                                                     case PrimitiveAlphaMode::Opaque: return QStringLiteral("opaque");
-                                                     case PrimitiveAlphaMode::Mask: return QStringLiteral("mask");
-                                                     case PrimitiveAlphaMode::Blend: return QStringLiteral("blend");
-                                                     }
-                                                     return QStringLiteral("unknown");
-                                                 }())
-                                                 .arg([&]() {
-                                                     switch (primitive->cullMode)
-                                                     {
-                                                     case PrimitiveCullMode::Back: return QStringLiteral("back");
-                                                     case PrimitiveCullMode::Disabled: return QStringLiteral("none");
-                                                     case PrimitiveCullMode::Front: return QStringLiteral("front");
-                                                     }
-                                                     return QStringLiteral("unknown");
-                                                 }());
-                        materialNode.type = HierarchyNode::Type::Material;
-                        materialNode.sceneIndex = i;
-                        materialNode.meshIndex = static_cast<int>(meshIndex);
-                        materialNode.primitiveIndex = static_cast<int>(primitiveIndex);
-
-                        if (primitive->sourceHasOpacityTexture || primitive->sourceOpacityScalar < 0.999f)
-                        {
-                            HierarchyNode opacityNode;
-                            opacityNode.label = primitive->sourceOpacityTextureLabel.isEmpty()
-                                ? QStringLiteral("Opacity (scalar=%1%2)")
-                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
-                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString())
-                                : QStringLiteral("Opacity (%1, scalar=%2%3)")
-                                      .arg(primitive->sourceOpacityTextureLabel)
-                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
-                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString());
-                            opacityNode.type = HierarchyNode::Type::Texture;
-                            opacityNode.sceneIndex = i;
-                            opacityNode.meshIndex = static_cast<int>(meshIndex);
-                            opacityNode.primitiveIndex = static_cast<int>(primitiveIndex);
-                            materialNode.children.push_back(opacityNode);
-                        }
-
-                        if (!primitive->texturePreviewImage.isNull() || primitive->textureWidth > 0 || primitive->textureHeight > 0)
-                        {
-                            HierarchyNode textureNode;
-                            textureNode.label = primitive->sourceTextureLabel.isEmpty()
-                                ? QStringLiteral("Texture (%1x%2)")
-                                      .arg(primitive->textureWidth)
-                                      .arg(primitive->textureHeight)
-                                : QStringLiteral("Texture (%1, %2x%3)")
-                                      .arg(primitive->sourceTextureLabel)
-                                      .arg(primitive->textureWidth)
-                                      .arg(primitive->textureHeight);
-                            textureNode.type = HierarchyNode::Type::Texture;
-                            textureNode.sceneIndex = i;
-                            textureNode.meshIndex = static_cast<int>(meshIndex);
-                            textureNode.primitiveIndex = static_cast<int>(primitiveIndex);
-                            materialNode.children.push_back(textureNode);
-                        }
-                        else
-                        {
-                            HierarchyNode textureNode;
-                            textureNode.label = QStringLiteral("Texture (none)");
-                            textureNode.type = HierarchyNode::Type::Texture;
-                            textureNode.sceneIndex = i;
-                            textureNode.meshIndex = static_cast<int>(meshIndex);
-                            textureNode.primitiveIndex = static_cast<int>(primitiveIndex);
-                            materialNode.children.push_back(textureNode);
-                        }
-
-                        primitiveNode.children.push_back(materialNode);
-                    }
-                    meshNode.children.push_back(primitiveNode);
-                }
-
-                sceneNode.children.push_back(meshNode);
-            }
-
-            if (!model->animationClips.empty())
-            {
-                HierarchyNode animationGroupNode;
-                animationGroupNode.label = QStringLiteral("Animations");
-                animationGroupNode.type = HierarchyNode::Type::AnimationGroup;
-                animationGroupNode.sceneIndex = i;
-
-                for (const auto& clip : model->animationClips)
-                {
-                    HierarchyNode clipNode;
-                    clipNode.label = QString::fromStdString(clip.name);
-                    clipNode.type = HierarchyNode::Type::AnimationClip;
-                    clipNode.sceneIndex = i;
-                    clipNode.clipName = clipNode.label;
-                    animationGroupNode.children.push_back(clipNode);
-                }
-
-                sceneNode.children.push_back(animationGroupNode);
-            }
-        }
-
-        items.push_back(sceneNode);
-    }
-
-    for (int i = 0; i < state.pendingSceneEntries.size(); ++i)
-    {
-        const auto& entry = state.pendingSceneEntries[i];
-        HierarchyNode pendingNode;
-        pendingNode.label = entry.name + QStringLiteral(" (pending)");
-        pendingNode.type = HierarchyNode::Type::PendingSceneItem;
-        pendingNode.sceneIndex = state.sceneEntries.size() + i;
-        items.push_back(pendingNode);
-    }
-
-    return items;
+    return m_hierarchyBuilder->hierarchyItems();
 }
 
 QJsonArray ViewportHostWidget::hierarchyJson() const
 {
-    QJsonArray array;
-    for (const auto& node : hierarchyItems())
-    {
-        array.append(hierarchyNodeToJson(node));
-    }
-    return array;
+    return m_hierarchyBuilder->hierarchyJson();
 }
 
 QJsonArray ViewportHostWidget::sceneProfileJson() const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-
-    auto alphaModeName = [](PrimitiveAlphaMode mode) -> QString
-    {
-        switch (mode)
-        {
-        case PrimitiveAlphaMode::Opaque:
-            return QStringLiteral("opaque");
-        case PrimitiveAlphaMode::Mask:
-            return QStringLiteral("mask");
-        case PrimitiveAlphaMode::Blend:
-            return QStringLiteral("blend");
-        }
-        return QStringLiteral("unknown");
-    };
-    auto cullModeName = [](PrimitiveCullMode mode) -> QString
-    {
-        switch (mode)
-        {
-        case PrimitiveCullMode::Back:
-            return QStringLiteral("back");
-        case PrimitiveCullMode::Disabled:
-            return QStringLiteral("none");
-        case PrimitiveCullMode::Front:
-            return QStringLiteral("front");
-        }
-        return QStringLiteral("unknown");
-    };
-
-    QJsonArray sceneItems;
-    for (int sceneIndex = 0; sceneIndex < state.sceneEntries.size(); ++sceneIndex)
-    {
-        const auto& entry = state.sceneEntries[sceneIndex];
-        QJsonObject sceneItem{
-            {QStringLiteral("name"), entry.name},
-            {QStringLiteral("sourcePath"), entry.sourcePath},
-            {QStringLiteral("translation"), QJsonArray{entry.translation.x(), entry.translation.y(), entry.translation.z()}},
-            {QStringLiteral("rotation"), QJsonArray{entry.rotation.x(), entry.rotation.y(), entry.rotation.z()}},
-            {QStringLiteral("scale"), QJsonArray{entry.scale.x(), entry.scale.y(), entry.scale.z()}},
-            {QStringLiteral("paintOverrideEnabled"), entry.paintOverrideEnabled},
-            {QStringLiteral("paintOverrideColor"), QJsonArray{entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()}},
-            {QStringLiteral("visible"), entry.visible},
-            {QStringLiteral("activeAnimationClip"), entry.activeAnimationClip},
-            {QStringLiteral("animationPlaying"), entry.animationPlaying},
-            {QStringLiteral("animationLoop"), entry.animationLoop},
-            {QStringLiteral("animationSpeed"), entry.animationSpeed}
-        };
-
-        QJsonArray meshArray;
-        if (state.engine &&
-            sceneIndex < static_cast<int>(state.engine->models.size()) &&
-            state.engine->models[sceneIndex])
-        {
-            const auto& model = state.engine->models[sceneIndex];
-            sceneItem.insert(QStringLiteral("boundsCenter"), QJsonArray{model->boundsCenter.x, model->boundsCenter.y, model->boundsCenter.z});
-            sceneItem.insert(QStringLiteral("boundsRadius"), model->boundsRadius);
-
-            for (int meshIndex = 0; meshIndex < static_cast<int>(model->meshes.size()); ++meshIndex)
-            {
-                const auto& mesh = model->meshes[meshIndex];
-                QJsonObject meshObject{{QStringLiteral("meshIndex"), meshIndex}};
-                QJsonArray primitiveArray;
-                for (int primitiveIndex = 0; primitiveIndex < static_cast<int>(mesh.primitives.size()); ++primitiveIndex)
-                {
-                    const auto& primitive = mesh.primitives[primitiveIndex];
-                    if (!primitive)
-                    {
-                        continue;
-                    }
-                    primitiveArray.append(QJsonObject{
-                        {QStringLiteral("primitiveIndex"), primitiveIndex},
-                        {QStringLiteral("vertexCount"), static_cast<int>(primitive->vertexCount)},
-                        {QStringLiteral("indexCount"), static_cast<int>(primitive->indexCount)},
-                        {QStringLiteral("alphaMode"), alphaModeName(primitive->alphaMode)},
-                        {QStringLiteral("cullMode"), cullModeName(primitive->cullMode)},
-                        {QStringLiteral("alphaCutoff"), primitive->alphaCutoff},
-                        {QStringLiteral("sourceMaterialIndex"), primitive->sourceMaterialIndex},
-                        {QStringLiteral("sourceMaterialName"), primitive->sourceMaterialName},
-                        {QStringLiteral("sourceTextureLabel"), primitive->sourceTextureLabel},
-                        {QStringLiteral("sourceOpacityScalar"), primitive->sourceOpacityScalar},
-                        {QStringLiteral("sourceHasOpacityTexture"), primitive->sourceHasOpacityTexture},
-                        {QStringLiteral("sourceOpacityInverted"), primitive->sourceOpacityInverted},
-                        {QStringLiteral("sourceOpacityTextureLabel"), primitive->sourceOpacityTextureLabel},
-                        {QStringLiteral("textureWidth"), static_cast<int>(primitive->textureWidth)},
-                        {QStringLiteral("textureHeight"), static_cast<int>(primitive->textureHeight)},
-                        {QStringLiteral("hasTexturePreview"), !primitive->texturePreviewImage.isNull()},
-                        {QStringLiteral("usesYuvTexture"), primitive->usesYuvTexture},
-                        {QStringLiteral("descriptorAllocated"), primitive->primitiveDescriptorSet != VK_NULL_HANDLE}
-                    });
-                }
-                meshObject.insert(QStringLiteral("primitives"), primitiveArray);
-                meshArray.append(meshObject);
-            }
-        }
-
-        sceneItem.insert(QStringLiteral("meshes"), meshArray);
-        sceneItems.append(sceneItem);
-    }
-
-    return sceneItems;
+    return m_hierarchyBuilder->sceneProfileJson();
 }
 
 QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
         return {};
     }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return {};
     }
 
-    const auto& model = state.engine->models[sceneIndex];
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     if (meshIndex >= static_cast<int>(model->meshes.size()))
     {
         return {};
     }
 
-    const auto& mesh = model->meshes[meshIndex];
-    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    const auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[static_cast<size_t>(primitiveIndex)])
     {
         return {};
     }
 
-    return mesh.primitives[primitiveIndex]->texturePreviewImage;
+    return mesh.primitives[static_cast<size_t>(primitiveIndex)]->texturePreviewImage;
 }
 
 QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return QStringLiteral("Static");
     }
 
-    const auto& model = state.engine->models[sceneIndex];
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     const auto classifyPrimitive = [](const Primitive* primitive) -> QString
     {
         if (!primitive)
@@ -785,12 +159,12 @@ QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex
         {
             return QStringLiteral("Static");
         }
-        const auto& mesh = model->meshes[meshIndex];
+        const auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
         if (primitiveIndex >= static_cast<int>(mesh.primitives.size()))
         {
             return QStringLiteral("Static");
         }
-        return classifyPrimitive(mesh.primitives[primitiveIndex].get());
+        return classifyPrimitive(mesh.primitives[static_cast<size_t>(primitiveIndex)].get());
     }
 
     bool sawCpu = false;
@@ -823,28 +197,26 @@ QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex
 
 QString ViewportHostWidget::primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
         return QStringLiteral("back");
     }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return QStringLiteral("back");
     }
-    const auto& model = state.engine->models[sceneIndex];
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     if (meshIndex >= static_cast<int>(model->meshes.size()))
     {
         return QStringLiteral("back");
     }
-    const auto& mesh = model->meshes[meshIndex];
-    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    const auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[static_cast<size_t>(primitiveIndex)])
     {
         return QStringLiteral("back");
     }
 
-    switch (mesh.primitives[primitiveIndex]->cullMode)
+    switch (mesh.primitives[static_cast<size_t>(primitiveIndex)]->cullMode)
     {
     case PrimitiveCullMode::Back:
         return QStringLiteral("back");
@@ -858,40 +230,36 @@ QString ViewportHostWidget::primitiveCullMode(int sceneIndex, int meshIndex, int
 
 bool ViewportHostWidget::primitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
         return false;
     }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return false;
     }
-    const auto& model = state.engine->models[sceneIndex];
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     if (meshIndex >= static_cast<int>(model->meshes.size()))
     {
         return false;
     }
-    const auto& mesh = model->meshes[meshIndex];
-    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    const auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[static_cast<size_t>(primitiveIndex)])
     {
         return false;
     }
-    return mesh.primitives[primitiveIndex]->forceAlphaOne;
+    return mesh.primitives[static_cast<size_t>(primitiveIndex)]->forceAlphaOne;
 }
 
 QStringList ViewportHostWidget::animationClipNames(int sceneIndex) const
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
     QStringList clips;
-    if (!state.engine || sceneIndex < 0 || sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return clips;
     }
 
-    for (const auto& clip : state.engine->models[sceneIndex]->animationClips)
+    for (const auto& clip : m_runtime->engine()->models[static_cast<size_t>(sceneIndex)]->animationClips)
     {
         clips.push_back(QString::fromStdString(clip.name));
     }
@@ -900,474 +268,194 @@ QStringList ViewportHostWidget::animationClipNames(int sceneIndex) const
 
 bool ViewportHostWidget::hasSceneLight() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.sceneLight.exists;
+    return m_sceneLight.exists;
 }
 
 ViewportHostWidget::SceneLight ViewportHostWidget::sceneLight() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.sceneLight;
+    return m_sceneLight;
 }
 
 QVector3D ViewportHostWidget::cameraPosition() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera) {
-        return QVector3D(state.camera->cameraPos.x, state.camera->cameraPos.y, state.camera->cameraPos.z);
-    }
-    return QVector3D(0.0f, 0.0f, 3.0f);
+    return m_cameraController->cameraPosition();
 }
 
 QVector3D ViewportHostWidget::cameraRotation() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera) {
-        return QVector3D(state.camera->cameraRotation.x, state.camera->cameraRotation.y, 0.0f);
-    }
-    return QVector3D(0.0f, 0.0f, 0.0f);
+    return m_cameraController->cameraRotation();
 }
 
 float ViewportHostWidget::cameraSpeed() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.cameraSpeed;
+    return m_cameraController->cameraSpeed();
 }
 
 QString ViewportHostWidget::renderPath() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.use2DPipeline ? QStringLiteral("flat2d") : QStringLiteral("forward3d");
+    return m_runtime->use2DPipeline() ? QStringLiteral("flat2d") : QStringLiteral("forward3d");
 }
 
 bool ViewportHostWidget::meshConsolidationEnabled() const
 {
-    const auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    return state.meshConsolidationEnabled;
+    return m_sceneController->meshConsolidationEnabled();
+}
+
+ViewportHostWidget::PerformanceMetrics ViewportHostWidget::performanceMetrics() const
+{
+    PerformanceMetrics metrics;
+    metrics.renderIntervalMs = m_renderTimer.interval();
+    metrics.renderTimerActive = m_renderTimer.isActive();
+    metrics.viewportWidth = width();
+    metrics.viewportHeight = height();
+    
+    if (m_initialized && m_runtime && m_runtime->display())
+    {
+        metrics.currentFps = m_runtime->display()->getCurrentFps();
+    }
+    
+    return metrics;
 }
 
 void ViewportHostWidget::setCameraPosition(const QVector3D& position)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera) {
-        state.camera->cameraPos = glm::vec3(position.x(), position.y(), position.z());
-        state.camera->update(0); // Update camera matrices
-    }
+    m_cameraController->setCameraPosition(position);
 }
 
 void ViewportHostWidget::setCameraRotation(const QVector3D& rotation)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera) {
-        state.camera->cameraRotation = glm::vec2(rotation.y(), rotation.x()); // Note: y,x order for glm::vec2
-        state.camera->update(0); // Update camera matrices
-    }
+    m_cameraController->setCameraRotation(rotation);
 }
 
 void ViewportHostWidget::setCameraSpeed(float speed)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    state.cameraSpeed = speed;
-    if (state.camera) {
-        state.camera->moveSpeed = speed;
-    }
+    m_cameraController->setCameraSpeed(speed);
 }
 
 void ViewportHostWidget::resetCamera()
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera) {
-        state.camera->reset();
-    }
+    m_cameraController->resetCamera();
 }
 
 void ViewportHostWidget::setBackgroundColor(const QColor& color)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    state.bgColorR = color.redF();
-    state.bgColorG = color.greenF();
-    state.bgColorB = color.blueF();
-    if (state.display) {
-        state.display->setBackgroundColor(state.bgColorR, state.bgColorG, state.bgColorB);
-    }
+    m_runtime->setBackgroundColor(color.redF(), color.greenF(), color.blueF());
 }
 
 void ViewportHostWidget::setRenderPath(const QString& renderPath)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
     const bool use2d = renderPath.compare(QStringLiteral("flat2d"), Qt::CaseInsensitive) == 0;
-    if (state.use2DPipeline == use2d)
+    if (m_runtime->use2DPipeline() == use2d)
     {
         return;
     }
 
-    state.use2DPipeline = use2d;
     const QList<SceneItem> items = sceneItems();
     const QVector3D savedCameraPos = cameraPosition();
     const QVector3D savedCameraRot = cameraRotation();
+    const float savedCameraSpeed = cameraSpeed();
 
+    m_runtime->setUse2DPipeline(use2d);
     m_renderTimer.stop();
-    state.display = nullptr;
-    state.camera = nullptr;
-    state.engine.reset();
+    m_runtime->shutdown();
     m_initialized = false;
 
-    state.pendingSceneEntries.clear();
+    m_sceneController->pendingEntries().clear();
     for (const SceneItem& item : items)
     {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
-                                             item.paintOverrideEnabled, item.paintOverrideColor,
-                                             item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
-                                             item.visible});
+        m_sceneController->pendingEntries().push_back(item);
     }
 
     ensureViewportInitialized();
-    if (state.camera)
-    {
-        state.camera->moveSpeed = state.cameraSpeed;
-        state.camera->cameraPos = glm::vec3(savedCameraPos.x(), savedCameraPos.y(), savedCameraPos.z());
-        state.camera->cameraRotation = glm::vec2(savedCameraRot.y(), savedCameraRot.x());
-        state.camera->update(0);
-    }
-    if (state.display)
-    {
-        state.display->setBackgroundColor(state.bgColorR, state.bgColorG, state.bgColorB);
-    }
+    m_cameraController->setCameraSpeed(savedCameraSpeed);
+    m_cameraController->setCameraPosition(savedCameraPos);
+    m_cameraController->setCameraRotation(savedCameraRot);
 }
 
 void ViewportHostWidget::setMeshConsolidationEnabled(bool enabled)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.meshConsolidationEnabled == enabled)
-    {
-        return;
-    }
-
-    state.meshConsolidationEnabled = enabled;
-    const QList<SceneItem> items = sceneItems();
-
-    if (state.engine)
-    {
-        state.engine->models.clear();
-    }
-    state.sceneEntries.clear();
-    state.pendingSceneEntries.clear();
-    for (const SceneItem& item : items)
-    {
-        state.pendingSceneEntries.push_back({item.name, item.sourcePath, item.meshConsolidationEnabled, item.translation, item.rotation, item.scale,
-                                             item.paintOverrideEnabled, item.paintOverrideColor,
-                                             item.activeAnimationClip, item.animationPlaying, item.animationLoop, item.animationSpeed,
-                                             item.visible});
-    }
-
-    if (!m_initialized || !state.engine)
-    {
-        notifySceneChanged();
-        return;
-    }
-
-    const QList<EmbeddedViewportState::SceneEntry> pendingEntries = state.pendingSceneEntries;
-    state.pendingSceneEntries.clear();
-    for (const auto& entry : pendingEntries)
-    {
-        try
-        {
-            const int sceneIndex = state.sceneEntries.size();
-            if (entry.visible)
-            {
-                loadModelIntoEngineSlot(state, sceneIndex, entry);
-            }
-            else
-            {
-                ensureModelSlot(state, sceneIndex);
-            }
-            state.sceneEntries.push_back(entry);
-        }
-        catch (const std::exception& ex)
-        {
-            qWarning() << "[ViewportHost] Failed to reload scene asset with mesh consolidation change:" << entry.sourcePath << ex.what();
-        }
-    }
+    m_sceneController->setMeshConsolidationEnabled(enabled);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::createSceneLight()
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.sceneLight.exists)
+    if (m_sceneLight.exists)
     {
         return;
     }
 
-    state.sceneLight.exists = true;
-    if (state.engine)
-    {
-        const Light light = engineLightFromSceneLight(state.sceneLight);
-        state.sceneLight.ambient = QVector3D(light.ambient.x, light.ambient.y, light.ambient.z);
-        state.sceneLight.diffuse = QVector3D(light.diffuse.x, light.diffuse.y, light.diffuse.z);
-        state.engine->setLight(light);
-    }
+    m_sceneLight.exists = true;
+    applySceneLightToRuntime();
     notifySceneChanged();
 }
 
 void ViewportHostWidget::setSceneLight(const SceneLight& light)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    state.sceneLight = light;
-    if (state.engine)
-    {
-        if (state.sceneLight.exists)
-        {
-            const Light engineLight = engineLightFromSceneLight(state.sceneLight);
-            state.sceneLight.ambient = QVector3D(engineLight.ambient.x, engineLight.ambient.y, engineLight.ambient.z);
-            state.sceneLight.diffuse = QVector3D(engineLight.diffuse.x, engineLight.diffuse.y, engineLight.diffuse.z);
-            state.engine->setLight(engineLight);
-        }
-        else
-        {
-            state.engine->setLight(Light(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f), glm::vec3(0.0f)));
-        }
-    }
+    m_sceneLight = light;
+    applySceneLightToRuntime();
     notifySceneChanged();
 }
 
 void ViewportHostWidget::updateSceneItemTransform(int index, const QVector3D& translation, const QVector3D& rotation, const QVector3D& scale)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size()) {
-        return;
-    }
-
-    state.sceneEntries[index].translation = translation;
-    state.sceneEntries[index].rotation = rotation;
-    state.sceneEntries[index].scale = scale;
-
-    if (index < state.engine->models.size()) {
-        auto& model = state.engine->models[index];
-        model->setSceneTransform(glm::vec3(translation.x(), translation.y(), translation.z()),
-                                 glm::vec3(rotation.x(), rotation.y(), rotation.z()),
-                                 glm::vec3(scale.x(), scale.y(), scale.z()));
-    }
+    m_sceneController->updateSceneItemTransform(index, translation, rotation, scale);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::setSceneItemMeshConsolidationEnabled(int index, bool enabled)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size())
-    {
-        return;
-    }
-    if (state.sceneEntries[index].meshConsolidationEnabled == enabled)
-    {
-        return;
-    }
-
-    state.sceneEntries[index].meshConsolidationEnabled = enabled;
-    if (state.engine)
-    {
-        ensureModelSlot(state, index);
-        if (index < static_cast<int>(state.engine->models.size()) && state.engine->models[static_cast<size_t>(index)])
-        {
-            if (state.engine->logicalDevice != VK_NULL_HANDLE)
-            {
-                vkQueueWaitIdle(state.engine->getGraphicsQueue());
-                vkDeviceWaitIdle(state.engine->logicalDevice);
-            }
-            state.engine->models[static_cast<size_t>(index)].reset();
-        }
-
-        if (state.sceneEntries[index].visible)
-        {
-            try
-            {
-                loadModelIntoEngineSlot(state, index, state.sceneEntries[index]);
-                if (state.engine->models[static_cast<size_t>(index)] && state.sceneEntries[index].activeAnimationClip.isEmpty())
-                {
-                    const auto& clips = state.engine->models[static_cast<size_t>(index)]->animationClips;
-                    if (!clips.empty())
-                    {
-                        state.sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
-                    }
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                qWarning() << "[ViewportHost] Failed to reload scene asset after load-parameter change:" << state.sceneEntries[index].sourcePath << ex.what();
-            }
-        }
-    }
+    m_sceneController->setSceneItemMeshConsolidationEnabled(index, enabled);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size())
-    {
-        return;
-    }
-
-    state.sceneEntries[index].paintOverrideEnabled = enabled;
-    state.sceneEntries[index].paintOverrideColor = color;
-
-    if (index < state.engine->models.size() && state.engine->models[index])
-    {
-        state.engine->models[index]->setPaintOverride(enabled, glm::vec3(color.x(), color.y(), color.z()));
-    }
+    m_sceneController->updateSceneItemPaintOverride(index, enabled, color);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size())
-    {
-        return;
-    }
-    state.sceneEntries[index].activeAnimationClip = activeClip;
-    state.sceneEntries[index].animationPlaying = playing;
-    state.sceneEntries[index].animationLoop = loop;
-    state.sceneEntries[index].animationSpeed = speed;
-    if (index < state.engine->models.size() && state.engine->models[index])
-    {
-        state.engine->models[index]->setAnimationPlaybackState(activeClip.toStdString(), playing, loop, speed);
-    }
+    m_sceneController->updateSceneItemAnimationState(index, activeClip, playing, loop, speed);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::renameSceneItem(int index, const QString& name)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size())
-    {
-        return;
-    }
-
-    const QString trimmed = name.trimmed();
-    if (trimmed.isEmpty())
-    {
-        return;
-    }
-
-    state.sceneEntries[index].name = trimmed;
+    m_sceneController->renameSceneItem(index, name);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::setSceneItemVisible(int index, bool visible)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size()) {
-        return;
-    }
-    state.sceneEntries[index].visible = visible;
-    if (state.engine)
-    {
-        ensureModelSlot(state, index);
-        if (visible && !state.engine->models[static_cast<size_t>(index)])
-        {
-            try
-            {
-                loadModelIntoEngineSlot(state, index, state.sceneEntries[index]);
-                if (state.engine->models[static_cast<size_t>(index)] && state.sceneEntries[index].activeAnimationClip.isEmpty())
-                {
-                    const auto& clips = state.engine->models[static_cast<size_t>(index)]->animationClips;
-                    if (!clips.empty())
-                    {
-                        state.sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
-                    }
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                qWarning() << "[ViewportHost] Failed to lazy-load hidden scene asset:" << state.sceneEntries[index].sourcePath << ex.what();
-                state.sceneEntries[index].visible = false;
-            }
-        }
-        if (index < static_cast<int>(state.engine->models.size()) && state.engine->models[static_cast<size_t>(index)])
-        {
-            state.engine->models[static_cast<size_t>(index)]->visible = state.sceneEntries[index].visible;
-        }
-    }
+    m_sceneController->setSceneItemVisible(index, visible);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::deleteSceneItem(int index)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size())
-    {
-        return;
-    }
-
-    state.sceneEntries.removeAt(index);
-    if (state.engine && index < static_cast<int>(state.engine->models.size()))
-    {
-        if (state.engine->logicalDevice != VK_NULL_HANDLE)
-        {
-            vkQueueWaitIdle(state.engine->getGraphicsQueue());
-            vkDeviceWaitIdle(state.engine->logicalDevice);
-        }
-        state.engine->models.erase(state.engine->models.begin() + index);
-    }
-
-    if (state.sceneEntries.isEmpty())
-    {
-        state.currentAssetPath.clear();
-    }
-    else if (index - 1 >= 0)
-    {
-        state.currentAssetPath = state.sceneEntries[index - 1].sourcePath;
-    }
-    else
-    {
-        state.currentAssetPath = state.sceneEntries.front().sourcePath;
-    }
+    m_sceneController->deleteSceneItem(index);
     notifySceneChanged();
 }
 
 void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
         return;
     }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return;
     }
-    auto& model = state.engine->models[sceneIndex];
+    auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     if (meshIndex >= static_cast<int>(model->meshes.size()))
     {
         return;
     }
-    auto& mesh = model->meshes[meshIndex];
-    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[static_cast<size_t>(primitiveIndex)])
     {
         return;
     }
@@ -1381,91 +469,52 @@ void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int
     {
         mode = PrimitiveCullMode::Front;
     }
-    mesh.primitives[primitiveIndex]->cullMode = mode;
-    if (mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped)
+    mesh.primitives[static_cast<size_t>(primitiveIndex)]->cullMode = mode;
+    if (mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped)
     {
-        const ObjectTransform updated = mesh.primitives[primitiveIndex]->buildObjectTransformData();
-        memcpy(mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped, &updated, sizeof(updated));
+        const ObjectTransform updated = mesh.primitives[static_cast<size_t>(primitiveIndex)]->buildObjectTransformData();
+        memcpy(mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped, &updated, sizeof(updated));
     }
 }
 
 void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.engine || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
+    if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
         return;
     }
-    if (sceneIndex >= static_cast<int>(state.engine->models.size()) || !state.engine->models[sceneIndex])
+    if (sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
     {
         return;
     }
-    auto& model = state.engine->models[sceneIndex];
+    auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
     if (meshIndex >= static_cast<int>(model->meshes.size()))
     {
         return;
     }
-    auto& mesh = model->meshes[meshIndex];
-    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[primitiveIndex])
+    auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+    if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) || !mesh.primitives[static_cast<size_t>(primitiveIndex)])
     {
         return;
     }
 
-    mesh.primitives[primitiveIndex]->forceAlphaOne = enabled;
-    if (mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped)
+    mesh.primitives[static_cast<size_t>(primitiveIndex)]->forceAlphaOne = enabled;
+    if (mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped)
     {
-        const ObjectTransform updated = mesh.primitives[primitiveIndex]->buildObjectTransformData();
-        memcpy(mesh.primitives[primitiveIndex]->ObjectTransformUBOMapped, &updated, sizeof(updated));
+        const ObjectTransform updated = mesh.primitives[static_cast<size_t>(primitiveIndex)]->buildObjectTransformData();
+        memcpy(mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped, &updated, sizeof(updated));
     }
 }
 
 void ViewportHostWidget::relocateSceneItemInFrontOfCamera(int index)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size() || !state.camera || !state.engine) {
-        return;
-    }
-    if (index >= static_cast<int>(state.engine->models.size()) || !state.engine->models[index])
-    {
-        return;
-    }
-
-    const auto& model = state.engine->models[index];
-    const glm::vec3 front = cameraForwardVector(state.camera->cameraRotation);
-    const float distance = framingDistanceForModel(*model);
-    const glm::vec3 desiredCenter = state.camera->cameraPos + front * distance;
-    const glm::vec3 currentCenter = model->boundsCenter;
-    const glm::vec3 delta = desiredCenter - currentCenter;
-    auto& entry = state.sceneEntries[index];
-    const QVector3D translation = entry.translation + QVector3D(delta.x, delta.y, delta.z);
-    updateSceneItemTransform(index, translation, entry.rotation, entry.scale);
+    m_cameraController->relocateSceneItemInFrontOfCamera(index);
+    notifySceneChanged();
 }
 
 void ViewportHostWidget::focusSceneItem(int index)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (index < 0 || index >= state.sceneEntries.size() || !state.camera || !state.engine)
-    {
-        return;
-    }
-    if (index >= static_cast<int>(state.engine->models.size()) || !state.engine->models[index])
-    {
-        return;
-    }
-
-    const auto& model = state.engine->models[index];
-    const glm::vec3 worldCenter = model->boundsCenter;
-    const float distance = framingDistanceForModel(*model);
-    const glm::vec3 toTarget = worldCenter - state.camera->cameraPos;
-    const glm::vec3 front = glm::length(toTarget) > 1e-6f
-        ? glm::normalize(toTarget)
-        : cameraForwardVector(state.camera->cameraRotation);
-    state.camera->cameraRotation = cameraRotationForDirection(front);
-    state.camera->cameraPos = worldCenter - front * distance;
-    state.camera->update(0.0f);
+    m_cameraController->focusSceneItem(index);
     if (m_cameraChangedCallback)
     {
         m_cameraChangedCallback();
@@ -1499,37 +548,30 @@ void ViewportHostWidget::showEvent(QShowEvent* event)
 void ViewportHostWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    syncEmbeddedWindowGeometry();
+    if (m_runtime)
+    {
+        m_runtime->resize(width(), height());
+    }
 }
 
 void ViewportHostWidget::focusInEvent(QFocusEvent* event)
 {
     QWidget::focusInEvent(event);
-#ifdef __linux__
-    auto& state = viewportState();
-    if (state.display && state.display->window)
+    if (m_runtime)
     {
-        X11Display* xDisplay = glfwGetX11Display();
-        ::Window child = glfwGetX11Window(state.display->window);
-        if (xDisplay && child != 0)
-        {
-            XSetInputFocus(xDisplay, child, RevertToParent, CurrentTime);
-            XFlush(xDisplay);
-        }
+        m_runtime->focusNativeWindow(static_cast<unsigned long>(winId()));
     }
-#endif
 }
 
 void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
 {
     QWidget::focusOutEvent(event);
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (state.camera)
+    if (m_runtime)
     {
-        state.camera->clearInputState();
+        m_runtime->clearInputState();
     }
-    if (m_cameraChangedCallback) {
+    if (m_cameraChangedCallback)
+    {
         m_cameraChangedCallback();
     }
 }
@@ -1550,7 +592,7 @@ void ViewportHostWidget::dragEnterEvent(QDragEnterEvent* event)
 
     for (const QUrl& url : event->mimeData()->urls())
     {
-        if (url.isLocalFile() && isRenderableAsset(url.toLocalFile()))
+        if (url.isLocalFile() && detail::isRenderableAsset(url.toLocalFile()))
         {
             qDebug() << "[ViewportHost] dragEnterEvent accepted:" << url.toLocalFile();
             event->acceptProposedAction();
@@ -1573,7 +615,7 @@ void ViewportHostWidget::dropEvent(QDropEvent* event)
     for (const QUrl& url : event->mimeData()->urls())
     {
         const QString path = url.toLocalFile();
-        if (path.isEmpty() || !isRenderableAsset(path))
+        if (path.isEmpty() || !detail::isRenderableAsset(path))
         {
             qDebug() << "[ViewportHost] dropEvent skipping non-renderable path:" << path;
             continue;
@@ -1595,8 +637,6 @@ void ViewportHostWidget::dropEvent(QDropEvent* event)
 
 void ViewportHostWidget::ensureViewportInitialized()
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
     if (m_initialized)
     {
         return;
@@ -1604,52 +644,32 @@ void ViewportHostWidget::ensureViewportInitialized()
 
     try
     {
-        state.engine = std::make_unique<Engine>();
-        state.display = state.engine->createWindow(width(), height(), "Motive Embedded Viewport", false, state.use2DPipeline, true);
-        state.camera = new Camera(state.engine.get(), state.display, glm::vec3(0.0f, 0.0f, 3.0f), glm::vec2(glm::radians(0.0f), 0.0f));
-        state.camera->moveSpeed = state.cameraSpeed;
-        state.display->addCamera(state.camera);
-        state.display->setBackgroundColor(state.bgColorR, state.bgColorG, state.bgColorB);
-        if (state.sceneLight.exists)
-        {
-            const Light light = engineLightFromSceneLight(state.sceneLight);
-            state.sceneLight.ambient = QVector3D(light.ambient.x, light.ambient.y, light.ambient.z);
-            state.sceneLight.diffuse = QVector3D(light.diffuse.x, light.diffuse.y, light.diffuse.z);
-            state.engine->setLight(light);
-        }
+        m_runtime->initialize(width(), height(), m_runtime->use2DPipeline());
+        m_cameraController->setCameraSpeed(m_cameraController->cameraSpeed());
+        applySceneLightToRuntime();
         m_initialized = true;
 
-        if (!state.pendingSceneEntries.isEmpty())
+        if (!m_sceneController->pendingEntries().isEmpty())
         {
-            const QList<EmbeddedViewportState::SceneEntry> pendingEntries = state.pendingSceneEntries;
-            state.pendingSceneEntries.clear();
-            qDebug() << "[ViewportHost] Restoring pending scene entries after init:" << pendingEntries.size();
-            QList<SceneItem> items;
-            for (const auto& entry : pendingEntries)
-            {
-                items.push_back(SceneItem{entry.name, entry.sourcePath, entry.meshConsolidationEnabled, entry.translation, entry.rotation, entry.scale,
-                                          entry.paintOverrideEnabled, entry.paintOverrideColor,
-                                          entry.activeAnimationClip, entry.animationPlaying, entry.animationLoop, entry.animationSpeed,
-                                          entry.visible});
-            }
-            loadSceneFromItems(items);
+            m_sceneController->restorePendingEntries();
+            notifySceneChanged();
         }
         else
         {
-            const std::filesystem::path scenePath = defaultScenePath();
+            const std::filesystem::path scenePath = detail::defaultScenePath();
             if (!scenePath.empty())
             {
-                state.currentAssetPath = QString::fromStdString(scenePath.string());
-                addAssetToScene(state.currentAssetPath);
+                const QString path = QString::fromStdString(scenePath.string());
+                m_sceneController->addAssetToScene(path);
             }
-            else if (!state.currentAssetPath.isEmpty())
+            else if (!m_sceneController->currentAssetPath().isEmpty())
             {
-                addAssetToScene(state.currentAssetPath);
+                m_sceneController->addAssetToScene(m_sceneController->currentAssetPath());
             }
         }
 
-        embedNativeWindow();
-        syncEmbeddedWindowGeometry();
+        m_runtime->embedNativeWindow(static_cast<unsigned long>(winId()));
+        m_runtime->resize(width(), height());
         if (m_statusLabel)
         {
             m_statusLabel->hide();
@@ -1670,76 +690,23 @@ void ViewportHostWidget::ensureViewportInitialized()
             m_statusLabel->setText(baseMessage + helpText);
             m_statusLabel->show();
         }
-        auto& state = viewportState();
-        state.display = nullptr;
-        state.camera = nullptr;
-        state.engine.reset();
+        m_runtime->shutdown();
     }
 }
 
 void ViewportHostWidget::addAssetToScene(const QString& path)
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (path.isEmpty())
-    {
-        qWarning() << "[ViewportHost] addAssetToScene called with empty path";
-        return;
-    }
-
-    state.currentAssetPath = path;
-    if (!m_initialized || !state.engine)
-    {
-        qDebug() << "[ViewportHost] Queued scene asset before init:" << path;
-        return;
-    }
-
-    try
-    {
-        EmbeddedViewportState::SceneEntry entry{
-            QFileInfo(path).completeBaseName(),
-            QFileInfo(path).absoluteFilePath(),
-            state.meshConsolidationEnabled,
-            QVector3D(static_cast<float>(state.engine->models.size()) * 1.6f, 0.0f, 0.0f),
-            QVector3D(-90.0f, 0.0f, 0.0f),
-            QVector3D(1.0f, 1.0f, 1.0f),
-            false,
-            QVector3D(1.0f, 0.0f, 1.0f),
-            QString(),
-            true,
-            true,
-            1.0f,
-            true
-        };
-        loadModelIntoEngine(state, entry);
-        if (!state.engine->models.empty() && state.engine->models.back() && entry.activeAnimationClip.isEmpty())
-        {
-            const auto& clips = state.engine->models.back()->animationClips;
-            if (!clips.empty())
-            {
-                entry.activeAnimationClip = QString::fromStdString(clips.front().name);
-            }
-        }
-        state.sceneEntries.push_back(entry);
-        qDebug() << "[ViewportHost] Scene asset added:" << path
-                 << "sceneCount=" << state.sceneEntries.size();
-        notifySceneChanged();
-    }
-    catch (const std::exception& ex)
-    {
-        qWarning() << "[ViewportHost] Failed to add scene asset:" << path << ex.what();
-    }
+    m_sceneController->addAssetToScene(path);
+    notifySceneChanged();
 }
 
 void ViewportHostWidget::renderFrame()
 {
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!m_initialized || !state.display || !state.display->window)
+    if (!m_initialized || !m_runtime || !m_runtime->display() || !m_runtime->display()->window)
     {
         return;
     }
-    if (glfwWindowShouldClose(state.display->window))
+    if (glfwWindowShouldClose(m_runtime->display()->window))
     {
         m_renderTimer.stop();
         return;
@@ -1749,38 +716,40 @@ void ViewportHostWidget::renderFrame()
     const auto now = std::chrono::steady_clock::now();
     const double deltaSeconds = std::chrono::duration<double>(now - lastFrameTime).count();
     lastFrameTime = now;
-    if (state.engine)
+
+    if (m_runtime->engine())
     {
-        for (size_t i = 0; i < state.engine->models.size() && i < static_cast<size_t>(state.sceneEntries.size()); ++i)
+        auto& entries = m_sceneController->loadedEntries();
+        for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
         {
-            const auto& entry = state.sceneEntries[static_cast<int>(i)];
-            if (state.engine->models[i])
+            const auto& entry = entries[static_cast<int>(i)];
+            if (m_runtime->engine()->models[i])
             {
-                state.engine->models[i]->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
-                                                                   entry.animationPlaying,
-                                                                   entry.animationLoop,
-                                                                   entry.animationSpeed);
-                state.engine->models[i]->updateAnimation(deltaSeconds);
+                m_runtime->engine()->models[i]->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
+                                                                         entry.animationPlaying,
+                                                                         entry.animationLoop,
+                                                                         entry.animationSpeed);
+                m_runtime->engine()->models[i]->updateAnimation(deltaSeconds);
             }
         }
     }
-    state.display->render();
+
+    m_runtime->render();
     notifyCameraChangedIfNeeded();
 }
 
 void ViewportHostWidget::notifyCameraChangedIfNeeded()
 {
-    auto& state = viewportState();
-    if (!state.camera || !m_cameraChangedCallback)
+    if (!m_runtime->camera() || !m_cameraChangedCallback)
     {
         return;
     }
 
-    const QVector3D position(state.camera->cameraPos.x, state.camera->cameraPos.y, state.camera->cameraPos.z);
-    const QVector3D rotation(state.camera->cameraRotation.y, state.camera->cameraRotation.x, 0.0f);
+    const QVector3D position(m_runtime->camera()->cameraPos.x, m_runtime->camera()->cameraPos.y, m_runtime->camera()->cameraPos.z);
+    const QVector3D rotation(m_runtime->camera()->cameraRotation.y, m_runtime->camera()->cameraRotation.x, 0.0f);
     if (m_hasEmittedCameraState &&
-        vectorsNearlyEqual(position, m_lastEmittedCameraPosition) &&
-        vectorsNearlyEqual(rotation, m_lastEmittedCameraRotation))
+        detail::vectorsNearlyEqual(position, m_lastEmittedCameraPosition) &&
+        detail::vectorsNearlyEqual(rotation, m_lastEmittedCameraRotation))
     {
         return;
     }
@@ -1791,61 +760,31 @@ void ViewportHostWidget::notifyCameraChangedIfNeeded()
     m_cameraChangedCallback();
 }
 
-void ViewportHostWidget::embedNativeWindow()
-{
-#ifdef __linux__
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!state.display || !state.display->window)
-    {
-        return;
-    }
-
-    X11Display* xDisplay = glfwGetX11Display();
-    ::Window child = glfwGetX11Window(state.display->window);
-    ::Window parent = static_cast<::Window>(winId());
-    if (!xDisplay || child == 0 || parent == 0)
-    {
-        return;
-    }
-
-    XReparentWindow(xDisplay, child, parent, 0, 0);
-    XMapWindow(xDisplay, child);
-    XFlush(xDisplay);
-    glfwShowWindow(state.display->window);
-#endif
-}
-
-void ViewportHostWidget::syncEmbeddedWindowGeometry()
-{
-    auto& state = viewportState();
-    std::lock_guard<std::recursive_mutex> guard(state.mutex);
-    if (!m_initialized || !state.display || !state.display->window)
-    {
-        return;
-    }
-
-    const int targetWidth = std::max(1, width());
-    const int targetHeight = std::max(1, height());
-    glfwSetWindowSize(state.display->window, targetWidth, targetHeight);
-    state.display->handleFramebufferResize(targetWidth, targetHeight);
-
-#ifdef __linux__
-    X11Display* xDisplay = glfwGetX11Display();
-    ::Window child = glfwGetX11Window(state.display->window);
-    if (xDisplay && child != 0)
-    {
-        XResizeWindow(xDisplay, child, static_cast<unsigned int>(targetWidth), static_cast<unsigned int>(targetHeight));
-        XFlush(xDisplay);
-    }
-#endif
-}
-
 void ViewportHostWidget::notifySceneChanged()
 {
     if (m_sceneChangedCallback)
     {
         m_sceneChangedCallback(sceneItems());
+    }
+}
+
+void ViewportHostWidget::applySceneLightToRuntime()
+{
+    if (!m_runtime->engine())
+    {
+        return;
+    }
+
+    if (m_sceneLight.exists)
+    {
+        const Light engineLight = detail::engineLightFromSceneLight(m_sceneLight);
+        m_sceneLight.ambient = QVector3D(engineLight.ambient.x, engineLight.ambient.y, engineLight.ambient.z);
+        m_sceneLight.diffuse = QVector3D(engineLight.diffuse.x, engineLight.diffuse.y, engineLight.diffuse.z);
+        m_runtime->engine()->setLight(engineLight);
+    }
+    else
+    {
+        m_runtime->engine()->setLight(Light(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f), glm::vec3(0.0f)));
     }
 }
 

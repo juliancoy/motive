@@ -227,8 +227,26 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
         }
     }
 
+    // Check if any mesh needs CPU skinning (skinned vertex positions).
+    // GPU skinning only needs joint matrices, which don't require evaluate_skinning=true.
+    bool needsCpuSkinning = false;
+    const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
+    for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
+    {
+        const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
+        if (meshIndex < model.meshes.size() && !model.meshes[meshIndex].primitives.empty())
+        {
+            const Primitive* primitive = model.meshes[meshIndex].primitives.front().get();
+            if (primitive && !primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
+            {
+                needsCpuSkinning = true;
+                break;
+            }
+        }
+    }
+
     ufbx_evaluate_opts evalOpts = {};
-    evalOpts.evaluate_skinning = true;
+    evalOpts.evaluate_skinning = needsCpuSkinning;  // Skip expensive topology sort for GPU skinning
     ufbx_error error;
     ufbx_scene* evaluatedScene = ufbx_evaluate_scene(runtime.scene, clip.anim, runtime.timeSeconds, &evalOpts, &error);
     if (!evaluatedScene)
@@ -237,7 +255,6 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
     }
 
     bool updated = false;
-    const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
     for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {
         const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];

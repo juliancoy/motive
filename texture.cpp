@@ -511,10 +511,14 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
         1, &imageBarrier);
 
     // Copy buffer to image
-    // Calculate row length in texels from row stride in bytes (4 bytes per RGBA pixel)
-    const uint32_t bufferRowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
+    // NOTE: We set bufferRowLength to 0 (tightly packed) because:
+    // 1. The staging buffer is filled with memcpy of sizeInBytes which includes any padding
+    // 2. QImage's bytesPerLine may include padding for alignment
+    // 3. Setting to 0 tells Vulkan to calculate stride as width * bytesPerPixel
+    // If there's actual padding in the source data, we would need to set this correctly,
+    // but currently we're copying the padded data as-is.
     imageCopyRegion.bufferOffset = 0;
-    imageCopyRegion.bufferRowLength = bufferRowLength;  // 0 = tightly packed
+    imageCopyRegion.bufferRowLength = 0;  // 0 = tightly packed (width * 4 bytes)
     imageCopyRegion.bufferImageHeight = 0;
     imageCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageCopyRegion.imageSubresource.mipLevel = 0;
@@ -562,8 +566,8 @@ void Primitive::createTextureFromPixelData(const void* pixelData, size_t dataSiz
         ensureInactiveTextureResources(this, width, height, format);
         if (textureImageInactive != VK_NULL_HANDLE)
         {
-            const uint32_t rowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
-            copyBufferToImage(this, stagingBuffer, textureImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height, rowLength);
+            // Use 0 for tightly packed data (see note above)
+            copyBufferToImage(this, stagingBuffer, textureImageInactive, VK_IMAGE_LAYOUT_UNDEFINED, width, height, 0);
             textureInactiveInitialized = true;
         }
     }
@@ -648,8 +652,8 @@ void Primitive::updateTextureFromPixelData(const void* pixelData, size_t dataSiz
         oldLayout = textureInactiveInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
-    const uint32_t rowLength = rowStrideBytes > 0 ? (rowStrideBytes / 4) : 0;
-    copyBufferToImage(this, stagingBuffer, targetImage, oldLayout, width, height, rowLength);
+    // Use 0 for tightly packed data (see note in createTextureFromPixelData)
+    copyBufferToImage(this, stagingBuffer, targetImage, oldLayout, width, height, 0);
 
     if (textureDoubleBuffered)
     {

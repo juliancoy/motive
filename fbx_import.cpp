@@ -159,10 +159,10 @@ int maxImportedTextureDimension()
         const char* env = std::getenv("MOTIVE_MAX_IMPORT_TEXTURE_DIM");
         if (!env || *env == '\0')
         {
-            return 4096;
+            return 8192;  // Default: allow up to 8K textures
         }
         const int value = std::atoi(env);
-        return value > 0 ? value : 4096;
+        return value > 0 ? value : 8192;
     }();
     return cached;
 }
@@ -341,7 +341,10 @@ bool loadImageFromUfbxTexture(const ufbx_texture* texture,
             return false;
         }
 
-        QImage image(decoded, width, height, QImage::Format_RGBA8888);
+        // stbi_load returns tightly packed RGBA data (no row padding)
+        // We must specify bytesPerLine = width * 4 to prevent QImage from assuming different alignment
+        const int bytesPerLine = width * 4;
+        QImage image(decoded, width, height, bytesPerLine, QImage::Format_RGBA8888);
         outImage = image.copy();
         stbi_image_free(decoded);
         if (!outImage.isNull())
@@ -589,15 +592,19 @@ bool applyFbxBaseColorTexture(Mesh& targetMesh, const ufbx_mesh* sourceMesh, int
             pixel[1] = static_cast<uchar>(std::clamp((pixel[1] / 255.0f) * factor.g, 0.0f, 1.0f) * 255.0f);
             pixel[2] = static_cast<uchar>(std::clamp((pixel[2] / 255.0f) * factor.b, 0.0f, 1.0f) * 255.0f);
 
-            float alpha = 1.0f;
+            // Alpha handling:
+            // 1. If we have an opacity texture, multiply diffuse alpha by opacity texture sample
+            // 2. If we only have an opacity scalar (no texture), keep diffuse texture's alpha as-is
+            //    (don't force it to the scalar value - that's incorrect)
+            float alpha = pixel[3] / 255.0f;  // Start with diffuse texture's alpha
+            
             if (!opacityImage.isNull())
             {
-                alpha = (pixel[3] / 255.0f) * opacityScalar;
+                // Multiply by opacity texture sample
+                alpha *= opacityScalar;
             }
-            else if (opacityMap)
-            {
-                alpha = opacityScalar;
-            }
+            // Note: We intentionally DON'T apply opacityScalar when there's no opacity texture.
+            // The scalar is meant to scale the opacity texture, not replace the diffuse alpha.
 
             if (opacityScanline)
             {
@@ -757,9 +764,17 @@ std::vector<Vertex> buildVerticesFromFbxMesh(const ufbx_mesh* mesh, std::vector<
             vertex.normal = mesh->vertex_normal.exists
                 ? toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
                 : glm::vec3(0.0f, 1.0f, 0.0f);
-            vertex.texCoord = mesh->vertex_uv.exists
-                ? toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index))
-                : glm::vec2(0.0f);
+            if (mesh->vertex_uv.exists)
+            {
+                glm::vec2 uv = toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index));
+                // Flip V coordinate: FBX has (0,0) at bottom-left, Vulkan has (0,0) at top-left
+                uv.y = 1.0f - uv.y;
+                vertex.texCoord = uv;
+            }
+            else
+            {
+                vertex.texCoord = glm::vec2(0.0f);
+            }
             vertices.push_back(vertex);
             if (outVertexIndices)
             {
@@ -807,9 +822,17 @@ std::vector<Vertex> buildVerticesFromFbxMeshPart(const ufbx_mesh* mesh,
             vertex.normal = mesh->vertex_normal.exists
                 ? toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
                 : glm::vec3(0.0f, 1.0f, 0.0f);
-            vertex.texCoord = mesh->vertex_uv.exists
-                ? toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index))
-                : glm::vec2(0.0f);
+            if (mesh->vertex_uv.exists)
+            {
+                glm::vec2 uv = toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index));
+                // Flip V coordinate: FBX has (0,0) at bottom-left, Vulkan has (0,0) at top-left
+                uv.y = 1.0f - uv.y;
+                vertex.texCoord = uv;
+            }
+            else
+            {
+                vertex.texCoord = glm::vec2(0.0f);
+            }
             vertices.push_back(vertex);
             if (outVertexIndices)
             {

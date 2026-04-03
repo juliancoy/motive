@@ -1503,17 +1503,21 @@ void Display::createGraphicsPipeline()
     skinnedVertShaderStageInfo.module = skinnedVertShaderModule;
     VkPipelineShaderStageCreateInfo skinnedShaderStages[] = {skinnedVertShaderStageInfo, fragShaderStageInfo};
 
-    // Vertex input
+    // Vertex input - separate descriptions for skinned vs non-skinned
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto skinnedAttributeDescriptions = Vertex::getAttributeDescriptions();
+    auto nonSkinnedAttributeDescriptions = Vertex::getNonSkinnedAttributeDescriptions();
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
     vertexInputInfo.vertexBindingDescriptionCount = 1;
     vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(nonSkinnedAttributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = nonSkinnedAttributeDescriptions.data();
+
+    VkPipelineVertexInputStateCreateInfo skinnedVertexInputInfo = vertexInputInfo;
+    skinnedVertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(skinnedAttributeDescriptions.size());
+    skinnedVertexInputInfo.pVertexAttributeDescriptions = skinnedAttributeDescriptions.data();
 
     // Input assembly
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -1656,6 +1660,7 @@ void Display::createGraphicsPipeline()
 
         VkGraphicsPipelineCreateInfo skinnedPipelineInfo = pipelineInfo;
         skinnedPipelineInfo.pStages = skinnedShaderStages;
+        skinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &skinnedPipelineInfo, nullptr, &skinnedGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create skinned graphics pipeline!");
@@ -1669,6 +1674,7 @@ void Display::createGraphicsPipeline()
 
         VkGraphicsPipelineCreateInfo transparentSkinnedPipelineInfo = pipelineInfo;
         transparentSkinnedPipelineInfo.pStages = skinnedShaderStages;
+        transparentSkinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &transparentSkinnedPipelineInfo, nullptr, &transparentSkinnedGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create transparent skinned graphics pipeline!");

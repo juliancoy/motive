@@ -38,6 +38,7 @@ struct Vertex {
 
     static VkVertexInputBindingDescription getBindingDescription();
     static std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions();
+    static std::array<VkVertexInputAttributeDescription, 3> getNonSkinnedAttributeDescriptions();
 };
 
 struct GltfCombinedPrimitiveData {

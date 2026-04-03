@@ -9,12 +9,22 @@
 #include <QString>
 #include <QStringList>
 #include <functional>
+#include <memory>
 
 class QLabel;
 class QDragEnterEvent;
 class QDropEvent;
+class QFocusEvent;
+class QMouseEvent;
+class QResizeEvent;
+class QShowEvent;
 
 namespace motive::ui {
+
+class ViewportRuntime;
+class ViewportSceneController;
+class ViewportCameraController;
+class ViewportHierarchyBuilder;
 
 class ViewportHostWidget : public QWidget
 {
@@ -117,6 +127,17 @@ public:
     void focusSceneItem(int index);
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);
     void setCameraChangedCallback(std::function<void()> callback);
+    
+    // Performance profiling
+    struct PerformanceMetrics
+    {
+        float currentFps = 0.0f;
+        int renderIntervalMs = 16;
+        bool renderTimerActive = false;
+        int viewportWidth = 0;
+        int viewportHeight = 0;
+    };
+    PerformanceMetrics performanceMetrics() const;
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -130,10 +151,9 @@ protected:
 private:
     void ensureViewportInitialized();
     void renderFrame();
-    void embedNativeWindow();
-    void syncEmbeddedWindowGeometry();
     void notifySceneChanged();
     void notifyCameraChangedIfNeeded();
+    void applySceneLightToRuntime();
 
     QTimer m_renderTimer;
     bool m_initialized = false;
@@ -144,6 +164,12 @@ private:
     std::function<void()> m_cameraChangedCallback;
     QVector3D m_lastEmittedCameraPosition;
     QVector3D m_lastEmittedCameraRotation;
+    SceneLight m_sceneLight;
+
+    std::unique_ptr<ViewportRuntime> m_runtime;
+    std::unique_ptr<ViewportSceneController> m_sceneController;
+    std::unique_ptr<ViewportCameraController> m_cameraController;
+    std::unique_ptr<ViewportHierarchyBuilder> m_hierarchyBuilder;
 };
 
 }  // namespace motive::ui

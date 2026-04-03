@@ -9,10 +9,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MOTIVE_ENABLE_ASAN "Build with AddressSanitizer" OFF)
+option(MOTIVE_ENABLE_VALIDATION "Enable Vulkan validation layers" ON)
 
 if(MOTIVE_ENABLE_ASAN)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address -fno-omit-frame-pointer)
+endif()
+
+if(NOT MOTIVE_ENABLE_VALIDATION)
+    add_compile_definitions(MOTIVE_DISABLE_VALIDATION_LAYERS=1)
 endif()
 
 set(MOTIVE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")

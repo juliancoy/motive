@@ -357,6 +357,18 @@ void RenderDevice::createInstance()
 {
     validationLayersEnabled = false;
     debugUtilsEnabled = false;
+    
+    // Check for environment variable or compile-time flag to disable validation layers
+    const char* disableValidationEnv = std::getenv("MOTIVE_DISABLE_VALIDATION");
+    const bool disableValidation = 
+#ifdef MOTIVE_DISABLE_VALIDATION_LAYERS
+        true;
+#else
+        (disableValidationEnv != nullptr) && 
+        (std::strcmp(disableValidationEnv, "1") == 0 ||
+         std::strcmp(disableValidationEnv, "true") == 0 ||
+         std::strlen(disableValidationEnv) == 0);
+#endif
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -406,9 +418,13 @@ void RenderDevice::createInstance()
             [name](const VkLayerProperties &layer) { return strcmp(layer.layerName, name) == 0; });
     };
 
-    if (layerSupported("VK_LAYER_KHRONOS_validation"))
+    if (!disableValidation && layerSupported("VK_LAYER_KHRONOS_validation"))
     {
         validationLayersEnabled = true;
+    }
+    else if (disableValidation)
+    {
+        std::cout << "[RenderDevice] Validation layers disabled via MOTIVE_DISABLE_VALIDATION environment variable." << std::endl;
     }
     else
     {

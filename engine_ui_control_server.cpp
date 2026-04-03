@@ -418,6 +418,26 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
         payload.insert(QStringLiteral("cameraPosition"), cameraPosArray);
         payload.insert(QStringLiteral("cameraRotation"), cameraRotArray);
+        // Performance metrics
+        payload.insert(QStringLiteral("fps"), static_cast<double>(data.currentFps));
+        payload.insert(QStringLiteral("renderIntervalMs"), data.renderIntervalMs);
+        payload.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
+        payload.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
+        payload.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/performance")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("fps"), static_cast<double>(data.currentFps));
+        payload.insert(QStringLiteral("renderIntervalMs"), data.renderIntervalMs);
+        payload.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
+        payload.insert(QStringLiteral("targetFps"), data.renderIntervalMs > 0 ? (1000 / data.renderIntervalMs) : 0);
+        payload.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
+        payload.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
         return jsonResponse(200, compactJson(payload));
     }
 

@@ -1,0 +1,377 @@
+#include "viewport_hierarchy_builder.h"
+
+#include "viewport_internal_utils.h"
+#include "viewport_runtime.h"
+#include "viewport_scene_controller.h"
+
+#include "engine.h"
+#include "model.h"
+#include "object_transform.h"
+
+#include <QJsonObject>
+#include <vulkan/vulkan.h>
+
+namespace motive::ui {
+namespace {
+
+QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
+{
+    QJsonArray children;
+    for (const auto& child : node.children)
+    {
+        children.append(hierarchyNodeToJson(child));
+    }
+
+    QString typeString = QStringLiteral("scene_item");
+    switch (node.type)
+    {
+    case ViewportHostWidget::HierarchyNode::Type::Camera:
+        typeString = QStringLiteral("camera");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Light:
+        typeString = QStringLiteral("light");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::SceneItem:
+        typeString = QStringLiteral("scene_item");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Mesh:
+        typeString = QStringLiteral("mesh");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Primitive:
+        typeString = QStringLiteral("primitive");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Material:
+        typeString = QStringLiteral("material");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::Texture:
+        typeString = QStringLiteral("texture");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::AnimationGroup:
+        typeString = QStringLiteral("animation_group");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::AnimationClip:
+        typeString = QStringLiteral("animation_clip");
+        break;
+    case ViewportHostWidget::HierarchyNode::Type::PendingSceneItem:
+        typeString = QStringLiteral("pending_scene_item");
+        break;
+    }
+
+    return QJsonObject{
+        {QStringLiteral("label"), node.label},
+        {QStringLiteral("type"), typeString},
+        {QStringLiteral("sceneIndex"), node.sceneIndex},
+        {QStringLiteral("meshIndex"), node.meshIndex},
+        {QStringLiteral("primitiveIndex"), node.primitiveIndex},
+        {QStringLiteral("clipName"), node.clipName},
+        {QStringLiteral("children"), children}
+    };
+}
+
+}  // namespace
+
+ViewportHierarchyBuilder::ViewportHierarchyBuilder(ViewportRuntime& runtime,
+                                                   const ViewportSceneController& sceneController,
+                                                   const ViewportHostWidget::SceneLight& sceneLight)
+    : m_runtime(runtime)
+    , m_sceneController(sceneController)
+    , m_sceneLight(sceneLight)
+{
+}
+
+QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItems() const
+{
+    QList<ViewportHostWidget::HierarchyNode> items;
+    items.push_back(ViewportHostWidget::HierarchyNode{
+        QStringLiteral("Camera"),
+        ViewportHostWidget::HierarchyNode::Type::Camera,
+        detail::kHierarchyCameraIndex,
+        -1,
+        -1,
+        QString(),
+        {}
+    });
+
+    if (m_sceneLight.exists)
+    {
+        items.push_back(ViewportHostWidget::HierarchyNode{
+            QStringLiteral("Directional Light"),
+            ViewportHostWidget::HierarchyNode::Type::Light,
+            detail::kHierarchyLightIndex,
+            -1,
+            -1,
+            QString(),
+            {}
+        });
+    }
+
+    const auto& sceneEntries = m_sceneController.loadedEntries();
+    const int loadedCount = m_runtime.engine() ? static_cast<int>(m_runtime.engine()->models.size()) : 0;
+
+    for (int i = 0; i < sceneEntries.size(); ++i)
+    {
+        const auto& entry = sceneEntries[i];
+        ViewportHostWidget::HierarchyNode sceneNode;
+        sceneNode.label = entry.name;
+        sceneNode.type = ViewportHostWidget::HierarchyNode::Type::SceneItem;
+        sceneNode.sceneIndex = i;
+
+        if (i < loadedCount && m_runtime.engine() && m_runtime.engine()->models[static_cast<size_t>(i)])
+        {
+            const auto& model = m_runtime.engine()->models[static_cast<size_t>(i)];
+            for (size_t meshIndex = 0; meshIndex < model->meshes.size(); ++meshIndex)
+            {
+                const auto& mesh = model->meshes[meshIndex];
+                ViewportHostWidget::HierarchyNode meshNode;
+                meshNode.label = QStringLiteral("Mesh %1").arg(meshIndex);
+                meshNode.type = ViewportHostWidget::HierarchyNode::Type::Mesh;
+                meshNode.sceneIndex = i;
+                meshNode.meshIndex = static_cast<int>(meshIndex);
+
+                for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
+                {
+                    const auto& primitive = mesh.primitives[primitiveIndex];
+                    ViewportHostWidget::HierarchyNode primitiveNode;
+                    primitiveNode.label = QStringLiteral("Primitive %1 (%2 verts, %3 indices)")
+                                              .arg(primitiveIndex)
+                                              .arg(primitive ? primitive->vertexCount : 0)
+                                              .arg(primitive ? primitive->indexCount : 0);
+                    primitiveNode.type = ViewportHostWidget::HierarchyNode::Type::Primitive;
+                    primitiveNode.sceneIndex = i;
+                    primitiveNode.meshIndex = static_cast<int>(meshIndex);
+                    primitiveNode.primitiveIndex = static_cast<int>(primitiveIndex);
+
+                    if (primitive)
+                    {
+                        ViewportHostWidget::HierarchyNode materialNode;
+                        const QString materialName = primitive->sourceMaterialName.isEmpty()
+                            ? (primitive->sourceMaterialIndex >= 0
+                                ? QStringLiteral("material %1").arg(primitive->sourceMaterialIndex)
+                                : QStringLiteral("material"))
+                            : primitive->sourceMaterialName;
+                        materialNode.label = QStringLiteral("Material (%1, %2, cull=%3)")
+                                                 .arg(materialName)
+                                                 .arg([&]() {
+                                                     switch (primitive->alphaMode)
+                                                     {
+                                                     case PrimitiveAlphaMode::Opaque: return QStringLiteral("opaque");
+                                                     case PrimitiveAlphaMode::Mask: return QStringLiteral("mask");
+                                                     case PrimitiveAlphaMode::Blend: return QStringLiteral("blend");
+                                                     }
+                                                     return QStringLiteral("unknown");
+                                                 }())
+                                                 .arg([&]() {
+                                                     switch (primitive->cullMode)
+                                                     {
+                                                     case PrimitiveCullMode::Back: return QStringLiteral("back");
+                                                     case PrimitiveCullMode::Disabled: return QStringLiteral("none");
+                                                     case PrimitiveCullMode::Front: return QStringLiteral("front");
+                                                     }
+                                                     return QStringLiteral("unknown");
+                                                 }());
+                        materialNode.type = ViewportHostWidget::HierarchyNode::Type::Material;
+                        materialNode.sceneIndex = i;
+                        materialNode.meshIndex = static_cast<int>(meshIndex);
+                        materialNode.primitiveIndex = static_cast<int>(primitiveIndex);
+
+                        if (primitive->sourceHasOpacityTexture || primitive->sourceOpacityScalar < 0.999f)
+                        {
+                            ViewportHostWidget::HierarchyNode opacityNode;
+                            opacityNode.label = primitive->sourceOpacityTextureLabel.isEmpty()
+                                ? QStringLiteral("Opacity (scalar=%1%2)")
+                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
+                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString())
+                                : QStringLiteral("Opacity (%1, scalar=%2%3)")
+                                      .arg(primitive->sourceOpacityTextureLabel)
+                                      .arg(QString::number(primitive->sourceOpacityScalar, 'f', 3))
+                                      .arg(primitive->sourceOpacityInverted ? QStringLiteral(", inverted") : QString());
+                            opacityNode.type = ViewportHostWidget::HierarchyNode::Type::Texture;
+                            opacityNode.sceneIndex = i;
+                            opacityNode.meshIndex = static_cast<int>(meshIndex);
+                            opacityNode.primitiveIndex = static_cast<int>(primitiveIndex);
+                            materialNode.children.push_back(opacityNode);
+                        }
+
+                        ViewportHostWidget::HierarchyNode textureNode;
+                        if (!primitive->texturePreviewImage.isNull() || primitive->textureWidth > 0 || primitive->textureHeight > 0)
+                        {
+                            textureNode.label = primitive->sourceTextureLabel.isEmpty()
+                                ? QStringLiteral("Texture (%1x%2)")
+                                      .arg(primitive->textureWidth)
+                                      .arg(primitive->textureHeight)
+                                : QStringLiteral("Texture (%1, %2x%3)")
+                                      .arg(primitive->sourceTextureLabel)
+                                      .arg(primitive->textureWidth)
+                                      .arg(primitive->textureHeight);
+                        }
+                        else
+                        {
+                            textureNode.label = QStringLiteral("Texture (none)");
+                        }
+                        textureNode.type = ViewportHostWidget::HierarchyNode::Type::Texture;
+                        textureNode.sceneIndex = i;
+                        textureNode.meshIndex = static_cast<int>(meshIndex);
+                        textureNode.primitiveIndex = static_cast<int>(primitiveIndex);
+                        materialNode.children.push_back(textureNode);
+
+                        primitiveNode.children.push_back(materialNode);
+                    }
+
+                    meshNode.children.push_back(primitiveNode);
+                }
+
+                sceneNode.children.push_back(meshNode);
+            }
+
+            if (!model->animationClips.empty())
+            {
+                ViewportHostWidget::HierarchyNode animationGroupNode;
+                animationGroupNode.label = QStringLiteral("Animations");
+                animationGroupNode.type = ViewportHostWidget::HierarchyNode::Type::AnimationGroup;
+                animationGroupNode.sceneIndex = i;
+
+                for (const auto& clip : model->animationClips)
+                {
+                    ViewportHostWidget::HierarchyNode clipNode;
+                    clipNode.label = QString::fromStdString(clip.name);
+                    clipNode.type = ViewportHostWidget::HierarchyNode::Type::AnimationClip;
+                    clipNode.sceneIndex = i;
+                    clipNode.clipName = clipNode.label;
+                    animationGroupNode.children.push_back(clipNode);
+                }
+
+                sceneNode.children.push_back(animationGroupNode);
+            }
+        }
+
+        items.push_back(sceneNode);
+    }
+
+    for (int i = 0; i < m_sceneController.pendingEntries().size(); ++i)
+    {
+        const auto& entry = m_sceneController.pendingEntries()[i];
+        ViewportHostWidget::HierarchyNode pendingNode;
+        pendingNode.label = entry.name + QStringLiteral(" (pending)");
+        pendingNode.type = ViewportHostWidget::HierarchyNode::Type::PendingSceneItem;
+        pendingNode.sceneIndex = m_sceneController.loadedEntries().size() + i;
+        items.push_back(pendingNode);
+    }
+
+    return items;
+}
+
+QJsonArray ViewportHierarchyBuilder::hierarchyJson() const
+{
+    QJsonArray array;
+    for (const auto& node : hierarchyItems())
+    {
+        array.append(hierarchyNodeToJson(node));
+    }
+    return array;
+}
+
+QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
+{
+    auto alphaModeName = [](PrimitiveAlphaMode mode) -> QString
+    {
+        switch (mode)
+        {
+        case PrimitiveAlphaMode::Opaque:
+            return QStringLiteral("opaque");
+        case PrimitiveAlphaMode::Mask:
+            return QStringLiteral("mask");
+        case PrimitiveAlphaMode::Blend:
+            return QStringLiteral("blend");
+        }
+        return QStringLiteral("unknown");
+    };
+    auto cullModeName = [](PrimitiveCullMode mode) -> QString
+    {
+        switch (mode)
+        {
+        case PrimitiveCullMode::Back:
+            return QStringLiteral("back");
+        case PrimitiveCullMode::Disabled:
+            return QStringLiteral("none");
+        case PrimitiveCullMode::Front:
+            return QStringLiteral("front");
+        }
+        return QStringLiteral("unknown");
+    };
+
+    QJsonArray sceneItems;
+    const auto& entries = m_sceneController.loadedEntries();
+
+    for (int sceneIndex = 0; sceneIndex < entries.size(); ++sceneIndex)
+    {
+        const auto& entry = entries[sceneIndex];
+        QJsonObject sceneItem{
+            {QStringLiteral("name"), entry.name},
+            {QStringLiteral("sourcePath"), entry.sourcePath},
+            {QStringLiteral("translation"), QJsonArray{entry.translation.x(), entry.translation.y(), entry.translation.z()}},
+            {QStringLiteral("rotation"), QJsonArray{entry.rotation.x(), entry.rotation.y(), entry.rotation.z()}},
+            {QStringLiteral("scale"), QJsonArray{entry.scale.x(), entry.scale.y(), entry.scale.z()}},
+            {QStringLiteral("paintOverrideEnabled"), entry.paintOverrideEnabled},
+            {QStringLiteral("paintOverrideColor"), QJsonArray{entry.paintOverrideColor.x(), entry.paintOverrideColor.y(), entry.paintOverrideColor.z()}},
+            {QStringLiteral("visible"), entry.visible},
+            {QStringLiteral("activeAnimationClip"), entry.activeAnimationClip},
+            {QStringLiteral("animationPlaying"), entry.animationPlaying},
+            {QStringLiteral("animationLoop"), entry.animationLoop},
+            {QStringLiteral("animationSpeed"), entry.animationSpeed}
+        };
+
+        QJsonArray meshArray;
+        if (m_runtime.engine() &&
+            sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
+            m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
+        {
+            const auto& model = m_runtime.engine()->models[static_cast<size_t>(sceneIndex)];
+            sceneItem.insert(QStringLiteral("boundsCenter"), QJsonArray{model->boundsCenter.x, model->boundsCenter.y, model->boundsCenter.z});
+            sceneItem.insert(QStringLiteral("boundsRadius"), model->boundsRadius);
+
+            for (int meshIndex = 0; meshIndex < static_cast<int>(model->meshes.size()); ++meshIndex)
+            {
+                const auto& mesh = model->meshes[static_cast<size_t>(meshIndex)];
+                QJsonObject meshObject{{QStringLiteral("meshIndex"), meshIndex}};
+                QJsonArray primitiveArray;
+                for (int primitiveIndex = 0; primitiveIndex < static_cast<int>(mesh.primitives.size()); ++primitiveIndex)
+                {
+                    const auto& primitive = mesh.primitives[static_cast<size_t>(primitiveIndex)];
+                    if (!primitive)
+                    {
+                        continue;
+                    }
+                    primitiveArray.append(QJsonObject{
+                        {QStringLiteral("primitiveIndex"), primitiveIndex},
+                        {QStringLiteral("vertexCount"), static_cast<int>(primitive->vertexCount)},
+                        {QStringLiteral("indexCount"), static_cast<int>(primitive->indexCount)},
+                        {QStringLiteral("alphaMode"), alphaModeName(primitive->alphaMode)},
+                        {QStringLiteral("cullMode"), cullModeName(primitive->cullMode)},
+                        {QStringLiteral("alphaCutoff"), primitive->alphaCutoff},
+                        {QStringLiteral("sourceMaterialIndex"), primitive->sourceMaterialIndex},
+                        {QStringLiteral("sourceMaterialName"), primitive->sourceMaterialName},
+                        {QStringLiteral("sourceTextureLabel"), primitive->sourceTextureLabel},
+                        {QStringLiteral("sourceOpacityScalar"), primitive->sourceOpacityScalar},
+                        {QStringLiteral("sourceHasOpacityTexture"), primitive->sourceHasOpacityTexture},
+                        {QStringLiteral("sourceOpacityInverted"), primitive->sourceOpacityInverted},
+                        {QStringLiteral("sourceOpacityTextureLabel"), primitive->sourceOpacityTextureLabel},
+                        {QStringLiteral("textureWidth"), static_cast<int>(primitive->textureWidth)},
+                        {QStringLiteral("textureHeight"), static_cast<int>(primitive->textureHeight)},
+                        {QStringLiteral("hasTexturePreview"), !primitive->texturePreviewImage.isNull()},
+                        {QStringLiteral("usesYuvTexture"), primitive->usesYuvTexture},
+                        {QStringLiteral("descriptorAllocated"), primitive->primitiveDescriptorSet != VK_NULL_HANDLE}
+                    });
+                }
+                meshObject.insert(QStringLiteral("primitives"), primitiveArray);
+                meshArray.append(meshObject);
+            }
+        }
+
+        sceneItem.insert(QStringLiteral("meshes"), meshArray);
+        sceneItems.append(sceneItem);
+    }
+
+    return sceneItems;
+}
+
+}  // namespace motive::ui

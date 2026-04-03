@@ -213,7 +213,9 @@ void Model::updateAnimation(double deltaSeconds)
     }
     if (fbxAnimationRuntime && engine)
     {
-        vkQueueWaitIdle(engine->getGraphicsQueue());
+        // NOTE: vkQueueWaitIdle removed - it was causing severe performance degradation
+        // by blocking the CPU every frame. The animation update should not need to wait
+        // for the GPU to be idle. If synchronization is needed, use fences or semaphores.
         motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
     }
 }

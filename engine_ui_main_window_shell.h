@@ -92,6 +92,8 @@ private:
     QDoubleSpinBox* m_cameraSpeedSpin = nullptr;
     QComboBox* m_renderPathCombo = nullptr;
     QCheckBox* m_meshConsolidationCheck = nullptr;
+    QCheckBox* m_validationLayersCheck = nullptr;
+    QLabel* m_validationRestartLabel = nullptr;
     QWidget* m_bgColorWidget = nullptr;
     
     ProjectSession m_projectSession;

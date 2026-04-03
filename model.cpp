@@ -74,6 +74,18 @@ void importFbxVerticesIntoModel(Model& model,
                                 int materialIndex,
                                 const char* summaryLabel)
 {
+    // Debug UV coordinate ranges
+    if (!vertices.empty())
+    {
+        glm::vec2 minUV(1e10f), maxUV(-1e10f);
+        for (const auto& v : vertices)
+        {
+            minUV = glm::min(minUV, v.texCoord);
+            maxUV = glm::max(maxUV, v.texCoord);
+        }
+        std::cout << "[DEBUG] UV range: min=(" << minUV.x << ", " << minUV.y << ") max=(" << maxUV.x << ", " << maxUV.y << ")" << std::endl;
+    }
+    
     std::vector<glm::uvec4> jointIndices;
     std::vector<glm::vec4> jointWeights;
     uint32_t skinDeformerIndex = 0;
@@ -190,6 +202,28 @@ std::array<VkVertexInputAttributeDescription, 5> Vertex::getAttributeDescription
     attributeDescriptions[4].location = 4;
     attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     attributeDescriptions[4].offset = offsetof(Vertex, weights);
+
+    return attributeDescriptions;
+}
+
+std::array<VkVertexInputAttributeDescription, 3> Vertex::getNonSkinnedAttributeDescriptions()
+{
+    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Vertex, normal);
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 
     return attributeDescriptions;
 }

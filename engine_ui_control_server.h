@@ -25,6 +25,22 @@ public:
         QVector3D cameraPosition;
         QVector3D cameraRotation;
         int sceneItemCount = 0;
+        // Performance metrics
+        float currentFps = 0.0f;
+        int renderIntervalMs = 16;
+        bool renderTimerActive = false;
+        int viewportWidth = 0;
+        int viewportHeight = 0;
+    };
+    
+    struct PerformanceMetrics
+    {
+        float fps = 0.0f;
+        float frameTimeMs = 0.0f;
+        int renderIntervalMs = 16;
+        bool vsyncEnabled = false;
+        int triangleCount = 0;
+        int drawCallCount = 0;
     };
 
     explicit EngineUiControlServer(std::function<QString()> rootPathProvider,
