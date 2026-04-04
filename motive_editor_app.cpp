@@ -1,7 +1,7 @@
-#include "engine_ui_motive_editor_app.h"
-#include "engine_ui_asset_browser_widget.h"
-#include "engine_ui_control_server.h"
-#include "engine_ui_main_window_shell.h"
+#include "motive_editor_app.h"
+#include "asset_browser_widget.h"
+#include "control_server.h"
+#include "main_window_shell.h"
 
 #include <QApplication>
 #include <QCommandLineOption>

@@ -1,4 +1,4 @@
-#include "engine_ui_motive_editor_app.h"
+#include "motive_editor_app.h"
 
 int main(int argc, char** argv)
 {

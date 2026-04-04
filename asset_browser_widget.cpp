@@ -1,4 +1,4 @@
-#include "engine_ui_asset_browser_widget.h"
+#include "asset_browser_widget.h"
 
 #include <QAbstractItemView>
 #include <QApplication>

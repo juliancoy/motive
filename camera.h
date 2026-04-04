@@ -4,11 +4,22 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.h>
 #include <iostream>
+#include <string>
 
 // Forward declarations
 class Engine;
 class Display;
-class Model;  // For character controller target
+class Model;  // For character controller target and follow mode
+
+// Follow mode settings for camera tracking
+struct FollowSettings {
+    float relativeYaw = 0.0f;       // Horizontal angle offset from target (radians)
+    float relativePitch = 0.3f;     // Vertical angle offset from target (radians)
+    float distance = 5.0f;          // Distance from target center
+    float smoothSpeed = 5.0f;       // Interpolation speed (higher = snappier)
+    glm::vec3 targetOffset = glm::vec3(0.0f, 0.0f, 0.0f);  // Offset from target center
+    bool enabled = false;           // Whether follow mode is active
+};
 
 struct CameraTransform {
     glm::mat4 view;
@@ -80,6 +91,18 @@ public:
     // Character controller target (WASD moves this model instead of camera)
     void setCharacterTarget(Model* model);
     Model* getCharacterTarget() const { return characterTarget; }
+    
+    // Follow mode - camera tracks a target model
+    void setFollowTarget(Model* model, const FollowSettings& settings = FollowSettings());
+    Model* getFollowTarget() const { return followTarget; }
+    void setFollowSettings(const FollowSettings& settings);
+    const FollowSettings& getFollowSettings() const { return followSettings; }
+    void updateFollow(float deltaTime);  // Update camera position based on follow target
+    bool isFollowModeEnabled() const { return followSettings.enabled && followTarget != nullptr; }
+    
+    // Camera identification
+    void setCameraName(const std::string& name) { cameraName = name; }
+    const std::string& getCameraName() const { return cameraName; }
 
 private:
     Engine* engine;
@@ -103,4 +126,13 @@ private:
     float fullscreenPercentY = 1.0f;
     
     Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
+    
+    // Follow mode state
+    Model* followTarget = nullptr;
+    FollowSettings followSettings;
+    std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
+    
+    // Smooth follow interpolation state
+    glm::vec3 currentFollowPosition;  // Current interpolated camera position
+    bool followInitialized = false;
 };

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine_ui_asset_browser_types.h"
+#include "asset_browser_types.h"
 
 #include <QHash>
 #include <QPoint>

@@ -98,7 +98,7 @@ ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/insta
 
 # Source and object files
 main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
-qt_main_sources = ["engine_ui_motive_editor_main.cpp"]
+qt_main_sources = ["motive_editor_main.cpp"]
 exclude_sources = [
     "brain_viewer_engine.cpp",  # currently does not match the main engine APIs
     "vulkan_video_bridge.cpp",  # missing Vulkan-Video-Samples libraries
@@ -295,7 +295,7 @@ if not qt_enabled:
     qt_link_flags = ""
     qt_main_sources = []
     qt_main_objects = []
-    so_sources = [src for src in so_sources if not src.startswith("engine_ui_")]
+    so_sources = [src for src in so_sources if not src.startswith("")]
     so_objects = [f"{os.path.splitext(f)[0]}.o" for f in so_sources]
 
 ffmpeg_packages = ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]
@@ -380,7 +380,7 @@ def compile_cpp_to_o(src_file):
     extra_flags = ""
     if "detection" in src_file or "overlay_yolo" in src_file or "motive2d_yolo" in src_file:
         extra_flags = "-DNCNN_AVAILABLE -DNCNN_USE_VULKAN=0"
-    if src_file.startswith("engine_ui_"):
+    if src_file.startswith(""):
         extra_flags = f"{extra_flags} {qt_include_flags}".strip()
     
     cmd = f"g++ -std=c++17 {debug_flags} {sanitize_flags} -fPIC -c {include_flags} {extra_flags} {src_file} -o {obj_file}"

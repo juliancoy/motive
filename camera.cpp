@@ -485,3 +485,76 @@ void Camera::setCharacterTarget(Model* model)
         std::cout << "[Camera] Character target cleared" << std::endl;
     }
 }
+
+void Camera::setFollowTarget(Model* model, const FollowSettings& settings)
+{
+    followTarget = model;
+    followSettings = settings;
+    followInitialized = false;  // Reset interpolation on target change
+    
+    if (model) {
+        std::cout << "[Camera] Follow target set: " << model << " (" << model->name << ")" << std::endl;
+        std::cout << "[Camera] Follow settings: distance=" << settings.distance 
+                  << ", yaw=" << settings.relativeYaw 
+                  << ", pitch=" << settings.relativePitch 
+                  << ", smooth=" << settings.smoothSpeed << std::endl;
+    } else {
+        std::cout << "[Camera] Follow target cleared" << std::endl;
+    }
+}
+
+void Camera::setFollowSettings(const FollowSettings& settings)
+{
+    followSettings = settings;
+}
+
+void Camera::updateFollow(float deltaTime)
+{
+    if (!followSettings.enabled || !followTarget) {
+        return;
+    }
+    
+    // Get target position (bounds center + optional offset)
+    glm::vec3 targetCenter = followTarget->boundsCenter + followSettings.targetOffset;
+    
+    // Calculate desired camera position based on spherical coordinates
+    float yaw = followSettings.relativeYaw;
+    float pitch = followSettings.relativePitch;
+    float dist = followSettings.distance;
+    
+    // Clamp pitch to prevent flipping
+    pitch = glm::clamp(pitch, -1.4f, 1.4f);
+    
+    // Calculate offset from target
+    glm::vec3 offset;
+    offset.x = sin(yaw) * cos(pitch) * dist;
+    offset.y = sin(pitch) * dist;
+    offset.z = cos(yaw) * cos(pitch) * dist;
+    
+    glm::vec3 desiredPosition = targetCenter + offset;
+    
+    // Initialize on first frame
+    if (!followInitialized) {
+        currentFollowPosition = desiredPosition;
+        followInitialized = true;
+    }
+    
+    // Smoothly interpolate to desired position
+    float t = glm::min(followSettings.smoothSpeed * deltaTime, 1.0f);
+    cameraPos = glm::mix(cameraPos, desiredPosition, t);
+    
+    // Update camera rotation to look at target
+    glm::vec3 toTarget = targetCenter - cameraPos;
+    if (glm::length(toTarget) > 0.001f) {
+        glm::vec3 front = glm::normalize(toTarget);
+        float newYaw = atan2(front.x, front.z) + 3.14159f;
+        float newPitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
+        
+        // Normalize yaw
+        if (newYaw > 3.14159f) newYaw -= 2 * 3.14159f;
+        if (newYaw < -3.14159f) newYaw += 2 * 3.14159f;
+        
+        cameraRotation.x = newYaw;
+        cameraRotation.y = newPitch;
+    }
+}

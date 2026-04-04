@@ -2,17 +2,22 @@
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
+
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
-#include <glm/glm.hpp>
-#include <chrono>
-#include <mutex>
-#include <array>
-#include <vector>
 #include <vulkan/vulkan.h>
+
 #include "glyph.h"
 
 // Forward declarations
@@ -30,9 +35,10 @@ public:
             bool use2DPipeline = false,
             bool embeddedMode = false);
     ~Display();
+
     void createSwapchain();
-    void createWindow(const char *title);
-    void createSurface(GLFWwindow *window);    
+    void createWindow(const char* title);
+    void createSurface(GLFWwindow* window);
     void addCamera(Camera* camera);
     void recreateSwapchain();
 
@@ -50,31 +56,30 @@ public:
     void handleKey(int key, int scancode, int action, int mods);
     void handleWindowFocusChanged(int focused);
 
-    GLFWwindow *window;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapchain;
+    GLFWwindow* window = nullptr;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 
+    VkCommandPool swapchainCmdPool = VK_NULL_HANDLE;
+    VkCommandBuffer swapchainCmdBuffer = VK_NULL_HANDLE;
+    VkCommandBuffer swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
+    VkFence swapchainRecreationFence = VK_NULL_HANDLE;
 
-    VkCommandPool swapchainCmdPool;
-    VkCommandBuffer swapchainCmdBuffer;
-    VkCommandBuffer swapchainRecreationCmdBuffer;  // Separate command buffer for swapchain ops
-    VkFence swapchainRecreationFence;             // Fence for synchronization
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
-    VkCommandBuffer commandBuffer;
-    VkPipelineLayout pipelineLayout;
-
-    VkQueue graphicsQueue;
-    VkCommandPool commandPool;
-    VkImage depthImage;
-    VkDeviceMemory depthImageMemory;
-    VkImageView depthImageView;
+    VkQueue graphicsQueue = VK_NULL_HANDLE;
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    VkImage depthImage = VK_NULL_HANDLE;
+    VkDeviceMemory depthImageMemory = VK_NULL_HANDLE;
+    VkImageView depthImageView = VK_NULL_HANDLE;
     VkImage colorImage = VK_NULL_HANDLE;
     VkDeviceMemory colorImageMemory = VK_NULL_HANDLE;
     VkImageView colorImageView = VK_NULL_HANDLE;
-    int graphicsQueueFamilyIndex;
+    int graphicsQueueFamilyIndex = -1;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    VkRenderPass renderPass;
+    VkRenderPass renderPass = VK_NULL_HANDLE;
     std::array<VkPipeline, 3> graphicsPipelines{};
     std::array<VkPipeline, 3> transparentGraphicsPipelines{};
     std::array<VkPipeline, 3> skinnedGraphicsPipelines{};
@@ -92,9 +97,9 @@ public:
     std::string vertShaderPath;
     std::string fragShaderPath;
 
-    VkShaderModule vertShaderModule;
-    VkShaderModule skinnedVertShaderModule;
-    VkShaderModule fragShaderModule;
+    VkShaderModule vertShaderModule = VK_NULL_HANDLE;
+    VkShaderModule skinnedVertShaderModule = VK_NULL_HANDLE;
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
 
     int width;
     int height;
@@ -107,11 +112,21 @@ public:
     float bgColorG = 0.2f;
     float bgColorB = 0.8f;
 
-    // Camera instance
+    // Camera instances (multiple cameras supported)
     std::vector<Camera*> cameras;
     float getCurrentFps() const { return currentFps; }
 
+    // Camera management
+    Camera* findCameraByName(const std::string& name) const;
+    Camera* createCamera(const std::string& name = "",
+                         const glm::vec3& initialPos = glm::vec3(0.0f, 0.0f, -3.0f),
+                         const glm::vec2& initialRot = glm::vec2(glm::radians(-180.0f), 0.0f));
+    void removeCamera(Camera* camera);
+    Camera* getActiveCamera() const { return cameras.empty() ? nullptr : cameras[0]; }
+
 private:
+    std::vector<std::unique_ptr<Camera>> ownedCameras;
+
     struct OverlayResources
     {
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
@@ -124,9 +139,10 @@ private:
         uint32_t offsetY = 0;
     };
 
-    Engine* engine;
+    Engine* engine = nullptr;
     std::mutex renderMutex;
     bool shuttingDown = false;
+
     void cleanupSwapchainResources();
     void createOverlayBuffer(VkDeviceSize size);
     void destroyOverlayBuffer();

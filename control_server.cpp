@@ -1,4 +1,4 @@
-#include "engine_ui_control_server.h"
+#include "control_server.h"
 
 #include <QApplication>
 #include <QDebug>

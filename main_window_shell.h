@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine_ui_project_session.h"
-#include "engine_ui_viewport_host_widget.h"
+#include "project_session.h"
+#include "viewport_host_widget.h"
 
 #include <QCloseEvent>
 #include <QComboBox>
@@ -35,6 +35,12 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    static constexpr int kHierarchyCameraIndex = -1000;
+    static constexpr int kHierarchyLightIndex = -1001;
+
+    static QJsonObject sceneLightToJson(const ViewportHostWidget::SceneLight& light);
+    static ViewportHostWidget::SceneLight sceneLightFromJson(const QJsonObject& object);
+
     void restoreSessionState();
     void setupProjectMenu();
     void refreshWindowTitle();
@@ -87,8 +93,7 @@ private:
     QDoubleSpinBox* m_inspectorScaleX = nullptr;
     QDoubleSpinBox* m_inspectorScaleY = nullptr;
     QDoubleSpinBox* m_inspectorScaleZ = nullptr;
-    
-    // Global settings
+
     QDoubleSpinBox* m_cameraSpeedSpin = nullptr;
     QComboBox* m_renderPathCombo = nullptr;
     QCheckBox* m_meshConsolidationCheck = nullptr;
@@ -96,7 +101,7 @@ private:
     QLabel* m_validationRestartLabel = nullptr;
     QCheckBox* m_freeFlyCameraCheck = nullptr;
     QWidget* m_bgColorWidget = nullptr;
-    
+
     ProjectSession m_projectSession;
     QList<ViewportHostWidget::SceneItem> m_sceneItems;
     QStringList m_promptedConversionRoots;

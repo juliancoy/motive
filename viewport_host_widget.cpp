@@ -1,4 +1,4 @@
-#include "engine_ui_viewport_host_widget.h"
+#include "viewport_host_widget.h"
 
 #include "viewport_asset_loader.h"
 #include "viewport_camera_controller.h"
@@ -449,6 +449,189 @@ void ViewportHostWidget::setFreeFlyCameraEnabled(bool enabled)
 bool ViewportHostWidget::isFreeFlyCameraEnabled() const
 {
     return m_freeFlyCameraEnabled;
+}
+
+bool ViewportHostWidget::createOrJumpToFollowCamera(int sceneIndex, const FollowCameraSettings& settings)
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || 
+        sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
+        !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)]) {
+        qDebug() << "[ViewportHost] Cannot create follow camera: invalid scene index" << sceneIndex;
+        return false;
+    }
+    
+    if (!m_runtime->display()) {
+        qDebug() << "[ViewportHost] Cannot create follow camera: display not initialized";
+        return false;
+    }
+    
+    // Build a unique name for this follow camera
+    QString cameraName = QStringLiteral("Follow Cam (Scene %1)").arg(sceneIndex);
+    std::string cameraNameStd = cameraName.toStdString();
+    
+    // Check if a follow camera already exists for this scene
+    Camera* existingCamera = m_runtime->display()->findCameraByName(cameraNameStd);
+    if (existingCamera) {
+        // Camera exists - find and activate it
+        auto& cameras = m_runtime->display()->cameras;
+        auto it = std::find(cameras.begin(), cameras.end(), existingCamera);
+        if (it != cameras.end()) {
+            // Move this camera to the front of the list (make it active)
+            std::rotate(cameras.begin(), it, it + 1);
+            qDebug() << "[ViewportHost] Switched to existing follow camera for scene" << sceneIndex;
+            return true;
+        }
+    }
+    
+    // Get target model
+    Model* targetModel = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)].get();
+    if (!targetModel) {
+        return false;
+    }
+    
+    // Calculate initial camera position based on settings
+    glm::vec3 targetCenter = targetModel->boundsCenter;
+    float yawRad = glm::radians(settings.relativeYaw);
+    float pitchRad = glm::radians(settings.relativePitch);
+    float dist = settings.distance;
+    
+    glm::vec3 offset;
+    offset.x = sin(yawRad) * cos(pitchRad) * dist;
+    offset.y = sin(pitchRad) * dist;
+    offset.z = cos(yawRad) * cos(pitchRad) * dist;
+    
+    glm::vec3 initialPos = targetCenter + offset;
+    
+    // Calculate initial rotation to look at target
+    glm::vec3 toTarget = targetCenter - initialPos;
+    float initialYaw = atan2(toTarget.x, toTarget.z) + 3.14159f;
+    float initialPitch = -asin(glm::clamp(toTarget.y / glm::length(toTarget), -1.0f, 1.0f));
+    
+    // Create the follow camera
+    Camera* followCam = m_runtime->display()->createCamera(
+        cameraNameStd,
+        initialPos,
+        glm::vec2(initialYaw, initialPitch)
+    );
+    
+    if (!followCam) {
+        qDebug() << "[ViewportHost] Failed to create follow camera";
+        return false;
+    }
+    
+    // Configure follow settings
+    FollowSettings followSettings;
+    followSettings.relativeYaw = yawRad;
+    followSettings.relativePitch = pitchRad;
+    followSettings.distance = dist;
+    followSettings.smoothSpeed = settings.smoothSpeed;
+    followSettings.targetOffset = glm::vec3(settings.targetOffset.x(), settings.targetOffset.y(), settings.targetOffset.z());
+    followSettings.enabled = true;
+    
+    followCam->setFollowTarget(targetModel, followSettings);
+    
+    // Disable direct controls on follow camera (user controls the offset, not the camera directly)
+    followCam->setControlsEnabled(false);
+    
+    qDebug() << "[ViewportHost] Created follow camera for scene" << sceneIndex 
+             << "distance" << dist << "yaw" << settings.relativeYaw << "pitch" << settings.relativePitch;
+    
+    // Move the follow camera to be the active camera (first in list)
+    auto& cameras = m_runtime->display()->cameras;
+    if (cameras.size() > 1) {
+        std::rotate(cameras.begin(), cameras.end() - 1, cameras.end());
+    }
+    
+    return true;
+}
+
+bool ViewportHostWidget::hasFollowCamera(int sceneIndex) const
+{
+    if (!m_runtime->display()) {
+        return false;
+    }
+    
+    QString cameraName = QStringLiteral("Follow Cam (Scene %1)").arg(sceneIndex);
+    return m_runtime->display()->findCameraByName(cameraName.toStdString()) != nullptr;
+}
+
+ViewportHostWidget::FollowCameraSettings ViewportHostWidget::currentFollowSettings() const
+{
+    // Try to get settings from the active follow camera
+    if (m_runtime->display() && !m_runtime->display()->cameras.empty()) {
+        Camera* activeCam = m_runtime->display()->cameras[0];
+        if (activeCam && activeCam->isFollowModeEnabled()) {
+            const FollowSettings& fs = activeCam->getFollowSettings();
+            FollowCameraSettings result;
+            result.relativeYaw = glm::degrees(fs.relativeYaw);
+            result.relativePitch = glm::degrees(fs.relativePitch);
+            result.distance = fs.distance;
+            result.smoothSpeed = fs.smoothSpeed;
+            result.targetOffset = QVector3D(fs.targetOffset.x, fs.targetOffset.y, fs.targetOffset.z);
+            return result;
+        }
+    }
+    return FollowCameraSettings();  // Return defaults
+}
+
+void ViewportHostWidget::setFollowCameraSettings(const FollowCameraSettings& settings)
+{
+    if (!m_runtime->display() || m_runtime->display()->cameras.empty()) {
+        return;
+    }
+    
+    Camera* activeCam = m_runtime->display()->cameras[0];
+    if (activeCam && activeCam->isFollowModeEnabled()) {
+        FollowSettings fs;
+        fs.relativeYaw = glm::radians(settings.relativeYaw);
+        fs.relativePitch = glm::radians(settings.relativePitch);
+        fs.distance = settings.distance;
+        fs.smoothSpeed = settings.smoothSpeed;
+        fs.targetOffset = glm::vec3(settings.targetOffset.x(), settings.targetOffset.y(), settings.targetOffset.z());
+        fs.enabled = true;
+        
+        activeCam->setFollowSettings(fs);
+    }
+}
+
+void ViewportHostWidget::exitFollowCamera()
+{
+    if (!m_runtime->display()) {
+        return;
+    }
+    
+    // Find and remove any follow cameras, keeping the main camera
+    auto& cameras = m_runtime->display()->cameras;
+    std::vector<Camera*> camerasToRemove;
+    
+    for (auto* camera : cameras) {
+        if (camera && camera->getCameraName().find("Follow Cam") != std::string::npos) {
+            camerasToRemove.push_back(camera);
+        }
+    }
+    
+    for (auto* camera : camerasToRemove) {
+        m_runtime->display()->removeCamera(camera);
+    }
+    
+    // Ensure we have at least one camera (create main if needed)
+    if (cameras.empty() && m_runtime->engine()) {
+        m_runtime->display()->createCamera("Main Camera");
+    }
+}
+
+void ViewportHostWidget::updateFollowCameras(float dt)
+{
+    if (!m_runtime->display()) {
+        return;
+    }
+    
+    // Update all cameras that have follow mode enabled
+    for (auto* camera : m_runtime->display()->cameras) {
+        if (camera && camera->isFollowModeEnabled()) {
+            camera->updateFollow(dt);
+        }
+    }
 }
 
 void ViewportHostWidget::setCameraPosition(const QVector3D& position)
@@ -998,6 +1181,9 @@ void ViewportHostWidget::renderFrame()
         
         // Update camera to follow character if enabled
         updateCameraFollowCharacter(dt);
+        
+        // Update follow cameras (for element tracking)
+        updateFollowCameras(dt);
     }
 
     m_runtime->render();

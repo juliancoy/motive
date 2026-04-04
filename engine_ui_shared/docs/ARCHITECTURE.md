@@ -11,7 +11,7 @@ Move `motive3d/` from a GLFW-first demo/runtime into a Qt-hosted engine editor w
 
 ## Source Material
 
-The active implementation lives directly in the `engine_ui_*` modules. Legacy copied reference files have been purged.
+The active implementation lives directly in the `*` modules. Legacy copied reference files have been purged.
 
 ## Target Modules
 
@@ -19,15 +19,15 @@ The active implementation lives directly in the `engine_ui_*` modules. Legacy co
 
 Public headers:
 
-- `engine_ui_main_window_shell.h`
-- `engine_ui_dock_layout_config.h`
+- `main_window_shell.h`
+- `dock_layout_config.h`
 
 Implementation:
 
-- `engine_ui_main_window_shell.cpp`
-- `engine_ui_main_window_actions.cpp`
-- `engine_ui_main_window_layout.cpp`
-- `engine_ui_main_window_menus.cpp`
+- `main_window_shell.cpp`
+- `main_window_actions.cpp`
+- `main_window_layout.cpp`
+- `main_window_menus.cpp`
 
 Responsibilities:
 
@@ -40,17 +40,17 @@ Responsibilities:
 
 Public headers:
 
-- `engine_ui_asset_browser_widget.h`
-- `engine_ui_asset_browser_types.h`
-- `engine_ui_thumbnail_provider.h`
+- `asset_browser_widget.h`
+- `asset_browser_types.h`
+- `thumbnail_provider.h`
 
 Implementation:
 
-- `engine_ui_asset_browser_widget.cpp`
-- `engine_ui_asset_browser_tree.cpp`
-- `engine_ui_asset_browser_gallery.cpp`
-- `engine_ui_asset_browser_thumbnail_worker.cpp`
-- `engine_ui_media_thumbnail_provider.cpp`
+- `asset_browser_widget.cpp`
+- `asset_browser_tree.cpp`
+- `asset_browser_gallery.cpp`
+- `asset_browser_thumbnail_worker.cpp`
+- `media_thumbnail_provider.cpp`
 
 Responsibilities:
 
@@ -62,22 +62,22 @@ Responsibilities:
 
 Current implementation:
 
-- `engine_ui_asset_browser_widget.*`
+- `asset_browser_widget.*`
 
 ### 3. Viewport
 
 Public headers:
 
-- `engine_ui_viewport_host_widget.h`
-- `engine_ui_viewport_scene_bridge.h`
-- `engine_ui_viewport_interaction_controller.h`
+- `viewport_host_widget.h`
+- `viewport_scene_bridge.h`
+- `viewport_interaction_controller.h`
 
 Implementation:
 
-- `engine_ui_viewport_host_widget.cpp`
-- `engine_ui_viewport_overlay_painter.cpp`
-- `engine_ui_viewport_interaction_controller.cpp`
-- `engine_ui_qt_vulkan_viewport_bridge.cpp`
+- `viewport_host_widget.cpp`
+- `viewport_overlay_painter.cpp`
+- `viewport_interaction_controller.cpp`
+- `qt_vulkan_viewport_bridge.cpp`
 
 Responsibilities:
 
@@ -88,22 +88,22 @@ Responsibilities:
 
 Current implementation:
 
-- `engine_ui_viewport_host_widget.*`
+- `viewport_host_widget.*`
 - rendering backend adapted from `motive3d/display.*`
 
 ### 4. Project
 
 Public headers:
 
-- `engine_ui_project_state_store.h`
-- `engine_ui_project_session.h`
-- `engine_ui_recent_projects_model.h`
+- `project_state_store.h`
+- `project_session.h`
+- `recent_projects_model.h`
 
 Implementation:
 
-- `engine_ui_project_state_store.cpp`
-- `engine_ui_project_session.cpp`
-- `engine_ui_recent_projects_model.cpp`
+- `project_state_store.cpp`
+- `project_session.cpp`
+- `recent_projects_model.cpp`
 
 Responsibilities:
 
@@ -114,18 +114,18 @@ Responsibilities:
 
 Current implementation:
 
-- `engine_ui_project_session.*`
+- `project_session.*`
 
 ### 5. App Bootstrap
 
 Public headers:
 
-- `engine_ui_motive_editor_app.h`
+- `motive_editor_app.h`
 
 Implementation:
 
-- `engine_ui_motive_editor_app.cpp`
-- `engine_ui_motive_editor_main.cpp`
+- `motive_editor_app.cpp`
+- `motive_editor_main.cpp`
 
 Responsibilities:
 
@@ -164,7 +164,7 @@ Recommended split triggers:
 
 ## Recommended Build Sequence
 
-1. Add Qt bootstrap files at the `motive3d/` root with the `engine_ui_` prefix.
+1. Add Qt bootstrap files at the `motive3d/` root with the `` prefix.
 2. Implement the shell layout with placeholder widgets.
 3. Introduce viewport bridge interfaces without changing runtime rendering yet.
 4. Adapt `motive3d/display.*` into a Qt-owned viewport surface.

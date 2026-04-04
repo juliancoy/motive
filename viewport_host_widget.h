@@ -146,6 +146,39 @@ public:
     // Camera mode
     void setFreeFlyCameraEnabled(bool enabled);
     bool isFreeFlyCameraEnabled() const;
+    
+    // Follow camera functionality
+    struct FollowCameraSettings {
+        float relativeYaw;       // Horizontal angle offset (degrees)
+        float relativePitch;     // Vertical angle offset (degrees)
+        float distance;          // Distance from target
+        float smoothSpeed;       // Interpolation speed
+        QVector3D targetOffset;  // Offset from target center
+        
+        FollowCameraSettings()
+            : relativeYaw(0.0f)
+            , relativePitch(20.0f)
+            , distance(5.0f)
+            , smoothSpeed(5.0f)
+            , targetOffset(0.0f, 0.0f, 0.0f)
+        {}
+    };
+    
+    // Create or get a follow camera for a specific scene item
+    // Returns true if a follow camera was created or already exists
+    bool createOrJumpToFollowCamera(int sceneIndex, const FollowCameraSettings& settings = FollowCameraSettings());
+    
+    // Check if a follow camera exists for a scene item
+    bool hasFollowCamera(int sceneIndex) const;
+    
+    // Get current follow camera settings
+    FollowCameraSettings currentFollowSettings() const;
+    
+    // Update follow camera settings
+    void setFollowCameraSettings(const FollowCameraSettings& settings);
+    
+    // Stop following and return to main camera
+    void exitFollowCamera();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -168,6 +201,7 @@ private:
     void notifyCameraChangedIfNeeded();
     void applySceneLightToRuntime();
     void updateCameraFollowCharacter(float dt);  // Third-person camera follow
+    void updateFollowCameras(float dt);  // Update all active follow cameras
 
     QTimer m_renderTimer;
     bool m_initialized = false;

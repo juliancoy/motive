@@ -153,11 +153,15 @@ set(MOTIVE_MAIN_SOURCES
     "${MOTIVE_ROOT}/motive2d.cpp"
     "${MOTIVE_ROOT}/encode.cpp"
     "${MOTIVE_ROOT}/asset_load_profile.cpp"
-    "${MOTIVE_ROOT}/engine_ui_motive_editor_main.cpp"
+    "${MOTIVE_ROOT}/motive_editor_main.cpp"
 )
 set(MOTIVE_EXCLUDED_ENGINE_SOURCES
     "${MOTIVE_ROOT}/brain_viewer_engine.cpp"
     "${MOTIVE_ROOT}/vulkan_video_bridge.cpp"
+    "${MOTIVE_ROOT}/display_old.cpp"
+    "${MOTIVE_ROOT}/display_old.h"
+    "${MOTIVE_ROOT}/main_window_shell_old.cpp"
+    "${MOTIVE_ROOT}/main_window_shell_old.h"
 )
 
 list(REMOVE_ITEM MOTIVE_ROOT_CPP ${MOTIVE_MAIN_SOURCES})
@@ -210,6 +214,6 @@ endfunction()
 motive_add_app(motive3d motive3d.cpp)
 motive_add_app(motive2d motive2d.cpp)
 motive_add_app(encode encode.cpp)
-motive_add_app(motive_editor engine_ui_motive_editor_main.cpp)
+motive_add_app(motive_editor motive_editor_main.cpp)
 motive_add_app(asset_load_profile asset_load_profile.cpp)
 target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
