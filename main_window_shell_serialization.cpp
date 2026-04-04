@@ -5,6 +5,56 @@
 
 namespace motive::ui {
 
+QJsonObject cameraConfigToJson(const ViewportHostWidget::CameraConfig& config)
+{
+    QJsonObject obj;
+    obj[QStringLiteral("name")] = config.name;
+    obj[QStringLiteral("type")] = config.type == ViewportHostWidget::CameraConfig::Type::Free ? QStringLiteral("free") : QStringLiteral("follow");
+    obj[QStringLiteral("position")] = QJsonArray{config.position.x(), config.position.y(), config.position.z()};
+    obj[QStringLiteral("rotation")] = QJsonArray{config.rotation.x(), config.rotation.y(), config.rotation.z()};
+    obj[QStringLiteral("followTargetIndex")] = config.followTargetIndex;
+    obj[QStringLiteral("followDistance")] = config.followDistance;
+    obj[QStringLiteral("followYaw")] = config.followYaw;
+    obj[QStringLiteral("followPitch")] = config.followPitch;
+    obj[QStringLiteral("followSmoothSpeed")] = config.followSmoothSpeed;
+    obj[QStringLiteral("followTargetOffset")] = QJsonArray{config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z()};
+    return obj;
+}
+
+ViewportHostWidget::CameraConfig cameraConfigFromJson(const QJsonObject& obj)
+{
+    ViewportHostWidget::CameraConfig config;
+    
+    auto readVector3D = [](const QJsonValue& value, const QVector3D& fallback)
+    {
+        const QJsonArray array = value.toArray();
+        if (array.size() != 3)
+            return fallback;
+        return QVector3D(
+            static_cast<float>(array.at(0).toDouble(fallback.x())),
+            static_cast<float>(array.at(1).toDouble(fallback.y())),
+            static_cast<float>(array.at(2).toDouble(fallback.z()))
+        );
+    };
+    
+    config.name = obj.value(QStringLiteral("name")).toString(QStringLiteral("Camera"));
+    QString typeStr = obj.value(QStringLiteral("type")).toString(QStringLiteral("free"));
+    config.type = (typeStr == QStringLiteral("follow")) 
+        ? ViewportHostWidget::CameraConfig::Type::Follow 
+        : ViewportHostWidget::CameraConfig::Type::Free;
+    
+    config.position = readVector3D(obj.value(QStringLiteral("position")), QVector3D(0.0f, 0.0f, 3.0f));
+    config.rotation = readVector3D(obj.value(QStringLiteral("rotation")), QVector3D(0.0f, 0.0f, 0.0f));
+    config.followTargetIndex = obj.value(QStringLiteral("followTargetIndex")).toInt(-1);
+    config.followDistance = static_cast<float>(obj.value(QStringLiteral("followDistance")).toDouble(5.0));
+    config.followYaw = static_cast<float>(obj.value(QStringLiteral("followYaw")).toDouble(0.0));
+    config.followPitch = static_cast<float>(obj.value(QStringLiteral("followPitch")).toDouble(20.0));
+    config.followSmoothSpeed = static_cast<float>(obj.value(QStringLiteral("followSmoothSpeed")).toDouble(5.0));
+    config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
+    
+    return config;
+}
+
 QJsonObject MainWindowShell::sceneLightToJson(const ViewportHostWidget::SceneLight& light)
 {
     return QJsonObject{
@@ -115,6 +165,73 @@ QString MainWindowShell::vectorText(const QVector3D& value) const
         .arg(QString::number(value.x(), 'f', 3))
         .arg(QString::number(value.y(), 'f', 3))
         .arg(QString::number(value.z(), 'f', 3));
+}
+
+QJsonArray MainWindowShell::cameraConfigsToJson(const QList<ViewportHostWidget::CameraConfig>& configs) const
+{
+    QJsonArray array;
+    for (const auto& config : configs)
+    {
+        QJsonObject obj;
+        obj[QStringLiteral("name")] = config.name;
+        obj[QStringLiteral("type")] = config.type == ViewportHostWidget::CameraConfig::Type::Free 
+            ? QStringLiteral("free") 
+            : QStringLiteral("follow");
+        obj[QStringLiteral("position")] = QJsonArray{config.position.x(), config.position.y(), config.position.z()};
+        obj[QStringLiteral("rotation")] = QJsonArray{config.rotation.x(), config.rotation.y(), config.rotation.z()};
+        obj[QStringLiteral("followTargetIndex")] = config.followTargetIndex;
+        obj[QStringLiteral("followDistance")] = config.followDistance;
+        obj[QStringLiteral("followYaw")] = config.followYaw;
+        obj[QStringLiteral("followPitch")] = config.followPitch;
+        obj[QStringLiteral("followSmoothSpeed")] = config.followSmoothSpeed;
+        obj[QStringLiteral("followTargetOffset")] = QJsonArray{
+            config.followTargetOffset.x(), 
+            config.followTargetOffset.y(), 
+            config.followTargetOffset.z()
+        };
+        array.push_back(obj);
+    }
+    return array;
+}
+
+QList<ViewportHostWidget::CameraConfig> MainWindowShell::cameraConfigsFromJson(const QJsonArray& configs) const
+{
+    auto readVector3D = [](const QJsonValue& value, const QVector3D& fallback)
+    {
+        const QJsonArray array = value.toArray();
+        if (array.size() != 3)
+            return fallback;
+        return QVector3D(
+            static_cast<float>(array.at(0).toDouble(fallback.x())),
+            static_cast<float>(array.at(1).toDouble(fallback.y())),
+            static_cast<float>(array.at(2).toDouble(fallback.z()))
+        );
+    };
+
+    QList<ViewportHostWidget::CameraConfig> result;
+    for (const QJsonValue& value : configs)
+    {
+        const QJsonObject obj = value.toObject();
+        ViewportHostWidget::CameraConfig config;
+        
+        config.name = obj.value(QStringLiteral("name")).toString(QStringLiteral("Camera"));
+        QString typeStr = obj.value(QStringLiteral("type")).toString(QStringLiteral("free"));
+        config.type = (typeStr == QStringLiteral("follow")) 
+            ? ViewportHostWidget::CameraConfig::Type::Follow 
+            : ViewportHostWidget::CameraConfig::Type::Free;
+        
+        config.position = readVector3D(obj.value(QStringLiteral("position")), QVector3D(0.0f, 0.0f, 3.0f));
+        config.rotation = readVector3D(obj.value(QStringLiteral("rotation")), QVector3D(0.0f, 0.0f, 0.0f));
+        config.followTargetIndex = obj.value(QStringLiteral("followTargetIndex")).toInt(-1);
+        config.followDistance = static_cast<float>(obj.value(QStringLiteral("followDistance")).toDouble(5.0));
+        config.followYaw = static_cast<float>(obj.value(QStringLiteral("followYaw")).toDouble(0.0));
+        config.followPitch = static_cast<float>(obj.value(QStringLiteral("followPitch")).toDouble(20.0));
+        config.followSmoothSpeed = static_cast<float>(obj.value(QStringLiteral("followSmoothSpeed")).toDouble(5.0));
+        config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
+        
+        result.push_back(config);
+    }
+    return result;
 }
 
 }  // namespace motive::ui

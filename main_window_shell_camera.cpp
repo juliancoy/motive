@@ -22,6 +22,16 @@ void MainWindowShell::setupCameraSettingsPanel()
     }
 
     auto* cameraPanel = new QWidget(m_rightTabs);
+    // Apply dark theme styling to match asset browser
+    cameraPanel->setStyleSheet(
+        QStringLiteral(
+            "QWidget { background: #10161d; color: #edf2f7; }"
+            "QLabel { color: #edf2f7; }"
+            "QComboBox, QDoubleSpinBox, QCheckBox, QPushButton { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 7px; padding: 4px 8px; }"
+            "QComboBox:hover, QDoubleSpinBox:hover, QPushButton:hover { background: #233142; }"
+            "QComboBox::drop-down { border-left: 1px solid #2e3b4a; }"
+            "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { background: #2e3b4a; border: 1px solid #3a4a5f; }"));
     auto* cameraLayout = new QFormLayout(cameraPanel);
 
     m_renderPathCombo = new QComboBox(cameraPanel);
@@ -47,7 +57,7 @@ void MainWindowShell::setupCameraSettingsPanel()
     m_validationLayersCheck = new QCheckBox(QStringLiteral("Enable Vulkan validation layers"), cameraPanel);
     m_validationLayersCheck->setChecked(true);
     m_validationRestartLabel = new QLabel(QStringLiteral("(restart required)"), cameraPanel);
-    m_validationRestartLabel->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
+    m_validationRestartLabel->setStyleSheet(QStringLiteral("color: #a0a0a0; font-size: 11px;"));
     m_validationRestartLabel->hide();
     auto* validationLayout = new QHBoxLayout();
     validationLayout->addWidget(m_validationLayersCheck);

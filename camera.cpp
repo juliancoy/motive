@@ -272,6 +272,16 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         if (key == GLFW_KEY_D)
             keysPressed[3] = (action != GLFW_RELEASE);
         
+        // Track directional keys for animation selection
+        if (key == GLFW_KEY_W)
+            characterTarget->character.keyW = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_A)
+            characterTarget->character.keyA = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_S)
+            characterTarget->character.keyS = (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_D)
+            characterTarget->character.keyD = (action != GLFW_RELEASE);
+        
         // Build input direction from currently pressed keys
         glm::vec3 inputDir(0.0f);
         float yaw = cameraRotation.x;
@@ -286,11 +296,11 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         // Set character input direction
         characterTarget->setCharacterInput(inputDir);
         
-        // Q/E for up/down (kept for camera vertical movement or jump/crouch)
-        if (key == GLFW_KEY_Q)
-            keysPressed[4] = (action != GLFW_RELEASE);
-        if (key == GLFW_KEY_E)
-            keysPressed[5] = (action != GLFW_RELEASE);
+        // Spacebar for jump
+        if (key == GLFW_KEY_SPACE && action == GLFW_PRESS && characterTarget->character.isGrounded)
+        {
+            characterTarget->character.jumpRequested = true;
+        }
             
         if (key == GLFW_KEY_R && action == GLFW_PRESS)
         {
@@ -486,14 +496,14 @@ void Camera::setCharacterTarget(Model* model)
     }
 }
 
-void Camera::setFollowTarget(Model* model, const FollowSettings& settings)
+void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
 {
-    followTarget = model;
+    followTargetIndex = sceneIndex;
     followSettings = settings;
     followInitialized = false;  // Reset interpolation on target change
     
-    if (model) {
-        std::cout << "[Camera] Follow target set: " << model << " (" << model->name << ")" << std::endl;
+    if (sceneIndex >= 0) {
+        std::cout << "[Camera] Follow target set: scene index " << sceneIndex << std::endl;
         std::cout << "[Camera] Follow settings: distance=" << settings.distance 
                   << ", yaw=" << settings.relativeYaw 
                   << ", pitch=" << settings.relativePitch 
@@ -508,14 +518,25 @@ void Camera::setFollowSettings(const FollowSettings& settings)
     followSettings = settings;
 }
 
-void Camera::updateFollow(float deltaTime)
+void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models)
 {
-    if (!followSettings.enabled || !followTarget) {
+    if (!followSettings.enabled || followTargetIndex < 0) {
+        return;
+    }
+    
+    // Look up the target model by index
+    if (followTargetIndex >= static_cast<int>(models.size()) || !models[followTargetIndex]) {
+        // Target model not available yet, skip this frame
+        return;
+    }
+    
+    Model* targetModel = models[followTargetIndex].get();
+    if (!targetModel) {
         return;
     }
     
     // Get target position (bounds center + optional offset)
-    glm::vec3 targetCenter = followTarget->boundsCenter + followSettings.targetOffset;
+    glm::vec3 targetCenter = targetModel->boundsCenter + followSettings.targetOffset;
     
     // Calculate desired camera position based on spherical coordinates
     float yaw = followSettings.relativeYaw;

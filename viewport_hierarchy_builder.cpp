@@ -4,6 +4,8 @@
 #include "viewport_runtime.h"
 #include "viewport_scene_controller.h"
 
+#include "camera.h"
+#include "display.h"
 #include "engine.h"
 #include "model.h"
 #include "object_transform.h"
@@ -57,7 +59,7 @@ QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
         break;
     }
 
-    return QJsonObject{
+    QJsonObject obj{
         {QStringLiteral("label"), node.label},
         {QStringLiteral("type"), typeString},
         {QStringLiteral("sceneIndex"), node.sceneIndex},
@@ -66,6 +68,13 @@ QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
         {QStringLiteral("clipName"), node.clipName},
         {QStringLiteral("children"), children}
     };
+    
+    // Include cameraIndex for camera nodes
+    if (node.type == ViewportHostWidget::HierarchyNode::Type::Camera && node.cameraIndex >= 0) {
+        obj.insert(QStringLiteral("cameraIndex"), node.cameraIndex);
+    }
+    
+    return obj;
 }
 
 }  // namespace
@@ -82,24 +91,64 @@ ViewportHierarchyBuilder::ViewportHierarchyBuilder(ViewportRuntime& runtime,
 QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItems() const
 {
     QList<ViewportHostWidget::HierarchyNode> items;
-    items.push_back(ViewportHostWidget::HierarchyNode{
-        QStringLiteral("Camera"),
-        ViewportHostWidget::HierarchyNode::Type::Camera,
-        detail::kHierarchyCameraIndex,
-        -1,
-        -1,
-        QString(),
-        {}
-    });
+    
+    // Add all cameras from display
+    if (m_runtime.display()) {
+        const auto& cameras = m_runtime.display()->cameras;
+        
+        for (size_t i = 0; i < cameras.size(); ++i) {
+            Camera* camera = cameras[i];
+            if (!camera) continue;
+            
+            QString label = QString::fromStdString(camera->getCameraName());
+            if (label.isEmpty()) {
+                label = (i == 0) ? QStringLiteral("Camera") : QStringLiteral("Camera %1").arg(i);
+            }
+            
+            // Check if this is a follow camera
+            if (camera->isFollowModeEnabled() && camera->getFollowTargetIndex() >= 0) {
+                int followSceneIndex = camera->getFollowSceneIndex();
+                if (followSceneIndex >= 0) {
+                    label += QStringLiteral(" → Scene %1").arg(followSceneIndex);
+                }
+            }
+            
+            items.push_back(ViewportHostWidget::HierarchyNode{
+                label,
+                ViewportHostWidget::HierarchyNode::Type::Camera,
+                detail::kHierarchyCameraIndex - static_cast<int>(i),  // sceneIndex: unique negative index for UI
+                -1,                                                   // meshIndex
+                static_cast<int>(i),                                  // cameraIndex: actual index in Display::cameras
+                -1,                                                   // primitiveIndex
+                QString(),                                            // clipName
+                {}                                                    // children
+            });
+        }
+    }
+    
+    // Ensure at least one camera entry exists if no display or no cameras
+    if (items.empty() || (items.size() > 0 && items[0].type != ViewportHostWidget::HierarchyNode::Type::Camera)) {
+        items.push_front(ViewportHostWidget::HierarchyNode{
+            QStringLiteral("Camera"),
+            ViewportHostWidget::HierarchyNode::Type::Camera,
+            detail::kHierarchyCameraIndex,  // sceneIndex
+            -1,                             // meshIndex
+            0,                              // cameraIndex: default to first camera
+            -1,                             // primitiveIndex
+            QString(),                      // clipName
+            {}                              // children
+        });
+    }
 
     if (m_sceneLight.exists)
     {
         items.push_back(ViewportHostWidget::HierarchyNode{
             QStringLiteral("Directional Light"),
             ViewportHostWidget::HierarchyNode::Type::Light,
-            detail::kHierarchyLightIndex,
-            -1,
-            -1,
+            -1,   // sceneIndex
+            -1,   // meshIndex
+            -1,   // cameraIndex
+            -1,   // primitiveIndex
             QString(),
             {}
         });

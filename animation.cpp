@@ -270,6 +270,9 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
             continue;
         }
 
+        // Build animated vertices for bounds computation (needed even with GPU skinning)
+        std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
+        
         if (primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
         {
             const ufbx_skin_deformer* skin = binding.skinDeformerIndex < evaluatedMesh->skin_deformers.count
@@ -292,12 +295,15 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
                     jointMatrices.push_back(invGeometryToWorld * toGlmMat4(cluster->geometry_to_world));
                 }
                 primitive->updateSkinningMatrices(jointMatrices);
+                // Still update CPU vertices for bounds computation, even with GPU skinning
+                if (!vertices.empty())
+                {
+                    primitive->cpuVertices = vertices;
+                }
                 updated = true;
                 continue;
             }
         }
-
-        std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
         if (vertices.empty())
         {
             continue;

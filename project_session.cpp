@@ -73,6 +73,11 @@ QJsonArray ProjectSession::currentSceneItems() const
     return m_currentSceneItems;
 }
 
+QJsonArray ProjectSession::currentCameraConfigs() const
+{
+    return m_currentCameraConfigs;
+}
+
 QVector3D ProjectSession::currentCameraPosition() const
 {
     return m_currentCameraPosition;
@@ -248,6 +253,11 @@ void ProjectSession::setCurrentSceneItems(const QJsonArray& items)
     m_currentSceneItems = items;
 }
 
+void ProjectSession::setCurrentCameraConfigs(const QJsonArray& configs)
+{
+    m_currentCameraConfigs = configs;
+}
+
 void ProjectSession::setCurrentCameraPosition(const QVector3D& position)
 {
     m_currentCameraPosition = position;
@@ -382,6 +392,7 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("selectedAssetPath"), m_currentSelectedAssetPath},
         {QStringLiteral("viewportAssetPath"), m_currentViewportAssetPath},
         {QStringLiteral("sceneItems"), m_currentSceneItems},
+        {QStringLiteral("cameraConfigs"), m_currentCameraConfigs},
         {QStringLiteral("cameraPosition"), QJsonArray{m_currentCameraPosition.x(), m_currentCameraPosition.y(), m_currentCameraPosition.z()}},
         {QStringLiteral("cameraRotation"), QJsonArray{m_currentCameraRotation.x(), m_currentCameraRotation.y(), m_currentCameraRotation.z()}},
         {QStringLiteral("cameraSpeed"), m_currentCameraSpeed},
@@ -437,6 +448,7 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     appendSetIfChanged(QStringLiteral("selectedAssetPath"), m_currentSelectedAssetPath);
     appendSetIfChanged(QStringLiteral("viewportAssetPath"), m_currentViewportAssetPath);
     appendSetIfChanged(QStringLiteral("sceneItems"), m_currentSceneItems);
+    appendSetIfChanged(QStringLiteral("cameraConfigs"), m_currentCameraConfigs);
     appendSetIfChanged(QStringLiteral("cameraPosition"), QJsonArray{m_currentCameraPosition.x(), m_currentCameraPosition.y(), m_currentCameraPosition.z()});
     appendSetIfChanged(QStringLiteral("cameraRotation"), QJsonArray{m_currentCameraRotation.x(), m_currentCameraRotation.y(), m_currentCameraRotation.z()});
     appendSetIfChanged(QStringLiteral("cameraSpeed"), m_currentCameraSpeed);
@@ -486,6 +498,7 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("viewportAssetPath"), root.value(QStringLiteral("viewportAssetPath")).toString()},
         {QStringLiteral("sceneItems"), root.value(QStringLiteral("sceneItems")).toArray()},
         {QStringLiteral("sceneAssetPaths"), root.value(QStringLiteral("sceneAssetPaths")).toArray()},
+        {QStringLiteral("cameraConfigs"), root.value(QStringLiteral("cameraConfigs")).toArray()},
         {QStringLiteral("cameraPosition"), QJsonArray{0.0, 0.0, 3.0}},
         {QStringLiteral("cameraRotation"), QJsonArray{0.0, 0.0, 0.0}},
         {QStringLiteral("renderPath"), root.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"))},
@@ -514,6 +527,7 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     m_currentSelectedAssetPath = state.value(QStringLiteral("selectedAssetPath")).toString();
     m_currentViewportAssetPath = state.value(QStringLiteral("viewportAssetPath")).toString();
     m_currentSceneItems = state.value(QStringLiteral("sceneItems")).toArray();
+    m_currentCameraConfigs = state.value(QStringLiteral("cameraConfigs")).toArray();
 
     // Load camera position
     const QJsonArray cameraPosArray = state.value(QStringLiteral("cameraPosition")).toArray();

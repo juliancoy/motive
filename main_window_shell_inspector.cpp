@@ -35,6 +35,52 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         if (m_lightBrightnessSpin) m_lightBrightnessSpin->setVisible(visible);
         if (m_lightColorWidget && m_lightColorWidget->parentWidget()) m_lightColorWidget->parentWidget()->setVisible(visible);
     };
+    const auto setFollowTargetInspectorVisible = [this](bool visible, int currentTargetIndex = -1)
+    {
+        if (m_followTargetCombo) {
+            m_followTargetCombo->setVisible(visible);
+            if (visible) {
+                // Repopulate the combo box with current scene items
+                m_followTargetCombo->blockSignals(true);
+                m_followTargetCombo->clear();
+                m_followTargetCombo->addItem(QStringLiteral("None (Free Camera)"), -1);
+                for (int i = 0; i < m_sceneItems.size(); ++i) {
+                    m_followTargetCombo->addItem(m_sceneItems[i].name, i);
+                }
+                // Select the current target
+                int index = m_followTargetCombo->findData(currentTargetIndex);
+                if (index >= 0) {
+                    m_followTargetCombo->setCurrentIndex(index);
+                }
+                m_followTargetCombo->blockSignals(false);
+            }
+        }
+        if (m_followTargetLabel) m_followTargetLabel->setVisible(visible);
+    };
+    const auto setFollowParamsVisible = [this](bool visible)
+    {
+        if (m_followParamsLabel) m_followParamsLabel->setVisible(visible);
+        if (m_followDistanceSpin) m_followDistanceSpin->setVisible(visible);
+        if (m_followYawSpin) m_followYawSpin->setVisible(visible);
+        if (m_followPitchSpin) m_followPitchSpin->setVisible(visible);
+        if (m_followSmoothSpin) m_followSmoothSpin->setVisible(visible);
+    };
+    const auto setTransformInspectorVisible = [this](bool visible)
+    {
+        // Find the label widget parent to hide the entire row
+        if (m_inspectorTranslationX && m_inspectorTranslationX->parentWidget()) {
+            QWidget* parent = m_inspectorTranslationX->parentWidget()->parentWidget();
+            if (parent) parent->setVisible(visible);
+        }
+        if (m_inspectorRotationX && m_inspectorRotationX->parentWidget()) {
+            QWidget* parent = m_inspectorRotationX->parentWidget()->parentWidget();
+            if (parent) parent->setVisible(visible);
+        }
+        if (m_inspectorScaleX && m_inspectorScaleX->parentWidget()) {
+            QWidget* parent = m_inspectorScaleX->parentWidget()->parentWidget();
+            if (parent) parent->setVisible(visible);
+        }
+    };
     const auto setPrimitiveInspectorVisible = [this](bool visible, const QString& cullMode = QStringLiteral("back"))
     {
         if (m_primitiveCullModeCombo)
@@ -129,19 +175,86 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
 
     if (!valid)
     {
-        if (row == MainWindowShell::kHierarchyCameraIndex && m_viewportHost)
+        // Handle Camera and Follow Camera entries (any row <= kHierarchyCameraIndex)
+        if (row <= MainWindowShell::kHierarchyCameraIndex && m_viewportHost)
         {
-            setValue(m_inspectorNameValue, QStringLiteral("Camera"));
-            setValue(m_inspectorPathValue, QStringLiteral("Viewport Camera"));
+            QTreeWidgetItem* currentItem = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
+            int cameraIndex = currentItem ? currentItem->data(0, Qt::UserRole + 5).toInt() : 0;
+            
+            // Get camera config to determine type
+            auto configs = m_viewportHost->cameraConfigs();
+            bool isFollowCamera = false;
+            int followTargetIndex = -1;
+            float followDistance = 5.0f;
+            float followYaw = 0.0f;
+            float followPitch = 20.0f;
+            float followSmooth = 5.0f;
+            
+            if (cameraIndex >= 0 && cameraIndex < configs.size()) {
+                isFollowCamera = configs[cameraIndex].isFollowCamera();
+                followTargetIndex = configs[cameraIndex].followTargetIndex;
+                followDistance = configs[cameraIndex].followDistance;
+                followYaw = configs[cameraIndex].followYaw;
+                followPitch = configs[cameraIndex].followPitch;
+                followSmooth = configs[cameraIndex].followSmoothSpeed;
+            }
+            
+            QString cameraName = QStringLiteral("Camera");
+            QString cameraPath = QStringLiteral("Viewport Camera");
+            
+            if (isFollowCamera) {
+                cameraName = QStringLiteral("Follow Cam (Scene %1)").arg(followTargetIndex);
+                cameraPath = QStringLiteral("Follow Camera");
+            }
+            
+            setValue(m_inspectorNameValue, cameraName);
+            setValue(m_inspectorPathValue, cameraPath);
             setValue(m_animationModeValue, QStringLiteral("Static"));
-            QVector3D pos = m_viewportHost->cameraPosition();
-            QVector3D rot = m_viewportHost->cameraRotation();
-            if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(pos.x());
-            if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(pos.y());
-            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(pos.z());
-            if (m_inspectorRotationX) m_inspectorRotationX->setValue(rot.x());
-            if (m_inspectorRotationY) m_inspectorRotationY->setValue(rot.y());
-            if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(rot.z());
+            
+            // For free cameras: show transform, hide follow params
+            // For follow cameras: show follow params, disable transform
+            if (isFollowCamera) {
+                // Show follow params with current values
+                setFollowParamsVisible(true);
+                if (m_followDistanceSpin) m_followDistanceSpin->setValue(followDistance);
+                if (m_followYawSpin) m_followYawSpin->setValue(followYaw);
+                if (m_followPitchSpin) m_followPitchSpin->setValue(followPitch);
+                if (m_followSmoothSpin) m_followSmoothSpin->setValue(followSmooth);
+                
+                // Disable transform for follow cameras (they're computed)
+                if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(false);
+                if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(false);
+                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(false);
+                if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(false);
+                if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(false);
+                if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(false);
+                if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
+                if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
+                if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
+            } else {
+                // Free camera: hide follow params, enable transform
+                setFollowParamsVisible(false);
+                
+                if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(true);
+                if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(true);
+                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(true);
+                if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(true);
+                if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(true);
+                if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(true);
+                if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(true);
+                if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(true);
+                if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(true);
+                
+                QVector3D pos = m_viewportHost->cameraPosition();
+                QVector3D rot = m_viewportHost->cameraRotation();
+                if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(pos.x());
+                if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(pos.y());
+                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(pos.z());
+                if (m_inspectorRotationX) m_inspectorRotationX->setValue(rot.x());
+                if (m_inspectorRotationY) m_inspectorRotationY->setValue(rot.y());
+                if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(rot.z());
+            }
+            
             if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
             if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
             if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
@@ -152,6 +265,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setLightInspectorVisible(false);
             setAnimationInspector(false);
             setTexturePreview(QImage());
+            
+            // Show follow target selector for all cameras
+            setFollowTargetInspectorVisible(true, followTargetIndex);
+            
             m_updatingInspector = false;
             return;
         }
@@ -174,6 +291,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(true);
+            setFollowTargetInspectorVisible(false);
             setAnimationInspector(false);
             if (m_viewportHost)
             {
@@ -194,6 +312,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             m_updatingInspector = false;
             return;
         }
+        setFollowTargetInspectorVisible(false);
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
@@ -254,6 +373,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                                            : QStringLiteral("Set Alpha 1"));
     }
     setLightInspectorVisible(false);
+    setFollowTargetInspectorVisible(false);
     QStringList animationClips = m_viewportHost ? m_viewportHost->animationClipNames(row) : QStringList{};
     QString selectedClip = clipName;
     if (selectedClip.isEmpty())

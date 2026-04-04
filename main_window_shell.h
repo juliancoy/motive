@@ -16,6 +16,7 @@
 #include <QDoubleSpinBox>
 #include <QStringList>
 #include <QSplitter>
+#include <QUndoStack>
 
 namespace motive::ui {
 
@@ -57,6 +58,8 @@ private:
     void applyCameraSettings();
     QJsonArray sceneItemsToJson(const QList<ViewportHostWidget::SceneItem>& items) const;
     QList<ViewportHostWidget::SceneItem> sceneItemsFromJson(const QJsonArray& items) const;
+    QJsonArray cameraConfigsToJson(const QList<ViewportHostWidget::CameraConfig>& configs) const;
+    QList<ViewportHostWidget::CameraConfig> cameraConfigsFromJson(const QJsonArray& configs) const;
     QString vectorText(const QVector3D& value) const;
     QDoubleSpinBox* createSpinBox(QWidget* parent, double min, double max, double step);
 
@@ -94,6 +97,17 @@ private:
     QDoubleSpinBox* m_inspectorScaleY = nullptr;
     QDoubleSpinBox* m_inspectorScaleZ = nullptr;
 
+    // Camera follow target selector
+    QComboBox* m_followTargetCombo = nullptr;
+    QLabel* m_followTargetLabel = nullptr;
+    
+    // Follow camera specific controls
+    QDoubleSpinBox* m_followDistanceSpin = nullptr;
+    QDoubleSpinBox* m_followYawSpin = nullptr;
+    QDoubleSpinBox* m_followPitchSpin = nullptr;
+    QDoubleSpinBox* m_followSmoothSpin = nullptr;
+    QLabel* m_followParamsLabel = nullptr;
+
     QDoubleSpinBox* m_cameraSpeedSpin = nullptr;
     QComboBox* m_renderPathCombo = nullptr;
     QCheckBox* m_meshConsolidationCheck = nullptr;
@@ -109,6 +123,21 @@ private:
     bool m_savingUiState = false;
     bool m_updatingInspector = false;
     bool m_updatingCameraSettings = false;
+    
+    // Undo stack for scene operations
+    QUndoStack* m_undoStack = nullptr;
+    
+    // Helper to push transform changes to undo stack
+    void pushTransformCommand(
+        int sceneIndex,
+        const QVector3D& oldTranslation,
+        const QVector3D& oldRotation,
+        const QVector3D& oldScale,
+        const QVector3D& newTranslation,
+        const QVector3D& newRotation,
+        const QVector3D& newScale);
+    
+    void setupUndoShortcuts();
 };
 
 }  // namespace motive::ui

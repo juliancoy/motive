@@ -21,6 +21,7 @@ public:
     QString currentSelectedAssetPath() const;
     QString currentViewportAssetPath() const;
     QJsonArray currentSceneItems() const;
+    QJsonArray currentCameraConfigs() const;
     QVector3D currentCameraPosition() const;
     QVector3D currentCameraRotation() const;
     float currentCameraSpeed() const;
@@ -46,6 +47,7 @@ public:
     void setCurrentSelectedAssetPath(const QString& path);
     void setCurrentViewportAssetPath(const QString& path);
     void setCurrentSceneItems(const QJsonArray& items);
+    void setCurrentCameraConfigs(const QJsonArray& configs);
     void setCurrentCameraPosition(const QVector3D& position);
     void setCurrentCameraRotation(const QVector3D& rotation);
     void setCurrentCameraSpeed(float speed);
@@ -71,6 +73,7 @@ private:
     QString m_currentSelectedAssetPath;
     QString m_currentViewportAssetPath;
     QJsonArray m_currentSceneItems;
+    QJsonArray m_currentCameraConfigs;
     QVector3D m_currentCameraPosition;
     QVector3D m_currentCameraRotation;
     float m_currentCameraSpeed = 0.01f;

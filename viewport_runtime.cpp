@@ -118,7 +118,17 @@ Display* ViewportRuntime::display() const
 
 Camera* ViewportRuntime::camera() const
 {
+    // Return the active camera (first in display's camera list)
+    // This allows follow cameras to be the active camera when switched
+    if (m_display && !m_display->cameras.empty()) {
+        return m_display->cameras[0];
+    }
     return m_camera;
+}
+
+void ViewportRuntime::setCamera(Camera* camera)
+{
+    m_camera = camera;
 }
 
 bool ViewportRuntime::isInitialized() const
@@ -128,9 +138,10 @@ bool ViewportRuntime::isInitialized() const
 
 void ViewportRuntime::clearInputState()
 {
-    if (m_camera)
+    Camera* cam = camera();  // Use the active camera, not m_camera directly
+    if (cam)
     {
-        m_camera->clearInputState();
+        cam->clearInputState();
     }
 }
 

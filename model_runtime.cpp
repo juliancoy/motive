@@ -205,18 +205,115 @@ void Model::setAnimationPlaybackState(const std::string& clipName, bool playing,
     }
 }
 
+void Model::setCharacterAnimationNames(
+    const std::string& idle,
+    const std::string& walkForward,
+    const std::string& walkBackward,
+    const std::string& walkLeft,
+    const std::string& walkRight,
+    const std::string& run,
+    const std::string& jump)
+{
+    if (!idle.empty()) character.animIdle = idle;
+    if (!walkForward.empty()) character.animWalkForward = walkForward;
+    if (!walkBackward.empty()) character.animWalkBackward = walkBackward;
+    if (!walkLeft.empty()) character.animWalkLeft = walkLeft;
+    if (!walkRight.empty()) character.animWalkRight = walkRight;
+    if (!run.empty()) character.animRun = run;
+    if (!jump.empty()) character.animJump = jump;
+}
+
 void Model::updateAnimation(double deltaSeconds)
 {
     if (!visible || !animated)
     {
         return;
     }
+    
+    // Handle procedural idle animation
+    if (character.isControllable && character.isUsingProceduralAnim && 
+        character.currentAnimState == CharacterController::AnimState::Idle)
+    {
+        applyProceduralIdleAnimation(deltaSeconds);
+        return;
+    }
+    
     if (fbxAnimationRuntime && engine)
     {
-        // NOTE: vkQueueWaitIdle removed - it was causing severe performance degradation
-        // by blocking the CPU every frame. The animation update should not need to wait
-        // for the GPU to be idle. If synchronization is needed, use fences or semaphores.
-        motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+        // Apply mirroring if needed (by scaling root transform X by -1)
+        if (character.isControllable && character.isUsingMirroredAnim)
+        {
+            // Store current speed
+            float originalSpeed = fbxAnimationRuntime->speed;
+            
+            // Update animation
+            motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+            
+            // Apply mirroring to root transform
+            // This effectively mirrors the animation along the Z axis
+            for (auto& mesh : meshes)
+            {
+                for (auto& primitive : mesh.primitives)
+                {
+                    if (primitive)
+                    {
+                        // Mirror the X component of translation to flip left/right
+                        // This makes forward walk look like backward walk
+                        glm::mat4& transform = primitive->transform;
+                        transform[3][0] = -transform[3][0];  // Negate X translation
+                        transform[3][2] = -transform[3][2];  // Negate Z translation (for backward)
+                    }
+                }
+            }
+            
+            // Restore speed
+            fbxAnimationRuntime->speed = originalSpeed;
+        }
+        else
+        {
+            // Normal animation update
+            motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+        }
+    }
+}
+
+void Model::applyProceduralIdleAnimation(double deltaSeconds)
+{
+    // Generate procedural idle animation using sine waves for breathing/swaying
+    static double timeAccumulator = 0.0;
+    timeAccumulator += deltaSeconds;
+    
+    // Breathing - vertical chest movement
+    float bobOffset = sin(timeAccumulator * character.idleBobFrequency * 2.0 * M_PI) * 
+                      character.idleBobAmplitude;
+    
+    // Swaying - slight horizontal rotation
+    float swayOffset = sin(timeAccumulator * character.idleSwayFrequency * 2.0 * M_PI) * 
+                       character.idleSwayAmplitude;
+    
+    // Apply to all primitives (affects the whole character)
+    for (auto& mesh : meshes)
+    {
+        for (auto& primitive : mesh.primitives)
+        {
+            if (primitive && primitive->ObjectTransformUBOMapped)
+            {
+                // Get current transform
+                glm::mat4 baseTransform = primitive->transform;
+                
+                // Apply breathing (vertical offset)
+                baseTransform[3][1] += bobOffset;
+                
+                // Apply swaying (subtle rotation around Y axis)
+                glm::mat4 swayRotation = glm::rotate(glm::mat4(1.0f), swayOffset, glm::vec3(0.0f, 1.0f, 0.0f));
+                baseTransform = swayRotation * baseTransform;
+                
+                // Update the UBO
+                ObjectTransform ubo{};
+                ubo.model = baseTransform;
+                memcpy(primitive->ObjectTransformUBOMapped, &ubo, sizeof(ubo));
+            }
+        }
     }
 }
 
@@ -344,6 +441,15 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     character.velocity.x = glm::mix(character.velocity.x, targetVelocity.x, glm::min(accel * dt, 1.0f));
     character.velocity.z = glm::mix(character.velocity.z, targetVelocity.z, glm::min(accel * dt, 1.0f));
     
+    // Handle jump request
+    if (character.jumpRequested && character.isGrounded)
+    {
+        character.velocity.y = character.jumpSpeed;
+        character.isGrounded = false;
+        character.jumpRequested = false;
+        character.currentAnimState = CharacterController::AnimState::Jump;
+    }
+    
     // Apply gravity
     character.velocity.y += character.gravity * dt;
     
@@ -367,18 +473,34 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     worldTransform[3] = glm::vec4(currentPos, 1.0f);
     applyTransformToPrimitives(worldTransform);
     
-    // Update animation state based on speed
+    // Update animation state based on directional keys and speed
     const float horizontalSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
     
-    // Determine target animation state
+    // Determine target animation state with directional awareness
     CharacterController::AnimState targetState;
-    if (horizontalSpeed < character.walkSpeedThreshold)
+    
+    // Jump animation takes priority when not grounded
+    if (!character.isGrounded)
+    {
+        targetState = CharacterController::AnimState::Jump;
+    }
+    else if (horizontalSpeed < character.walkSpeedThreshold)
     {
         targetState = CharacterController::AnimState::Idle;
     }
     else if (horizontalSpeed < character.runSpeedThreshold)
     {
-        targetState = CharacterController::AnimState::Walk;
+        // Select directional walk animation based on which keys are pressed
+        if (character.keyW && !character.keyS)
+            targetState = CharacterController::AnimState::WalkForward;
+        else if (character.keyS && !character.keyW)
+            targetState = CharacterController::AnimState::WalkBackward;
+        else if (character.keyA && !character.keyD)
+            targetState = CharacterController::AnimState::WalkLeft;
+        else if (character.keyD && !character.keyA)
+            targetState = CharacterController::AnimState::WalkRight;
+        else
+            targetState = CharacterController::AnimState::WalkForward;  // Default
     }
     else
     {
@@ -392,11 +514,17 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         case CharacterController::AnimState::Idle:
             targetWeight = 0.0f;
             break;
-        case CharacterController::AnimState::Walk:
+        case CharacterController::AnimState::WalkForward:
+        case CharacterController::AnimState::WalkBackward:
+        case CharacterController::AnimState::WalkLeft:
+        case CharacterController::AnimState::WalkRight:
             targetWeight = 0.5f;
             break;
         case CharacterController::AnimState::Run:
             targetWeight = 1.0f;
+            break;
+        case CharacterController::AnimState::Jump:
+            targetWeight = 0.5f;
             break;
     }
     
@@ -409,45 +537,183 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     if (animated && !animationClips.empty())
     {
         std::string targetClip;
+        
+        // Helper to find clip by substring
+        auto findClip = [&](const std::vector<std::string>& searchTerms) -> std::string {
+            for (const auto& term : searchTerms)
+            {
+                if (term.empty()) continue;
+                for (size_t i = 0; i < animationClips.size(); ++i)
+                {
+                    const auto& name = animationClips[i].name;
+                    if (name.find(term) != std::string::npos)
+                        return name;
+                }
+            }
+            return "";
+        };
+        
         switch (targetState)
         {
             case CharacterController::AnimState::Idle:
-                // Try to find idle clip
-                for (size_t i = 0; i < animationClips.size(); ++i)
-                {
-                    const auto& name = animationClips[i].name;
-                    if (name.find("idle") != std::string::npos || 
-                        name.find("Idle") != std::string::npos ||
-                        name.find("IDLE") != std::string::npos)
-                    {
-                        targetClip = name;
-                        break;
-                    }
-                }
+                // Standard: idle, idle_standing, idle_loop
+                targetClip = findClip({
+                    character.animIdle,
+                    "idle_loop", "idle_standing", "idle_stand",
+                    "Idle", "IDLE", "idle"
+                });
                 break;
-            case CharacterController::AnimState::Walk:
+                
+            case CharacterController::AnimState::WalkForward:
+                // Standard: walk_forward, walk_fwd, walking, walk
+                targetClip = findClip({
+                    character.animWalkForward,
+                    "walk_fwd", "walk_forward", "walk_loop",
+                    "Walking", "WALKING", "walking", "Walk", "walk"
+                });
+                break;
+                
+            case CharacterController::AnimState::WalkBackward:
+                // Standard: walk_backward, walk_back, walk_bwd
+                targetClip = findClip({
+                    character.animWalkBackward,
+                    "walk_bwd", "walk_back", "walk_backward",
+                    "backward", "Backward", "BACKWARD"
+                });
+                // Fallback to forward walk (will be played in reverse if supported)
+                if (targetClip.empty())
+                    targetClip = findClip({
+                        character.animWalkForward,
+                        "walk_fwd", "walk_forward",
+                        "Walking", "walking", "Walk", "walk"
+                    });
+                break;
+                
+            case CharacterController::AnimState::WalkLeft:
+                // Standard: walk_left, strafe_left
+                targetClip = findClip({
+                    character.animWalkLeft,
+                    "strafe_left", "walk_left", "walk_l",
+                    "left", "Left", "LEFT"
+                });
+                // Fallback to forward walk
+                if (targetClip.empty())
+                    targetClip = findClip({
+                        character.animWalkForward,
+                        "walk_fwd", "walk_forward",
+                        "Walking", "walking", "Walk", "walk"
+                    });
+                break;
+                
+            case CharacterController::AnimState::WalkRight:
+                // Standard: walk_right, strafe_right
+                targetClip = findClip({
+                    character.animWalkRight,
+                    "strafe_right", "walk_right", "walk_r",
+                    "right", "Right", "RIGHT"
+                });
+                // Fallback to forward walk
+                if (targetClip.empty())
+                    targetClip = findClip({
+                        character.animWalkForward,
+                        "walk_fwd", "walk_forward",
+                        "Walking", "walking", "Walk", "walk"
+                    });
+                break;
+                
             case CharacterController::AnimState::Run:
-                // Try to find walk/movement clip
-                for (size_t i = 0; i < animationClips.size(); ++i)
-                {
-                    const auto& name = animationClips[i].name;
-                    if (name.find("walk") != std::string::npos || 
-                        name.find("Walk") != std::string::npos ||
-                        name.find("WALK") != std::string::npos ||
-                        name.find("move") != std::string::npos ||
-                        name.find("Move") != std::string::npos)
-                    {
-                        targetClip = name;
-                        break;
-                    }
-                }
-                // Fall back to first clip if no walk found
-                if (targetClip.empty() && !animationClips.empty())
-                {
-                    targetClip = animationClips[0].name;
-                }
+                // Standard: run, run_forward, run_fwd, sprint
+                targetClip = findClip({
+                    character.animRun,
+                    "run_forward", "run_fwd", "run_loop", "run",
+                    "sprint", "Sprint", "SPRINT",
+                    "Running", "RUNNING", "running", "Run", "RUN"
+                });
+                // Fallback to walk if no run animation
+                if (targetClip.empty())
+                    targetClip = findClip({
+                        character.animWalkForward,
+                        "walk_fwd", "walk_forward",
+                        "Walking", "walking", "Walk", "walk"
+                    });
+                break;
+                
+            case CharacterController::AnimState::Jump:
+                // Standard: jump, jump_up, jump_start, jumping
+                targetClip = findClip({
+                    character.animJump,
+                    "jump_start", "jump_up", "jump_loop", "jump",
+                    "Jumping", "JUMPING", "jumping", "Jump", "JUMP"
+                });
+                // Fallback to idle
+                if (targetClip.empty())
+                    targetClip = findClip({
+                        character.animIdle,
+                        "idle_loop", "idle", "Idle"
+                    });
                 break;
         }
+        
+        // Final fallback to first clip if nothing found
+        if (targetClip.empty() && !animationClips.empty())
+        {
+            targetClip = animationClips[0].name;
+        }
+        
+        // Determine animation speed based on state (time-warping)
+        float targetSpeed = 1.0f;
+        bool useMirroring = false;
+        bool useProcedural = false;
+        
+        switch (targetState)
+        {
+            case CharacterController::AnimState::Idle:
+                targetSpeed = character.enableTimeWarp ? character.idleAnimSpeed : 1.0f;
+                // Check if we have an idle clip, otherwise use procedural
+                if (targetClip.empty() && character.enableProceduralIdle)
+                {
+                    useProcedural = true;
+                }
+                break;
+                
+            case CharacterController::AnimState::WalkForward:
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
+                break;
+                
+            case CharacterController::AnimState::WalkBackward:
+                targetSpeed = character.enableTimeWarp ? character.backwardAnimSpeed : 1.0f;
+                // If we're using forward walk for backward, enable mirroring
+                if (character.enableAnimationMirroring && 
+                    targetClip.find("forward") != std::string::npos)
+                {
+                    useMirroring = true;
+                }
+                break;
+                
+            case CharacterController::AnimState::WalkLeft:
+            case CharacterController::AnimState::WalkRight:
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
+                // Enable mirroring if we're using forward walk for strafing
+                if (character.enableAnimationMirroring && 
+                    targetClip.find("forward") != std::string::npos)
+                {
+                    useMirroring = true;
+                }
+                break;
+                
+            case CharacterController::AnimState::Run:
+                targetSpeed = character.enableTimeWarp ? character.runAnimSpeed : 1.0f;
+                break;
+                
+            case CharacterController::AnimState::Jump:
+                targetSpeed = character.enableTimeWarp ? character.jumpAnimSpeed : 1.0f;
+                break;
+        }
+        
+        // Update animation playback state
+        character.currentAnimSpeed = targetSpeed;
+        character.isUsingMirroredAnim = useMirroring;
+        character.isUsingProceduralAnim = useProcedural;
         
         // Switch animation if needed (only on state change)
         if (!targetClip.empty() && fbxAnimationRuntime)
@@ -463,11 +729,25 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                     needSwitch = true;
                 }
             }
+            else
+            {
+                needSwitch = true;  // No active clip yet
+            }
             
             if (needSwitch)
             {
-                setAnimationPlaybackState(targetClip, true, true, 1.0f);
+                setAnimationPlaybackState(targetClip, true, true, targetSpeed);
             }
+            else
+            {
+                // Just update speed if same clip
+                fbxAnimationRuntime->speed = targetSpeed;
+            }
+        }
+        else if (useProcedural)
+        {
+            // Procedural idle - handled in updateAnimation
+            fbxAnimationRuntime->playing = false;
         }
     }
 }

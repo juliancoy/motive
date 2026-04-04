@@ -43,6 +43,14 @@ void MainWindowShell::restoreSessionState()
             qDebug() << "[MainWindowShell] Restoring saved scene"
                      << m_projectSession.currentSceneItems().size();
             m_viewportHost->loadSceneFromItems(sceneItemsFromJson(m_projectSession.currentSceneItems()));
+            
+            // Restore camera configs after scene is loaded
+            if (!m_projectSession.currentCameraConfigs().isEmpty())
+            {
+                qDebug() << "[MainWindowShell] Restoring camera configs"
+                         << m_projectSession.currentCameraConfigs().size();
+                m_viewportHost->setCameraConfigs(cameraConfigsFromJson(m_projectSession.currentCameraConfigs()));
+            }
         }
         else
         {
@@ -224,6 +232,8 @@ void MainWindowShell::saveProjectState()
     m_projectSession.setCurrentViewportAssetPath(m_viewportHost ? m_viewportHost->currentAssetPath() : QString());
     m_projectSession.setCurrentSceneItems(sceneItemsToJson(
         m_viewportHost ? m_viewportHost->sceneItems() : QList<ViewportHostWidget::SceneItem>{}));
+    m_projectSession.setCurrentCameraConfigs(cameraConfigsToJson(
+        m_viewportHost ? m_viewportHost->cameraConfigs() : QList<ViewportHostWidget::CameraConfig>{}));
     m_projectSession.setCurrentCameraPosition(m_viewportHost ? m_viewportHost->cameraPosition() : QVector3D(0.0f, 0.0f, 3.0f));
     m_projectSession.setCurrentCameraRotation(m_viewportHost ? m_viewportHost->cameraRotation() : QVector3D(0.0f, 0.0f, 0.0f));
     m_projectSession.setCurrentCameraSpeed(m_viewportHost ? m_viewportHost->cameraSpeed() : 0.01f);

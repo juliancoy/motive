@@ -208,7 +208,167 @@ int runMotiveEditorApp(int argc, char** argv)
                     result.insert(QStringLiteral("freeFly"), enabled);
                 }
                 
+                // List all cameras
+                if (body.value(QStringLiteral("list")).toBool(false))
+                {
+                    QJsonArray cameras;
+                    const auto configs = viewport->cameraConfigs();
+                    for (int i = 0; i < configs.size(); ++i)
+                    {
+                        QJsonObject cam;
+                        cam.insert(QStringLiteral("index"), i);
+                        cam.insert(QStringLiteral("name"), configs[i].name);
+                        cam.insert(QStringLiteral("type"), configs[i].isFollowCamera() ? QStringLiteral("follow") : QStringLiteral("free"));
+                        cam.insert(QStringLiteral("followTargetIndex"), configs[i].followTargetIndex);
+                        cam.insert(QStringLiteral("position"), QJsonArray{configs[i].position.x(), configs[i].position.y(), configs[i].position.z()});
+                        cameras.append(cam);
+                    }
+                    result.insert(QStringLiteral("cameras"), cameras);
+                    result.insert(QStringLiteral("count"), configs.size());
+                }
+                
+                // Create follow camera
+                if (body.contains(QStringLiteral("createFollow")))
+                {
+                    const int sceneIndex = body.value(QStringLiteral("createFollow")).toInt(-1);
+                    const float distance = body.value(QStringLiteral("distance")).toDouble(5.0);
+                    const float yaw = body.value(QStringLiteral("yaw")).toDouble(0.0);
+                    const float pitch = body.value(QStringLiteral("pitch")).toDouble(20.0);
+                    const int camIndex = viewport->createFollowCamera(sceneIndex, distance, yaw, pitch);
+                    result.insert(QStringLiteral("created"), camIndex >= 0);
+                    result.insert(QStringLiteral("cameraIndex"), camIndex);
+                    result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                }
+                
+                // Set active camera
+                if (body.contains(QStringLiteral("setActive")))
+                {
+                    const int cameraIndex = body.value(QStringLiteral("setActive")).toInt(-1);
+                    viewport->setActiveCamera(cameraIndex);
+                    result.insert(QStringLiteral("activeCamera"), cameraIndex);
+                }
+                
+                // Update camera config (e.g., change follow target)
+                if (body.contains(QStringLiteral("updateCamera")))
+                {
+                    const int cameraIndex = body.value(QStringLiteral("updateCamera")).toInt(-1);
+                    if (cameraIndex >= 0)
+                    {
+                        auto configs = viewport->cameraConfigs();
+                        if (cameraIndex < configs.size())
+                        {
+                            auto& config = configs[cameraIndex];
+                            
+                            // Update follow target
+                            if (body.contains(QStringLiteral("followTargetIndex")))
+                            {
+                                config.followTargetIndex = body.value(QStringLiteral("followTargetIndex")).toInt(-1);
+                                config.type = (config.followTargetIndex >= 0) 
+                                    ? ViewportHostWidget::CameraConfig::Type::Follow 
+                                    : ViewportHostWidget::CameraConfig::Type::Free;
+                            }
+                            
+                            // Update follow distance
+                            if (body.contains(QStringLiteral("distance")))
+                            {
+                                config.followDistance = body.value(QStringLiteral("distance")).toDouble(5.0);
+                            }
+                            
+                            // Update follow angles
+                            if (body.contains(QStringLiteral("yaw")))
+                            {
+                                config.followYaw = body.value(QStringLiteral("yaw")).toDouble(0.0);
+                            }
+                            if (body.contains(QStringLiteral("pitch")))
+                            {
+                                config.followPitch = body.value(QStringLiteral("pitch")).toDouble(20.0);
+                            }
+                            
+                            viewport->updateCameraConfig(cameraIndex, config);
+                            result.insert(QStringLiteral("updated"), true);
+                            result.insert(QStringLiteral("cameraIndex"), cameraIndex);
+                        }
+                    }
+                }
+                
                 result.insert(QStringLiteral("freeFly"), viewport->isFreeFlyCameraEnabled());
+                return true;
+            }
+
+            if (command == QStringLiteral("rebuild"))
+            {
+                // Rebuild the viewport/hierarchy
+                // This refreshes the hierarchy and triggers any pending updates
+                viewport->refresh();
+                result.insert(QStringLiteral("ok"), true);
+                result.insert(QStringLiteral("message"), QStringLiteral("Scene rebuilt"));
+                return true;
+            }
+
+            if (command == QStringLiteral("reset"))
+            {
+                // Reset cameras to default state
+                const QString resetType = body.value(QStringLiteral("type")).toString(QStringLiteral("cameras"));
+                
+                if (resetType == QStringLiteral("cameras"))
+                {
+                    // Reset to single default camera
+                    auto configs = viewport->cameraConfigs();
+                    while (configs.size() > 1)
+                    {
+                        viewport->deleteCamera(configs.size() - 1);
+                        configs = viewport->cameraConfigs();
+                    }
+                    
+                    // Reset the remaining camera to default position
+                    if (configs.size() == 1)
+                    {
+                        ViewportHostWidget::CameraConfig defaultConfig;
+                        defaultConfig.name = QStringLiteral("Camera");
+                        defaultConfig.type = ViewportHostWidget::CameraConfig::Type::Free;
+                        defaultConfig.position = QVector3D(0.0f, 0.0f, 3.0f);
+                        defaultConfig.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+                        viewport->updateCameraConfig(0, defaultConfig);
+                        viewport->setActiveCamera(0);
+                    }
+                    
+                    result.insert(QStringLiteral("ok"), true);
+                    result.insert(QStringLiteral("type"), QStringLiteral("cameras"));
+                    result.insert(QStringLiteral("message"), QStringLiteral("Cameras reset to default"));
+                }
+                else if (resetType == QStringLiteral("all"))
+                {
+                    // Reset everything - cameras and scene items
+                    auto configs = viewport->cameraConfigs();
+                    while (configs.size() > 1)
+                    {
+                        viewport->deleteCamera(configs.size() - 1);
+                        configs = viewport->cameraConfigs();
+                    }
+                    if (configs.size() == 1)
+                    {
+                        ViewportHostWidget::CameraConfig defaultConfig;
+                        defaultConfig.name = QStringLiteral("Camera");
+                        defaultConfig.type = ViewportHostWidget::CameraConfig::Type::Free;
+                        defaultConfig.position = QVector3D(0.0f, 0.0f, 3.0f);
+                        defaultConfig.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+                        viewport->updateCameraConfig(0, defaultConfig);
+                        viewport->setActiveCamera(0);
+                    }
+                    
+                    // Also clear scene items
+                    viewport->loadSceneFromItems(QList<ViewportHostWidget::SceneItem>{});
+                    
+                    result.insert(QStringLiteral("ok"), true);
+                    result.insert(QStringLiteral("type"), QStringLiteral("all"));
+                    result.insert(QStringLiteral("message"), QStringLiteral("Scene and cameras reset to default"));
+                }
+                else
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("Unknown reset type. Use 'cameras' or 'all'"));
+                    return false;
+                }
+                
                 return true;
             }
 

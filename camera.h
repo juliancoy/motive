@@ -4,7 +4,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.h>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <vector>
 
 // Forward declarations
 class Engine;
@@ -92,13 +94,18 @@ public:
     void setCharacterTarget(Model* model);
     Model* getCharacterTarget() const { return characterTarget; }
     
-    // Follow mode - camera tracks a target model
-    void setFollowTarget(Model* model, const FollowSettings& settings = FollowSettings());
-    Model* getFollowTarget() const { return followTarget; }
+    // Follow mode - camera tracks a target model by scene index
+    // The camera stores the scene index and looks up the model each frame,
+    // so it continues to work even if models are reloaded
+    void setFollowTarget(int sceneIndex, const FollowSettings& settings = FollowSettings());
+    int getFollowTargetIndex() const { return followTargetIndex; }
     void setFollowSettings(const FollowSettings& settings);
     const FollowSettings& getFollowSettings() const { return followSettings; }
-    void updateFollow(float deltaTime);  // Update camera position based on follow target
-    bool isFollowModeEnabled() const { return followSettings.enabled && followTarget != nullptr; }
+    void updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models);  // Update camera position based on follow target
+    bool isFollowModeEnabled() const { return followSettings.enabled && followTargetIndex >= 0; }
+    
+    // Get the scene index this camera is following (returns -1 if not following)
+    int getFollowSceneIndex() const { return followTargetIndex; }
     
     // Camera identification
     void setCameraName(const std::string& name) { cameraName = name; }
@@ -127,8 +134,8 @@ private:
     
     Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
     
-    // Follow mode state
-    Model* followTarget = nullptr;
+    // Follow mode state - use scene index for robustness across model reloads
+    int followTargetIndex = -1;  // Scene index of the target model (-1 = none)
     FollowSettings followSettings;
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
     

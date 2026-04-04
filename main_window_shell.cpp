@@ -1,6 +1,10 @@
 #include "main_window_shell.h"
 #include "asset_browser_widget.h"
 #include "viewport_host_widget.h"
+#include "transform_undo_command.h"
+
+#include <QShortcut>
+#include <QUndoView>
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -15,6 +19,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
@@ -36,16 +41,37 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_leftPane = new QWidget(m_splitter);
     auto* leftLayout = new QVBoxLayout(m_leftPane);
     leftLayout->setContentsMargins(0, 0, 0, 0);
-    leftLayout->setSpacing(8);
+    leftLayout->setSpacing(0);
 
-    m_assetBrowser = new AssetBrowserWidget(m_leftPane);
-    leftLayout->addWidget(m_assetBrowser, 1);
-    leftLayout->addWidget(new QLabel(QStringLiteral("Hierarchy"), m_leftPane));
-    m_hierarchyTree = new QTreeWidget(m_leftPane);
+    // Create a vertical splitter for adjustable boundary between file chooser and hierarchy
+    auto* leftVerticalSplitter = new QSplitter(Qt::Vertical, m_leftPane);
+    leftVerticalSplitter->setChildrenCollapsible(false);
+    
+    m_assetBrowser = new AssetBrowserWidget(leftVerticalSplitter);
+    leftVerticalSplitter->addWidget(m_assetBrowser);
+    
+    // Create a container for hierarchy section
+    auto* hierarchyContainer = new QWidget(leftVerticalSplitter);
+    auto* hierarchyLayout = new QVBoxLayout(hierarchyContainer);
+    hierarchyLayout->setContentsMargins(0, 0, 0, 0);
+    hierarchyLayout->setSpacing(8);
+    
+    auto* hierarchyLabel = new QLabel(QStringLiteral("Hierarchy"), hierarchyContainer);
+    hierarchyLabel->setStyleSheet(QStringLiteral("QLabel { color: #edf2f7; font-weight: bold; padding: 4px 0px; }"));
+    hierarchyLayout->addWidget(hierarchyLabel);
+    
+    m_hierarchyTree = new QTreeWidget(hierarchyContainer);
     m_hierarchyTree->setColumnCount(1);
     m_hierarchyTree->setHeaderHidden(true);
     m_hierarchyTree->setSelectionMode(QAbstractItemView::SingleSelection);
     m_hierarchyTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    // Apply dark theme styling to match asset browser
+    m_hierarchyTree->setStyleSheet(
+        QStringLiteral(
+            "QTreeWidget { background: #0c1015; color: #edf2f7; border: 1px solid #202934; border-radius: 10px; }"
+            "QTreeWidget::item { padding: 4px 8px; }"
+            "QTreeWidget::item:selected { background: #233142; }"
+            "QTreeWidget::item:hover { background: #1b2430; }"));
     connect(m_hierarchyTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos)
     {
         QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
@@ -81,11 +107,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         
         // Add Follow submenu
         QMenu* followMenu = menu.addMenu(QStringLiteral("Follow"));
-        bool hasFollowCam = m_viewportHost && m_viewportHost->hasFollowCamera(row);
-        QAction* createFollowAction = followMenu->addAction(hasFollowCam ? QStringLiteral("Jump to Follow Cam") : QStringLiteral("Create Follow Cam"));
+        QAction* createFollowAction = followMenu->addAction(QStringLiteral("Create Follow Cam"));
         QAction* configureFollowAction = followMenu->addAction(QStringLiteral("Configure..."));
-        QAction* exitFollowAction = followMenu->addAction(QStringLiteral("Exit Follow Mode"));
-        exitFollowAction->setEnabled(hasFollowCam);
+        QAction* deleteFollowAction = followMenu->addAction(QStringLiteral("Delete Follow Cam"));
         
         QAction* visibilityAction = menu.addAction(m_sceneItems[row].visible ? QStringLiteral("Hide") : QStringLiteral("Show"));
         QAction* deleteAction = menu.addAction(QStringLiteral("Delete"));
@@ -118,54 +142,62 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         }
         else if (chosen == createFollowAction)
         {
-            // Get current settings or defaults
-            ViewportHostWidget::FollowCameraSettings settings = m_viewportHost->currentFollowSettings();
-            
-            // Create or jump to follow camera
-            if (m_viewportHost->createOrJumpToFollowCamera(row, settings))
+            // Create follow camera with default settings
+            int cameraIndex = m_viewportHost->createFollowCamera(row, 5.0f, 0.0f, 20.0f);
+            if (cameraIndex >= 0)
             {
-                // Update hierarchy to show camera change (optional UI feedback)
-                updateInspectorForSelection(m_hierarchyTree->currentItem());
+                // Refresh hierarchy to show the new follow camera
+                refreshHierarchy(m_viewportHost->sceneItems());
+                
+                // Save project state
+                saveProjectState();
             }
         }
         else if (chosen == configureFollowAction)
         {
-            // Show dialog to configure follow settings
-            ViewportHostWidget::FollowCameraSettings settings = m_viewportHost->currentFollowSettings();
+            // Find the follow camera for this scene item
+            QList<ViewportHostWidget::CameraConfig> configs = m_viewportHost->cameraConfigs();
+            int followCamIndex = -1;
+            for (int i = 0; i < configs.size(); ++i) {
+                if (configs[i].isFollowCamera() && configs[i].followTargetIndex == row) {
+                    followCamIndex = i;
+                    break;
+                }
+            }
             
+            if (followCamIndex < 0) {
+                // No follow camera exists yet - create one first
+                followCamIndex = m_viewportHost->createFollowCamera(row, 5.0f, 0.0f, 20.0f);
+                if (followCamIndex < 0) return;
+                configs = m_viewportHost->cameraConfigs();
+            }
+            
+            // Show dialog to configure follow settings (only distance and angle as requested)
             QDialog dialog(this);
             dialog.setWindowTitle(QStringLiteral("Follow Camera Settings"));
             auto* layout = new QVBoxLayout(&dialog);
             auto* formLayout = new QFormLayout();
             
+            auto* distSpin = new QDoubleSpinBox(&dialog);
+            distSpin->setRange(0.5, 100.0);
+            distSpin->setValue(configs[followCamIndex].followDistance);
+            distSpin->setSingleStep(0.5);
+            distSpin->setDecimals(2);
+            formLayout->addRow(QStringLiteral("Distance:"), distSpin);
+            
             auto* yawSpin = new QDoubleSpinBox(&dialog);
             yawSpin->setRange(-180.0, 180.0);
-            yawSpin->setValue(settings.relativeYaw);
+            yawSpin->setValue(configs[followCamIndex].followYaw);
             yawSpin->setSuffix(QStringLiteral("°"));
             yawSpin->setDecimals(1);
             formLayout->addRow(QStringLiteral("Horizontal Angle:"), yawSpin);
             
             auto* pitchSpin = new QDoubleSpinBox(&dialog);
             pitchSpin->setRange(-89.0, 89.0);
-            pitchSpin->setValue(settings.relativePitch);
+            pitchSpin->setValue(configs[followCamIndex].followPitch);
             pitchSpin->setSuffix(QStringLiteral("°"));
             pitchSpin->setDecimals(1);
             formLayout->addRow(QStringLiteral("Vertical Angle:"), pitchSpin);
-            
-            auto* distSpin = new QDoubleSpinBox(&dialog);
-            distSpin->setRange(0.5, 100.0);
-            distSpin->setValue(settings.distance);
-            distSpin->setSingleStep(0.5);
-            distSpin->setDecimals(2);
-            formLayout->addRow(QStringLiteral("Distance:"), distSpin);
-            
-            auto* smoothSpin = new QDoubleSpinBox(&dialog);
-            smoothSpin->setRange(0.1, 50.0);
-            smoothSpin->setValue(settings.smoothSpeed);
-            smoothSpin->setSingleStep(0.5);
-            smoothSpin->setDecimals(1);
-            smoothSpin->setToolTip(QStringLiteral("Higher = snappier, Lower = smoother"));
-            formLayout->addRow(QStringLiteral("Smoothing:"), smoothSpin);
             
             layout->addLayout(formLayout);
             
@@ -177,24 +209,29 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             
             if (dialog.exec() == QDialog::Accepted)
             {
-                settings.relativeYaw = static_cast<float>(yawSpin->value());
-                settings.relativePitch = static_cast<float>(pitchSpin->value());
-                settings.distance = static_cast<float>(distSpin->value());
-                settings.smoothSpeed = static_cast<float>(smoothSpin->value());
+                // Update the camera config
+                configs[followCamIndex].followDistance = static_cast<float>(distSpin->value());
+                configs[followCamIndex].followYaw = static_cast<float>(yawSpin->value());
+                configs[followCamIndex].followPitch = static_cast<float>(pitchSpin->value());
                 
-                m_viewportHost->setFollowCameraSettings(settings);
+                m_viewportHost->updateCameraConfig(followCamIndex, configs[followCamIndex]);
                 
-                // If already following, update immediately
-                if (m_viewportHost->hasFollowCamera(row))
-                {
-                    m_viewportHost->createOrJumpToFollowCamera(row, settings);
-                }
+                // Save project state
+                saveProjectState();
             }
         }
-        else if (chosen == exitFollowAction)
+        else if (chosen == deleteFollowAction)
         {
-            m_viewportHost->exitFollowCamera();
-            updateInspectorForSelection(m_hierarchyTree->currentItem());
+            // Find and delete the follow camera for this scene item
+            QList<ViewportHostWidget::CameraConfig> configs = m_viewportHost->cameraConfigs();
+            for (int i = 0; i < configs.size(); ++i) {
+                if (configs[i].isFollowCamera() && configs[i].followTargetIndex == row) {
+                    m_viewportHost->deleteCamera(i);
+                    refreshHierarchy(m_viewportHost->sceneItems());
+                    saveProjectState();
+                    break;
+                }
+            }
         }
         else if (chosen == visibilityAction)
         {
@@ -207,7 +244,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             updateInspectorForSelection(m_hierarchyTree->currentItem());
         }
     });
-    leftLayout->addWidget(m_hierarchyTree, 0);
+    hierarchyLayout->addWidget(m_hierarchyTree, 1);
+    
+    leftVerticalSplitter->addWidget(hierarchyContainer);
+    leftVerticalSplitter->setStretchFactor(0, 3); // File chooser gets more space initially
+    leftVerticalSplitter->setStretchFactor(1, 1); // Hierarchy gets less space initially
+    
+    leftLayout->addWidget(leftVerticalSplitter, 1);
 
     // Apply validation layers setting before viewport initializes
     if (!m_projectSession.currentValidationLayersEnabled())
@@ -239,10 +282,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_viewportHost->setCameraChangedCallback([this]()
     {
         updateCameraSettingsPanel();
-        if (m_hierarchyTree && m_hierarchyTree->currentItem() &&
-            m_hierarchyTree->currentItem()->data(0, Qt::UserRole).toInt() == MainWindowShell::kHierarchyCameraIndex)
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
         {
-            updateInspectorForSelection(m_hierarchyTree->currentItem());
+            int row = m_hierarchyTree->currentItem()->data(0, Qt::UserRole).toInt();
+            // Handle Camera and Follow Camera entries (any row <= kHierarchyCameraIndex)
+            if (row <= MainWindowShell::kHierarchyCameraIndex)
+            {
+                updateInspectorForSelection(m_hierarchyTree->currentItem());
+            }
         }
     });
     m_assetBrowser->setRootPathChangedCallback([this](const QString& rootPath)
@@ -262,7 +309,24 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     auto* inspectorDock = new QDockWidget(QStringLiteral("Inspector"), this);
     inspectorDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     m_rightTabs = new QTabWidget(inspectorDock);
+    // Apply dark theme styling to match asset browser
+    m_rightTabs->setStyleSheet(
+        QStringLiteral(
+            "QTabWidget::pane { background: #10161d; border: 1px solid #202934; border-radius: 10px; }"
+            "QTabBar::tab { background: #1b2430; color: #edf2f7; padding: 8px 16px; margin-right: 2px; border: 1px solid #2e3b4a; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; }"
+            "QTabBar::tab:selected { background: #233142; border-color: #3a4a5f; }"
+            "QTabBar::tab:hover { background: #2a3749; }"));
     auto* inspectorPanel = new QWidget(m_rightTabs);
+    // Apply dark theme to inspector panel
+    inspectorPanel->setStyleSheet(
+        QStringLiteral(
+            "QWidget { background: #10161d; color: #edf2f7; }"
+            "QLabel { color: #edf2f7; }"
+            "QComboBox, QDoubleSpinBox, QCheckBox, QPushButton { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 7px; padding: 4px 8px; }"
+            "QComboBox:hover, QDoubleSpinBox:hover, QPushButton:hover { background: #233142; }"
+            "QComboBox::drop-down { border-left: 1px solid #2e3b4a; }"
+            "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { background: #2e3b4a; border: 1px solid #3a4a5f; }"));
     auto* inspectorLayout = new QFormLayout(inspectorPanel);
     m_inspectorNameValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
@@ -331,6 +395,22 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     lightColorLayout->addWidget(lightColorButton);
     lightColorLayout->addStretch(1);
 
+    // Create follow target selector for cameras
+    m_followTargetCombo = new QComboBox(inspectorPanel);
+    m_followTargetCombo->addItem(QStringLiteral("None (Free Camera)"), -1);
+    m_followTargetLabel = new QLabel(inspectorPanel);
+    
+    // Create follow camera parameter controls
+    m_followParamsLabel = new QLabel(QStringLiteral("Follow Parameters"), inspectorPanel);
+    m_followDistanceSpin = createSpinBox(inspectorPanel, 0.1, 100.0, 0.1);
+    m_followDistanceSpin->setValue(5.0);
+    m_followYawSpin = createSpinBox(inspectorPanel, -360.0, 360.0, 1.0);
+    m_followYawSpin->setValue(0.0);
+    m_followPitchSpin = createSpinBox(inspectorPanel, -90.0, 90.0, 1.0);
+    m_followPitchSpin->setValue(20.0);
+    m_followSmoothSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
+    m_followSmoothSpin->setValue(5.0);
+
     // Create translation spin boxes
     auto* translationWidget = new QWidget(inspectorPanel);
     auto* translationLayout = new QHBoxLayout(translationWidget);
@@ -383,6 +463,12 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
     inspectorLayout->addRow(QStringLiteral("Paint Color"), paintColorContainer);
     inspectorLayout->addRow(QStringLiteral("Animation"), m_animationControlsWidget);
+    inspectorLayout->addRow(QStringLiteral("Follow Target"), m_followTargetCombo);
+    inspectorLayout->addRow(m_followParamsLabel);
+    inspectorLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
+    inspectorLayout->addRow(QStringLiteral("Yaw"), m_followYawSpin);
+    inspectorLayout->addRow(QStringLiteral("Pitch"), m_followPitchSpin);
+    inspectorLayout->addRow(QStringLiteral("Smooth Speed"), m_followSmoothSpin);
     inspectorLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
     inspectorLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
     inspectorLayout->addRow(QStringLiteral("Color"), lightColorContainer);
@@ -397,6 +483,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     connect(m_hierarchyTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current)
     {
+        // Check if a camera node was selected and switch to it
+        if (current && m_viewportHost)
+        {
+            const int type = current->data(0, Qt::UserRole + 3).toInt();
+            if (type == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
+            {
+                const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
+                m_viewportHost->setActiveCamera(cameraIndex);
+            }
+        }
         updateInspectorForSelection(current);
     });
 
@@ -544,6 +640,83 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         saveProjectState();
     });
 
+    // Connect follow target combo to update camera's follow target
+    connect(m_followTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_followTargetCombo) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        if (!current) return;
+        
+        // Check if a camera is selected
+        const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+            return;
+        }
+        
+        const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
+        const int targetIndex = m_followTargetCombo->currentData().toInt();
+        
+        // Get current camera config
+        auto configs = m_viewportHost->cameraConfigs();
+        if (cameraIndex < 0 || cameraIndex >= configs.size()) {
+            return;
+        }
+        
+        ViewportHostWidget::CameraConfig& config = configs[cameraIndex];
+        if (targetIndex >= 0) {
+            // Convert to follow camera
+            config.type = ViewportHostWidget::CameraConfig::Type::Follow;
+            config.followTargetIndex = targetIndex;
+            // Set default follow parameters if not already set
+            if (config.followDistance <= 0) config.followDistance = 5.0f;
+        } else {
+            // Convert to free camera
+            config.type = ViewportHostWidget::CameraConfig::Type::Free;
+            config.position = m_viewportHost->cameraPosition();
+            config.rotation = m_viewportHost->cameraRotation();
+        }
+        
+        m_viewportHost->updateCameraConfig(cameraIndex, config);
+        saveProjectState();
+        refreshHierarchy(m_viewportHost->sceneItems());
+    });
+
+    // Connect follow parameter spin boxes to update camera config
+    auto applyFollowParams = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        if (!current) return;
+        
+        const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+            return;
+        }
+        
+        const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
+        auto configs = m_viewportHost->cameraConfigs();
+        if (cameraIndex < 0 || cameraIndex >= configs.size()) {
+            return;
+        }
+        
+        ViewportHostWidget::CameraConfig& config = configs[cameraIndex];
+        if (!config.isFollowCamera()) {
+            return;  // Only update follow params for follow cameras
+        }
+        
+        // Update follow parameters from spin boxes
+        if (m_followDistanceSpin) config.followDistance = m_followDistanceSpin->value();
+        if (m_followYawSpin) config.followYaw = m_followYawSpin->value();
+        if (m_followPitchSpin) config.followPitch = m_followPitchSpin->value();
+        if (m_followSmoothSpin) config.followSmoothSpeed = m_followSmoothSpin->value();
+        
+        m_viewportHost->updateCameraConfig(cameraIndex, config);
+        saveProjectState();
+    };
+    
+    connect(m_followDistanceSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_followYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_followPitchSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_followSmoothSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+
     // Connect spin box value changes to update scene items
     auto updateTransform = [this]() {
         if (m_updatingInspector) return;
@@ -564,7 +737,8 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_inspectorScaleY->value(),
             m_inspectorScaleZ->value()
         );
-        if (row == MainWindowShell::kHierarchyCameraIndex && m_viewportHost) {
+        // Handle Camera and Follow Camera entries (any row <= kHierarchyCameraIndex)
+        if (row <= MainWindowShell::kHierarchyCameraIndex && m_viewportHost) {
             m_viewportHost->setCameraPosition(translation);
             m_viewportHost->setCameraRotation(rotation);
             updateCameraSettingsPanel();
@@ -591,6 +765,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_inspectorScaleZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateTransform);
 
     setupProjectMenu();
+    
+    // Initialize undo stack
+    m_undoStack = new QUndoStack(this);
+    setupUndoShortcuts();
+    
     restoreSessionState();
     refreshWindowTitle();
     maybePromptForGltfConversion(m_assetBrowser ? m_assetBrowser->rootPath() : m_projectSession.currentProjectRoot());
@@ -624,6 +803,102 @@ void MainWindowShell::closeEvent(QCloseEvent* event)
 {
     saveUiState();
     QMainWindow::closeEvent(event);
+}
+
+void MainWindowShell::setupUndoShortcuts()
+{
+    if (!m_undoStack)
+        return;
+    
+    // Ctrl+Z for undo
+    auto* undoShortcut = new QShortcut(QKeySequence::Undo, this);
+    connect(undoShortcut, &QShortcut::activated, m_undoStack, &QUndoStack::undo);
+    
+    // Ctrl+Y or Ctrl+Shift+Z for redo
+    auto* redoShortcut = new QShortcut(QKeySequence::Redo, this);
+    connect(redoShortcut, &QShortcut::activated, m_undoStack, &QUndoStack::redo);
+    
+    // Also add menu actions for discoverability
+    if (QMenu* editMenu = menuBar()->addMenu(QStringLiteral("Edit")))
+    {
+        QAction* undoAction = m_undoStack->createUndoAction(this, QStringLiteral("Undo"));
+        undoAction->setShortcuts(QKeySequence::Undo);
+        editMenu->addAction(undoAction);
+        
+        QAction* redoAction = m_undoStack->createRedoAction(this, QStringLiteral("Redo"));
+        redoAction->setShortcuts(QKeySequence::Redo);
+        editMenu->addAction(redoAction);
+    }
+}
+
+void MainWindowShell::pushTransformCommand(
+    int sceneIndex,
+    const QVector3D& oldTranslation,
+    const QVector3D& oldRotation,
+    const QVector3D& oldScale,
+    const QVector3D& newTranslation,
+    const QVector3D& newRotation,
+    const QVector3D& newScale)
+{
+    if (!m_undoStack || sceneIndex < 0 || sceneIndex >= m_sceneItems.size())
+        return;
+    
+    QString itemName = m_sceneItems[sceneIndex].name;
+    
+    // Create apply callback that updates both the viewport and our local state
+    auto applyCallback = [this](int index, const QVector3D& trans, const QVector3D& rot, const QVector3D& scale)
+    {
+        if (index < 0 || index >= m_sceneItems.size())
+            return;
+        
+        // Update local state
+        m_sceneItems[index].translation = trans;
+        m_sceneItems[index].rotation = rot;
+        m_sceneItems[index].scale = scale;
+        
+        // Update viewport
+        if (m_viewportHost)
+        {
+            m_viewportHost->updateSceneItemTransform(index, trans, rot, scale);
+        }
+        
+        // Update inspector if this is the currently selected item
+        // (without triggering another undo command)
+        if (!m_updatingInspector)
+        {
+            QTreeWidgetItem* currentItem = m_hierarchyTree->currentItem();
+            if (currentItem)
+            {
+                int currentIndex = currentItem->data(0, Qt::UserRole).toInt();
+                if (currentIndex == index)
+                {
+                    m_updatingInspector = true;
+                    m_inspectorTranslationX->setValue(trans.x());
+                    m_inspectorTranslationY->setValue(trans.y());
+                    m_inspectorTranslationZ->setValue(trans.z());
+                    m_inspectorRotationX->setValue(rot.x());
+                    m_inspectorRotationY->setValue(rot.y());
+                    m_inspectorRotationZ->setValue(rot.z());
+                    m_inspectorScaleX->setValue(scale.x());
+                    m_inspectorScaleY->setValue(scale.y());
+                    m_inspectorScaleZ->setValue(scale.z());
+                    m_updatingInspector = false;
+                }
+            }
+        }
+        
+        saveProjectState();
+    };
+    
+    auto* cmd = new TransformUndoCommand(
+        sceneIndex,
+        oldTranslation, oldRotation, oldScale,
+        newTranslation, newRotation, newScale,
+        itemName,
+        applyCallback
+    );
+    
+    m_undoStack->push(cmd);
 }
 
 }  // namespace motive::ui

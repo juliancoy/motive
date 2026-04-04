@@ -28,6 +28,7 @@ public:
     Engine* engine() const;
     Display* display() const;
     Camera* camera() const;
+    void setCamera(Camera* camera);  // Set the active camera for input handling
 
     bool isInitialized() const;
 

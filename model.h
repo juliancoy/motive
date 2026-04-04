@@ -95,12 +95,74 @@ public:
         float groundHeight = 0.0f;
         bool isGrounded = false;
         bool isControllable = false;  // Set true for player character
+        bool jumpRequested = false;     // Set true to trigger jump
+        
+        // Directional key states for animation selection
+        bool keyW = false;
+        bool keyA = false;
+        bool keyS = false;
+        bool keyD = false;
         
         // Animation state
-        enum class AnimState { Idle, Walk, Run };
+        enum class AnimState { Idle, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
         AnimState currentAnimState = AnimState::Idle;
         float walkSpeedThreshold = 0.1f;
         float runSpeedThreshold = 4.0f;
+        
+        // Standard Human Animation Set
+        // These are common animation names used in humanoid characters
+        // The system will try these names in order when selecting animations
+        
+        // Idle - standing still
+        std::string animIdle = "idle";
+        
+        // Walking animations (directional)
+        std::string animWalkForward = "walk_forward";   // or "walk_fwd", "walking", "walk"
+        std::string animWalkBackward = "walk_backward"; // or "walk_back", "walk_bwd"
+        std::string animWalkLeft = "walk_left";         // or "strafe_left"
+        std::string animWalkRight = "walk_right";       // or "strafe_right"
+        
+        // Running animations
+        std::string animRun = "run";                    // or "run_forward", "running", "sprint"
+        std::string animRunBackward = "run_backward";   // or "run_back"
+        std::string animRunLeft = "run_left";           // or "strafe_run_left"
+        std::string animRunRight = "run_right";         // or "strafe_run_right"
+        
+        // Vertical movement
+        std::string animJump = "jump";                  // or "jump_up", "jumping"
+        std::string animFall = "fall";                  // or "falling", "fall_loop"
+        std::string animLand = "land";                  // or "landing"
+        
+        // Crouching
+        std::string animCrouchIdle = "crouch_idle";
+        std::string animCrouchWalk = "crouch_walk";
+        
+        // Additional actions
+        std::string animTurnLeft = "turn_left";
+        std::string animTurnRight = "turn_right";
+        
+        // Animation synthesis options
+        bool enableProceduralIdle = true;        // Generate idle when no clip exists
+        bool enableTimeWarp = true;              // Speed up/slow down animations
+        bool enableAnimationMirroring = true;    // Mirror animations for opposite directions
+        
+        // Time warp multipliers (1.0 = normal speed)
+        float idleAnimSpeed = 1.0f;
+        float walkAnimSpeed = 1.0f;
+        float runAnimSpeed = 1.5f;               // 1.5x speed makes walk look like run
+        float backwardAnimSpeed = 1.0f;
+        float jumpAnimSpeed = 1.0f;
+        
+        // Procedural idle parameters
+        float idleBobFrequency = 2.0f;           // Breathing cycles per second
+        float idleBobAmplitude = 0.02f;          // How much the chest moves up/down
+        float idleSwayFrequency = 1.0f;          // Sway cycles per second
+        float idleSwayAmplitude = 0.01f;         // How much the body sways
+        
+        // Animation playback state
+        float currentAnimSpeed = 1.0f;
+        bool isUsingMirroredAnim = false;
+        bool isUsingProceduralAnim = false;
         
         // For smooth animation blending
         float currentAnimWeight = 0.0f;  // 0=idle, 1=walk
@@ -126,7 +188,20 @@ public:
     // Character controller methods
     void updateCharacterPhysics(float deltaSeconds);
     void setCharacterInput(const glm::vec3& moveDir);  // Called from input handler
+    void applyProceduralIdleAnimation(double deltaSeconds);  // Generate idle when no clip exists
     glm::vec3 getCharacterPosition() const { return glm::vec3(worldTransform[3]); }
+    
+    // Set standard human animation names for character controller
+    // Use this to configure which animations play for each movement direction
+    void setCharacterAnimationNames(
+        const std::string& idle = "",
+        const std::string& walkForward = "",
+        const std::string& walkBackward = "",
+        const std::string& walkLeft = "",
+        const std::string& walkRight = "",
+        const std::string& run = "",
+        const std::string& jump = ""
+    );
 
     tinygltf::Model* tgltfModel = nullptr;
 

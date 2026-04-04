@@ -29,6 +29,33 @@ class ViewportHierarchyBuilder;
 class ViewportHostWidget : public QWidget
 {
 public:
+    // Camera configuration (persistent camera settings)
+    struct CameraConfig
+    {
+        enum class Type
+        {
+            Free,    // Free-flying camera with position/rotation
+            Follow   // Camera that follows a scene item
+        };
+        
+        QString name = QStringLiteral("Camera");
+        Type type = Type::Free;
+        
+        // For Free cameras: position and rotation
+        QVector3D position = QVector3D(0.0f, 0.0f, 3.0f);
+        QVector3D rotation = QVector3D(0.0f, 0.0f, 0.0f);  // Euler angles in degrees
+        
+        // For Follow cameras: which scene item to follow
+        int followTargetIndex = -1;  // -1 means no target (behaves like free camera)
+        float followDistance = 5.0f;
+        float followYaw = 0.0f;      // Horizontal angle offset (degrees)
+        float followPitch = 20.0f;   // Vertical angle offset (degrees)
+        float followSmoothSpeed = 5.0f;
+        QVector3D followTargetOffset = QVector3D(0.0f, 0.0f, 0.0f);
+        
+        bool isFollowCamera() const { return type == Type::Follow && followTargetIndex >= 0; }
+    };
+    
     struct SceneItem
     {
         QString name;
@@ -77,6 +104,7 @@ public:
         Type type = Type::SceneItem;
         int sceneIndex = -1;
         int meshIndex = -1;
+        int cameraIndex = -1;  // Index into Display::cameras for Camera type nodes
         int primitiveIndex = -1;
         QString clipName;
         QList<HierarchyNode> children;
@@ -147,38 +175,26 @@ public:
     void setFreeFlyCameraEnabled(bool enabled);
     bool isFreeFlyCameraEnabled() const;
     
-    // Follow camera functionality
-    struct FollowCameraSettings {
-        float relativeYaw;       // Horizontal angle offset (degrees)
-        float relativePitch;     // Vertical angle offset (degrees)
-        float distance;          // Distance from target
-        float smoothSpeed;       // Interpolation speed
-        QVector3D targetOffset;  // Offset from target center
-        
-        FollowCameraSettings()
-            : relativeYaw(0.0f)
-            , relativePitch(20.0f)
-            , distance(5.0f)
-            , smoothSpeed(5.0f)
-            , targetOffset(0.0f, 0.0f, 0.0f)
-        {}
-    };
+    // Camera management (persistent cameras)
+    QList<CameraConfig> cameraConfigs() const;
+    void setCameraConfigs(const QList<CameraConfig>& configs);
     
-    // Create or get a follow camera for a specific scene item
-    // Returns true if a follow camera was created or already exists
-    bool createOrJumpToFollowCamera(int sceneIndex, const FollowCameraSettings& settings = FollowCameraSettings());
+    // Create a follow camera for a scene item
+    // Returns the index of the created camera in cameraConfigs()
+    int createFollowCamera(int sceneIndex, float distance = 5.0f, float yaw = 0.0f, float pitch = 20.0f);
     
-    // Check if a follow camera exists for a scene item
-    bool hasFollowCamera(int sceneIndex) const;
+    // Delete a camera by index
+    void deleteCamera(int cameraIndex);
     
-    // Get current follow camera settings
-    FollowCameraSettings currentFollowSettings() const;
+    // Get/set active camera index
+    int activeCameraIndex() const;
+    void setActiveCamera(int cameraIndex);
     
-    // Update follow camera settings
-    void setFollowCameraSettings(const FollowCameraSettings& settings);
+    // Update camera configuration
+    void updateCameraConfig(int cameraIndex, const CameraConfig& config);
     
-    // Stop following and return to main camera
-    void exitFollowCamera();
+    // Refresh/rebuild the viewport and hierarchy
+    void refresh();
 
 protected:
     void showEvent(QShowEvent* event) override;
