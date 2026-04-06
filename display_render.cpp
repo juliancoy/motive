@@ -92,51 +92,7 @@ void Display::render()
         recreateSwapchain();
     }
 
-    if (imageAvailableSemaphores.empty())
-    {
-        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-
-        VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, {}, VK_FENCE_CREATE_SIGNALED_BIT};
-
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-        {
-            if (vkCreateSemaphore(engine->logicalDevice, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-                vkCreateFence(engine->logicalDevice, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
-            {
-                throw std::runtime_error("Failed to create sync objects for frame " + std::to_string(i));
-            }
-        }
-    }
-
-    const size_t swapchainImageCount = swapchainFramebuffers.size();
-    if (renderFinishedSemaphores.size() != swapchainImageCount)
-    {
-        for (auto& sem : renderFinishedSemaphores)
-        {
-            if (sem != VK_NULL_HANDLE)
-            {
-                vkDestroySemaphore(engine->logicalDevice, sem, nullptr);
-                sem = VK_NULL_HANDLE;
-            }
-        }
-        renderFinishedSemaphores.assign(swapchainImageCount, VK_NULL_HANDLE);
-
-        VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        for (size_t i = 0; i < swapchainImageCount; ++i)
-        {
-            if (vkCreateSemaphore(engine->logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS)
-            {
-                throw std::runtime_error("Failed to create per-image render finished semaphore " + std::to_string(i));
-            }
-        }
-    }
-
-    if (imagesInFlight.size() != swapchainImageCount)
-    {
-        imagesInFlight.assign(swapchainImageCount, VK_NULL_HANDLE);
-    }
+    const size_t swapchainImageCount = swapchainManager.getFramebufferCount();
 
     updateOverlayBitmap(currentFps);
 
@@ -146,17 +102,12 @@ void Display::render()
     }
     else
     {
-        vkWaitForFences(engine->logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+        VkFence fence = swapchainManager.getInFlightFence(currentFrame);
+        vkWaitForFences(engine->logicalDevice, 1, &fence, VK_TRUE, UINT64_MAX);
     }
 
     uint32_t imageIndex = 0;
-    VkResult result = vkAcquireNextImageKHR(
-        engine->logicalDevice,
-        swapchain,
-        UINT64_MAX,
-        imageAvailableSemaphores[currentFrame],
-        VK_NULL_HANDLE,
-        &imageIndex);
+    VkResult result = static_cast<VkResult>(swapchainManager.acquireNextImage(currentFrame, &imageIndex));
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -168,24 +119,20 @@ void Display::render()
         throw std::runtime_error("Failed to acquire swapchain image.");
     }
 
-    if (imageIndex >= imagesInFlight.size())
+    VkFence imageFence = swapchainManager.getImageInFlight(imageIndex);
+    if (imageFence != VK_NULL_HANDLE)
     {
-        recreateSwapchain();
-        return;
+        vkWaitForFences(engine->logicalDevice, 1, &imageFence, VK_TRUE, UINT64_MAX);
     }
-
-    if (imagesInFlight[imageIndex] != VK_NULL_HANDLE)
-    {
-        vkWaitForFences(engine->logicalDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
-    }
-    imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+    swapchainManager.setImageInFlight(imageIndex, swapchainManager.getInFlightFence(currentFrame));
 
     for (auto& camera : cameras)
     {
         camera->update(imageIndex);
     }
 
-    vkResetFences(engine->logicalDevice, 1, &inFlightFences[currentFrame]);
+    VkFence inFlightFence = swapchainManager.getInFlightFence(currentFrame);
+    vkResetFences(engine->logicalDevice, 1, &inFlightFence);
 
     if (vkResetCommandBuffer(commandBuffer, 0) != VK_SUCCESS)
     {
@@ -206,8 +153,8 @@ void Display::render()
     clearValues[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 
     VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = swapchainFramebuffers[imageIndex];
+    renderPassInfo.renderPass = swapchainManager.getRenderPass();
+    renderPassInfo.framebuffer = swapchainManager.getFramebuffer(imageIndex);
     renderPassInfo.renderArea = {{0, 0}, {static_cast<uint32_t>(width), static_cast<uint32_t>(height)}};
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
@@ -349,7 +296,7 @@ void Display::render()
     }
 
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    VkSemaphore waitSemaphores[] = {swapchainManager.getImageAvailableSemaphore(currentFrame)};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
     submitInfo.waitSemaphoreCount = 1;
@@ -358,24 +305,18 @@ void Display::render()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[imageIndex];
+    VkSemaphore renderFinishedSemaphore = swapchainManager.getRenderFinishedSemaphore(imageIndex);
     VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+    VkFence submitFence = swapchainManager.getInFlightFence(currentFrame);
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, submitFence) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to submit draw command buffer");
     }
 
-    VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &swapchain;
-    presentInfo.pImageIndices = &imageIndex;
-
-    result = vkQueuePresentKHR(graphicsQueue, &presentInfo);
+    result = swapchainManager.presentImage(imageIndex, currentFrame);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {

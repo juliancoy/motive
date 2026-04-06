@@ -1,4 +1,4 @@
-#include "main_window_shell.h"
+#include "shell.h"
 
 #include <QFileInfo>
 #include <QJsonObject>

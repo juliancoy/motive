@@ -187,8 +187,8 @@ set(MOTIVE_EXCLUDED_ENGINE_SOURCES
     "${MOTIVE_ROOT}/vulkan_video_bridge.cpp"
     "${MOTIVE_ROOT}/display_old.cpp"
     "${MOTIVE_ROOT}/display_old.h"
-    "${MOTIVE_ROOT}/main_window_shell_old.cpp"
-    "${MOTIVE_ROOT}/main_window_shell_old.h"
+    "${MOTIVE_ROOT}/shell_old.cpp"
+    "${MOTIVE_ROOT}/shell_old.h"
 )
 
 list(REMOVE_ITEM MOTIVE_ROOT_CPP ${MOTIVE_MAIN_SOURCES})

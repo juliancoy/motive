@@ -1,7 +1,7 @@
 #include "motive_editor_app.h"
 #include "asset_browser_widget.h"
 #include "control_server.h"
-#include "main_window_shell.h"
+#include "shell.h"
 
 #include <QApplication>
 #include <QCommandLineOption>

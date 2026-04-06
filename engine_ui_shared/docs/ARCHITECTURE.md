@@ -19,12 +19,12 @@ The active implementation lives directly in the `*` modules. Legacy copied refer
 
 Public headers:
 
-- `main_window_shell.h`
+- `shell.h`
 - `dock_layout_config.h`
 
 Implementation:
 
-- `main_window_shell.cpp`
+- `shell.cpp`
 - `main_window_actions.cpp`
 - `main_window_layout.cpp`
 - `main_window_menus.cpp`

@@ -33,7 +33,11 @@ Engine::Engine()
 
     renderDevice.initialize();
     msaaSampleCount = queryMaxUsableSampleCount();
-    createLightResources();
+    
+    // Initialize BufferManager with VMA support
+    bufferManager.initialize(&renderDevice, instance, physicalDevice, logicalDevice);
+    
+    lightManager.initialize(logicalDevice, graphicsQueueFamilyIndex, memProperties);
     
     // Initialize physics world using factory
     physicsWorld = motive::PhysicsFactory::createWorld(physicsSettings.engineType);
@@ -49,26 +53,22 @@ void Engine::nameVulkanObject(uint64_t handle, VkObjectType type, const char* na
 
 VkCommandBuffer Engine::beginSingleTimeCommands()
 {
-    std::lock_guard<std::mutex> lock(batchMutex);
-    if (batchUploadDepth > 0)
+    if (bufferManager.isInBatchUpload())
     {
-        if (activeBatchCommandBuffer == VK_NULL_HANDLE)
+        if (bufferManager.getActiveBatchCommandBuffer() == VK_NULL_HANDLE)
         {
-            activeBatchCommandBuffer = renderDevice.beginSingleTimeCommands();
+            bufferManager.setActiveBatchCommandBuffer(renderDevice.beginSingleTimeCommands());
         }
-        return activeBatchCommandBuffer;
+        return bufferManager.getActiveBatchCommandBuffer();
     }
     return renderDevice.beginSingleTimeCommands();
 }
 
 void Engine::endSingleTimeCommands(VkCommandBuffer commandBuffer)
 {
+    if (bufferManager.isInBatchUpload() && commandBuffer == bufferManager.getActiveBatchCommandBuffer())
     {
-        std::lock_guard<std::mutex> lock(batchMutex);
-        if (batchUploadDepth > 0 && commandBuffer == activeBatchCommandBuffer)
-        {
-            return;
-        }
+        return;
     }
     renderDevice.endSingleTimeCommands(commandBuffer);
 }
@@ -83,83 +83,6 @@ VkResult Engine::allocateDescriptorSet(VkDescriptorPool pool,
 VkResult Engine::freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet)
 {
     return renderDevice.freeDescriptorSet(pool, descriptorSet);
-}
-
-void Engine::beginBatchUpload()
-{
-    std::lock_guard<std::mutex> lock(batchMutex);
-    if (batchUploadDepth++ == 0)
-    {
-        pendingStagingBuffers.clear();
-        activeBatchCommandBuffer = VK_NULL_HANDLE;
-    }
-}
-
-void Engine::endBatchUpload()
-{
-    VkCommandBuffer commandBufferToSubmit = VK_NULL_HANDLE;
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> stagingBuffersToDestroy;
-    {
-        std::lock_guard<std::mutex> lock(batchMutex);
-        if (--batchUploadDepth == 0)
-        {
-            commandBufferToSubmit = activeBatchCommandBuffer;
-            activeBatchCommandBuffer = VK_NULL_HANDLE;
-            stagingBuffersToDestroy.swap(pendingStagingBuffers);
-        }
-    }
-
-    if (commandBufferToSubmit != VK_NULL_HANDLE)
-    {
-        renderDevice.endSingleTimeCommands(commandBufferToSubmit);
-    }
-
-    if (!stagingBuffersToDestroy.empty())
-    {
-        vkDeviceWaitIdle(logicalDevice);
-
-        for (auto& [buffer, memory] : stagingBuffersToDestroy)
-        {
-            vkDestroyBuffer(logicalDevice, buffer, nullptr);
-            vkFreeMemory(logicalDevice, memory, nullptr);
-        }
-    }
-}
-
-void Engine::deferStagingBufferDestruction(VkBuffer buffer, VkDeviceMemory memory)
-{
-    std::lock_guard<std::mutex> lock(batchMutex);
-    if (batchUploadDepth > 0)
-    {
-        pendingStagingBuffers.emplace_back(buffer, memory);
-    }
-    else
-    {
-        // Not in batch mode, destroy immediately
-        vkDestroyBuffer(logicalDevice, buffer, nullptr);
-        vkFreeMemory(logicalDevice, memory, nullptr);
-    }
-}
-
-void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, VkCommandPool commandPool, VkQueue graphicsQueue)
-{
-    renderDevice.copyBuffer(srcBuffer, dstBuffer, size, commandPool, graphicsQueue);
-}
-
-void Engine::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
-                          VkBuffer &buffer, VkDeviceMemory &bufferMemory)
-{
-    renderDevice.createBuffer(size, usage, properties, buffer, bufferMemory);
-}
-
-uint32_t Engine::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
-{
-    return renderDevice.findMemoryType(typeFilter, properties);
-}
-
-VkShaderModule Engine::createShaderModule(const std::vector<char> &code)
-{
-    return renderDevice.createShaderModule(code);
 }
 
 void Engine::createDescriptorSetLayouts()
@@ -184,7 +107,8 @@ Engine::~Engine()
         delete display;
     }
     displays.clear();
-    destroyLightResources();
+    lightManager.shutdown();
+    bufferManager.shutdown();
 
     renderDevice.shutdown();
     glfwTerminate();
@@ -215,66 +139,6 @@ void Engine::renderLoop()
             display->render();
         }
     }
-}
-
-void Engine::createLightResources()
-{
-    VkDeviceSize bufferSize = sizeof(LightUBOData);
-    createBuffer(bufferSize,
-                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                 lightUBO,
-                 lightUBOMemory);
-
-    if (vkMapMemory(logicalDevice, lightUBOMemory, 0, bufferSize, 0, &lightUBOMapped) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to map light uniform buffer.");
-    }
-
-    currentLight = Light(glm::vec3(0.0f, 0.0f, 1.0f),
-                         glm::vec3(0.0f),
-                         glm::vec3(0.0f));
-    updateLightBuffer();
-}
-
-void Engine::destroyLightResources()
-{
-    if (lightUBOMapped)
-    {
-        vkUnmapMemory(logicalDevice, lightUBOMemory);
-        lightUBOMapped = nullptr;
-    }
-    if (lightUBO != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(logicalDevice, lightUBO, nullptr);
-        lightUBO = VK_NULL_HANDLE;
-    }
-    if (lightUBOMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(logicalDevice, lightUBOMemory, nullptr);
-        lightUBOMemory = VK_NULL_HANDLE;
-    }
-}
-
-void Engine::updateLightBuffer()
-{
-    if (!lightUBOMapped)
-    {
-        return;
-    }
-
-    LightUBOData ubo{};
-    ubo.direction = glm::vec4(currentLight.direction, 0.0f);
-    ubo.ambient = glm::vec4(currentLight.ambient, 0.0f);
-    ubo.diffuse = glm::vec4(currentLight.diffuse, 0.0f);
-
-    std::memcpy(lightUBOMapped, &ubo, sizeof(ubo));
-}
-
-void Engine::setLight(const Light &light)
-{
-    currentLight = light;
-    updateLightBuffer();
 }
 
 void Engine::setMsaaSampleCount(VkSampleCountFlagBits requested)

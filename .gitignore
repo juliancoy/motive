@@ -30,3 +30,4 @@ build
 build-asan
 projects
 thirdpersonshooter
+.build_manifest.json

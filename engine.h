@@ -24,6 +24,8 @@ class Model;  // Forward declaration
 #include "graphicsdevice.h"
 #include "camera.h"
 #include "light.h"
+#include "light_manager.h"
+#include "buffer_manager.h"
 #include "physics_interface.h"
 #include "physics_factory.h"
 
@@ -47,9 +49,10 @@ public:
     VkDescriptorSetLayout &primitiveDescriptorSetLayout;
     VkDescriptorPool &descriptorPool;
     VkDescriptorSet descriptorSet;
-    VkBuffer getLightBuffer() const { return lightUBO; }
-    VkDeviceSize getLightUBOSize() const { return sizeof(LightUBOData); }
-    const Light& getLight() const { return currentLight; }
+    VkBuffer getLightBuffer() const { return lightManager.getBuffer(); }
+    VkDeviceSize getLightUBOSize() const { return lightManager.getBufferSize(); }
+    const Light& getLight() const { return lightManager.getLight(); }
+    LightManager& getLightManager() { return lightManager; }
     VkSampleCountFlagBits getMsaaSampleCount() const { return msaaSampleCount; }
 
     void renderLoop();
@@ -62,20 +65,33 @@ public:
                                    VkDescriptorSetLayout layout,
                                    VkDescriptorSet& outSet);
     VkResult freeDescriptorSet(VkDescriptorPool pool, VkDescriptorSet descriptorSet);
-    void beginBatchUpload();
-    void endBatchUpload();
-    void deferStagingBufferDestruction(VkBuffer buffer, VkDeviceMemory memory);
+    // Buffer management (delegated to BufferManager)
+    void beginBatchUpload() { bufferManager.beginBatchUpload(); }
+    void endBatchUpload() { bufferManager.endBatchUpload(); }
+    void deferStagingBufferDestruction(VkBuffer buffer, VkDeviceMemory memory) { 
+        bufferManager.deferStagingBufferDestruction(buffer, memory); 
+    }
+    BufferManager& getBufferManager() { return bufferManager; }
     void nameVulkanObject(uint64_t handle, VkObjectType type, const char* name);
     void createDescriptorSetLayouts();
 
 
+    // Buffer operations (forward to BufferManager)
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size, 
-                    VkCommandPool commandPool, VkQueue graphicsQueue);
+                    VkCommandPool commandPool, VkQueue graphicsQueue) {
+        bufferManager.copyBuffer(srcBuffer, dstBuffer, size, commandPool, graphicsQueue);
+    }
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
-                    VkBuffer &buffer, VkDeviceMemory &bufferMemory);
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-    VkShaderModule createShaderModule(const std::vector<char> &code);
-    void setLight(const Light& light);
+                    VkBuffer &buffer, VkDeviceMemory &bufferMemory) {
+        bufferManager.createBuffer(size, usage, properties, buffer, bufferMemory);
+    }
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        return bufferManager.findMemoryType(typeFilter, properties);
+    }
+    VkShaderModule createShaderModule(const std::vector<char> &code) {
+        return bufferManager.createShaderModule(code);
+    }
+    void setLight(const Light& light) { lightManager.setLight(light); }
     void setMsaaSampleCount(VkSampleCountFlagBits requested);
     
     // Physics world access (new abstraction)
@@ -115,23 +131,17 @@ public:
     uint32_t &videoEncodeQueueFamilyIndex;
     VkQueue &videoEncodeQueue;
 private:
-    void createLightResources();
-    void destroyLightResources();
-    void updateLightBuffer();
     VkSampleCountFlagBits queryMaxUsableSampleCount() const;
     VkSampleCountFlagBits clampSampleCount(VkSampleCountFlagBits requested) const;
 
-    Light currentLight;
-    VkBuffer lightUBO = VK_NULL_HANDLE;
-    VkDeviceMemory lightUBOMemory = VK_NULL_HANDLE;
-    void* lightUBOMapped = nullptr;
+
     VkSampleCountFlagBits msaaSampleCount = VK_SAMPLE_COUNT_1_BIT;
 
-    int batchUploadDepth = 0;
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> pendingStagingBuffers;
-    std::mutex batchMutex;
     std::mutex queueSubmitMutex;
-    VkCommandBuffer activeBatchCommandBuffer = VK_NULL_HANDLE;
+    
+    // Managers
+    BufferManager bufferManager;
+    LightManager lightManager;
     
     // Physics world (abstracted)
     std::unique_ptr<motive::IPhysicsWorld> physicsWorld;

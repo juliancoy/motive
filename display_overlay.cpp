@@ -137,12 +137,16 @@ void Display::recordOverlayCopy(VkCommandBuffer commandBuffer, uint32_t imageInd
     {
         return;
     }
-    if (overlayResources.stagingBuffer == VK_NULL_HANDLE || imageIndex >= swapchainImages.size())
+    if (overlayResources.stagingBuffer == VK_NULL_HANDLE || imageIndex >= swapchainManager.getFramebufferCount())
     {
         return;
     }
 
-    VkImage targetImage = swapchainImages[imageIndex];
+    VkImage targetImage = swapchainManager.getSwapchainImage(imageIndex);
+    if (targetImage == VK_NULL_HANDLE)
+    {
+        return;
+    }
 
     VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;

@@ -144,7 +144,7 @@ void Display::createGraphicsPipeline()
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.sampleShadingEnable = VK_TRUE;
-    multisampling.rasterizationSamples = msaaSamples;
+    multisampling.rasterizationSamples = swapchainManager.getMsaaSamples();
     multisampling.minSampleShading = 0.2f;
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -197,7 +197,7 @@ void Display::createGraphicsPipeline()
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = swapchainManager.getRenderPass();
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
     pipelineInfo.basePipelineIndex = -1;

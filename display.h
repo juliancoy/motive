@@ -19,6 +19,7 @@
 #include <vulkan/vulkan.h>
 
 #include "glyph.h"
+#include "swapchain_manager.h"
 
 // Forward declarations
 class Engine;
@@ -58,39 +59,37 @@ public:
 
     GLFWwindow* window = nullptr;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
-    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-
-    VkCommandPool swapchainCmdPool = VK_NULL_HANDLE;
-    VkCommandBuffer swapchainCmdBuffer = VK_NULL_HANDLE;
-    VkCommandBuffer swapchainRecreationCmdBuffer = VK_NULL_HANDLE;
-    VkFence swapchainRecreationFence = VK_NULL_HANDLE;
+    
+    // Accessors for swapchain resources (delegated to swapchainManager)
+    VkSwapchainKHR getSwapchain() const { return swapchainManager.getSwapchain(); }
+    VkRenderPass getRenderPass() const { return swapchainManager.getRenderPass(); }
+    VkFramebuffer getFramebuffer(uint32_t index) const { return swapchainManager.getFramebuffer(index); }
+    VkSemaphore getImageAvailableSemaphore(uint32_t frame) const { 
+        return swapchainManager.getImageAvailableSemaphore(frame); 
+    }
+    VkSemaphore getRenderFinishedSemaphore(uint32_t frame) const { 
+        return swapchainManager.getRenderFinishedSemaphore(frame); 
+    }
+    VkFence getInFlightFence(uint32_t frame) const { 
+        return swapchainManager.getInFlightFence(frame); 
+    }
+    VkFormat getSwapchainImageFormat() const { return swapchainManager.getImageFormat(); }
+    VkExtent2D getSwapchainExtent() const { return swapchainManager.getExtent(); }
+    VkSampleCountFlagBits getMsaaSamples() const { return swapchainManager.getMsaaSamples(); }
+    void setMsaaSamples(VkSampleCountFlagBits samples) { swapchainManager.setMsaaSamples(samples); }
 
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
-    VkImage depthImage = VK_NULL_HANDLE;
-    VkDeviceMemory depthImageMemory = VK_NULL_HANDLE;
-    VkImageView depthImageView = VK_NULL_HANDLE;
-    VkImage colorImage = VK_NULL_HANDLE;
-    VkDeviceMemory colorImageMemory = VK_NULL_HANDLE;
-    VkImageView colorImageView = VK_NULL_HANDLE;
     int graphicsQueueFamilyIndex = -1;
-    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    VkRenderPass renderPass = VK_NULL_HANDLE;
+    // Pipeline arrays
     std::array<VkPipeline, 3> graphicsPipelines{};
     std::array<VkPipeline, 3> transparentGraphicsPipelines{};
     std::array<VkPipeline, 3> skinnedGraphicsPipelines{};
     std::array<VkPipeline, 3> transparentSkinnedGraphicsPipelines{};
-    std::vector<VkImage> swapchainImages;
-    std::vector<VkImageView> swapchainImageViews;
-    std::vector<VkFramebuffer> swapchainFramebuffers;
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    std::vector<VkSemaphore> renderFinishedSemaphores;
-    std::vector<VkFence> inFlightFences;
-    std::vector<VkFence> imagesInFlight;
 
     bool firstFrame = true;
     size_t currentFrame = 0;
@@ -124,6 +123,10 @@ public:
     void removeCamera(Camera* camera);
     Camera* getActiveCamera() const { return cameras.empty() ? nullptr : cameras[0]; }
 
+    // Access to swapchain manager
+    SwapchainManager& getSwapchainManager() { return swapchainManager; }
+    const SwapchainManager& getSwapchainManager() const { return swapchainManager; }
+
 private:
     std::vector<std::unique_ptr<Camera>> ownedCameras;
 
@@ -142,6 +145,8 @@ private:
     Engine* engine = nullptr;
     std::mutex renderMutex;
     bool shuttingDown = false;
+
+    SwapchainManager swapchainManager;
 
     void cleanupSwapchainResources();
     void createOverlayBuffer(VkDeviceSize size);

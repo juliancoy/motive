@@ -1,4 +1,4 @@
-#include "main_window_shell.h"
+#include "shell.h"
 #include "asset_browser_widget.h"
 #include "viewport_host_widget.h"
 

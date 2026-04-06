@@ -43,7 +43,6 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     fpsFrameCounter = 0;
 
     graphicsQueue = engine->graphicsQueue;
-    msaaSamples = engine ? engine->getMsaaSampleCount() : VK_SAMPLE_COUNT_1_BIT;
     graphicsPipelines.fill(VK_NULL_HANDLE);
     transparentGraphicsPipelines.fill(VK_NULL_HANDLE);
     skinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
@@ -60,7 +59,7 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     vkDeviceWaitIdle(engine->logicalDevice);
 
     createSwapchain();
-    if (swapchain == VK_NULL_HANDLE)
+    if (swapchainManager.getSwapchain() == VK_NULL_HANDLE)
     {
         throw std::runtime_error("Swapchain creation failed");
     }
@@ -111,7 +110,7 @@ Display::~Display()
 
     if (engine && engine->logicalDevice != VK_NULL_HANDLE)
     {
-        cleanupSwapchainResources();
+        swapchainManager.shutdown();
 
         for (VkPipeline& pipeline : graphicsPipelines)
         {

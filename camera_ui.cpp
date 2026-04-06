@@ -1,4 +1,4 @@
-#include "main_window_shell.h"
+#include "shell.h"
 #include "viewport_host_widget.h"
 
 #include <QCheckBox>
