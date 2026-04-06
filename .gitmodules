@@ -22,3 +22,6 @@
 [submodule "bullet3"]
 	path = bullet3
 	url = https://github.com/bulletphysics/bullet3.git
+[submodule "jolt"]
+	path = jolt
+	url = https://github.com/jrouwe/JoltPhysics.git
