@@ -19,6 +19,10 @@ class QMouseEvent;
 class QResizeEvent;
 class QShowEvent;
 
+namespace motive {
+class IPhysicsBody;
+}
+
 namespace motive::ui {
 
 class ViewportRuntime;
@@ -71,6 +75,13 @@ public:
         bool animationLoop = true;
         float animationSpeed = 1.0f;
         bool visible = true;
+        
+        // Animation-Physics Coupling
+        QString animationPhysicsCoupling = QStringLiteral("AnimationOnly");  // Default to animation only
+        
+        // Per-object Physics Gravity
+        bool useGravity = true;  // Use world gravity by default
+        QVector3D customGravity = QVector3D(0.0f, 0.0f, 0.0f);  // Zero = use world gravity
     };
 
     struct SceneLight
@@ -146,6 +157,8 @@ public:
     void setSceneItemMeshConsolidationEnabled(int index, bool enabled);
     void updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color);
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
+    void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
+    void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
@@ -170,6 +183,9 @@ public:
     // Character controller setup
     void enableCharacterControl(int sceneIndex, bool enabled);
     bool isCharacterControlEnabled(int sceneIndex) const;
+    
+    // Physics body access for scene items
+    motive::IPhysicsBody* getPhysicsBodyForSceneItem(int sceneIndex) const;
     
     // Camera mode
     void setFreeFlyCameraEnabled(bool enabled);

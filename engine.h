@@ -24,6 +24,8 @@ class Model;  // Forward declaration
 #include "graphicsdevice.h"
 #include "camera.h"
 #include "light.h"
+#include "physics_interface.h"
+#include "physics_factory.h"
 
 class Engine
 {
@@ -76,6 +78,18 @@ public:
     void setLight(const Light& light);
     void setMsaaSampleCount(VkSampleCountFlagBits requested);
     
+    // Physics world access (new abstraction)
+    motive::IPhysicsWorld* getPhysicsWorld() { return physicsWorld.get(); }
+    const motive::IPhysicsWorld* getPhysicsWorld() const { return physicsWorld.get(); }
+    void updatePhysics(float deltaTime);
+    void syncPhysicsToModels();
+    
+    // Physics engine selection
+    void setPhysicsEngine(motive::PhysicsEngineType type);
+    motive::PhysicsEngineType getPhysicsEngineType() const { return physicsSettings.engineType; }
+    motive::PhysicsSettings& getPhysicsSettings() { return physicsSettings; }
+    const motive::PhysicsSettings& getPhysicsSettings() const { return physicsSettings; }
+    
     // Image to buffer copy for frame capture
     void copyImageToBuffer(VkImage srcImage, VkBuffer dstBuffer, 
                           uint32_t width, uint32_t height, 
@@ -118,4 +132,8 @@ private:
     std::mutex batchMutex;
     std::mutex queueSubmitMutex;
     VkCommandBuffer activeBatchCommandBuffer = VK_NULL_HANDLE;
+    
+    // Physics world (abstracted)
+    std::unique_ptr<motive::IPhysicsWorld> physicsWorld;
+    motive::PhysicsSettings physicsSettings;
 };

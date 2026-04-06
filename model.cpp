@@ -571,3 +571,103 @@ Model::~Model()
         tgltfModel = nullptr;
     }
 }
+
+// ============================================================================
+// Physics Integration
+// ============================================================================
+
+void Model::enablePhysics(motive::IPhysicsWorld& world, const motive::PhysicsBodyConfig& config)
+{
+    disablePhysics(world);
+    physicsBody = world.createPhysicsBody(this, config);
+}
+
+void Model::disablePhysics(motive::IPhysicsWorld& world)
+{
+    if (physicsBody)
+    {
+        world.removePhysicsBody(physicsBody);
+        physicsBody = nullptr;
+    }
+}
+
+void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world)
+{
+    if (!character.isControllable)
+        return;
+
+    // Ensure physics body exists for character
+    if (!physicsBody)
+    {
+        motive::PhysicsBodyConfig config;
+        config.shapeType = motive::CollisionShapeType::Capsule;
+        config.mass = 70.0f; // Average human mass
+        config.friction = 0.3f;
+        config.restitution = 0.0f;
+        config.useModelBounds = true;
+        config.isCharacter = true;
+        config.useGravity = useGravity;
+        config.customGravity = customGravity;
+        enablePhysics(world, config);
+        
+        if (physicsBody)
+        {
+            // Lock rotation (keep character upright)
+            physicsBody->setAngularVelocity(glm::vec3(0));
+            // Apply gravity settings
+            physicsBody->setUseGravity(useGravity);
+            if (customGravity.x != 0.0f || customGravity.y != 0.0f || customGravity.z != 0.0f)
+            {
+                physicsBody->setCustomGravity(customGravity);
+            }
+        }
+    }
+    
+    if (!physicsBody)
+        return;
+
+    // Get current velocity
+    glm::vec3 velocity = physicsBody->getLinearVelocity();
+    
+    // Check if grounded using raycast
+    glm::vec3 position = getCharacterPosition();
+    motive::RaycastHit groundHit = world.raycast(
+        position, 
+        position + glm::vec3(0, -1.5f, 0)
+    );
+    character.isGrounded = groundHit.hit && groundHit.distance < 1.1f;
+
+    // Handle input movement
+    if (character.isGrounded)
+    {
+        // Calculate desired velocity from input
+        glm::vec3 desiredVelocity = character.inputDir * character.moveSpeed;
+        
+        // Preserve vertical velocity for gravity
+        desiredVelocity.y = velocity.y;
+        
+        // Apply velocity with some smoothing
+        glm::vec3 velocityChange = desiredVelocity - velocity;
+        velocityChange.x *= 10.0f * deltaTime; // Horizontal smoothing
+        velocityChange.z *= 10.0f * deltaTime;
+        velocityChange.y = 0; // Don't modify vertical here
+        
+        physicsBody->setLinearVelocity(velocity + velocityChange);
+        
+        // Handle jump
+        if (character.jumpRequested && character.isGrounded)
+        {
+            physicsBody->applyCentralImpulse(glm::vec3(0, character.jumpSpeed * physicsBody->getMass(), 0));
+            character.jumpRequested = false;
+        }
+    }
+    else
+    {
+        // In air - apply gravity via physics engine, but we can add air control
+        glm::vec3 airControl = character.inputDir * character.moveSpeed * 0.1f;
+        physicsBody->applyCentralForce(airControl * physicsBody->getMass());
+    }
+    
+    // Sync transform from physics to model
+    physicsBody->syncTransformFromPhysics();
+}

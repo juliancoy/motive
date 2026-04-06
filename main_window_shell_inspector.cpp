@@ -124,7 +124,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                               const QString& activeClip = QString(),
                                               bool playing = true,
                                               bool loop = true,
-                                              float speed = 1.0f)
+                                              float speed = 1.0f,
+                                              const QString& physicsCoupling = QStringLiteral("AnimationOnly"))
     {
         if (m_animationControlsWidget)
         {
@@ -153,6 +154,56 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         m_animationPlayingCheck->setChecked(playing);
         m_animationLoopCheck->setChecked(loop);
         m_animationSpeedSpin->setValue(speed);
+        
+        // Set physics coupling
+        if (m_animationPhysicsCouplingCombo)
+        {
+            m_animationPhysicsCouplingCombo->blockSignals(true);
+            int couplingIndex = m_animationPhysicsCouplingCombo->findData(physicsCoupling);
+            if (couplingIndex >= 0)
+            {
+                m_animationPhysicsCouplingCombo->setCurrentIndex(couplingIndex);
+            }
+            m_animationPhysicsCouplingCombo->blockSignals(false);
+        }
+    };
+    const auto setGravityInspector = [this](bool visible, bool useGravity = true, const QVector3D& customGravity = QVector3D(0.0f, 0.0f, 0.0f))
+    {
+        if (m_elementUseGravityCheck)
+        {
+            m_elementUseGravityCheck->setVisible(visible);
+            if (visible)
+            {
+                m_elementUseGravityCheck->blockSignals(true);
+                m_elementUseGravityCheck->setChecked(useGravity);
+                m_elementUseGravityCheck->blockSignals(false);
+            }
+        }
+        if (m_elementGravityWidget)
+        {
+            m_elementGravityWidget->setVisible(visible);
+            if (visible)
+            {
+                if (m_elementGravityX)
+                {
+                    m_elementGravityX->blockSignals(true);
+                    m_elementGravityX->setValue(customGravity.x());
+                    m_elementGravityX->blockSignals(false);
+                }
+                if (m_elementGravityY)
+                {
+                    m_elementGravityY->blockSignals(true);
+                    m_elementGravityY->setValue(customGravity.y());
+                    m_elementGravityY->blockSignals(false);
+                }
+                if (m_elementGravityZ)
+                {
+                    m_elementGravityZ->blockSignals(true);
+                    m_elementGravityZ->setValue(customGravity.z());
+                    m_elementGravityZ->blockSignals(false);
+                }
+            }
+        }
     };
     const auto setTexturePreview = [this](const QImage& image)
     {
@@ -264,6 +315,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(false);
             setAnimationInspector(false);
+            setGravityInspector(false);
             setTexturePreview(QImage());
             
             // Show follow target selector for all cameras
@@ -293,6 +345,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setLightInspectorVisible(true);
             setFollowTargetInspectorVisible(false);
             setAnimationInspector(false);
+            setGravityInspector(false);
             if (m_viewportHost)
             {
                 const auto light = m_viewportHost->sceneLight();
@@ -385,7 +438,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                           selectedClip,
                           item.animationPlaying,
                           item.animationLoop,
-                          item.animationSpeed);
+                          item.animationSpeed,
+                          item.animationPhysicsCoupling);
+    setGravityInspector(true, item.useGravity, item.customGravity);
     if (m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0)
     {
         setTexturePreview(m_viewportHost->primitiveTexturePreview(row, meshIndex, primitiveIndex));

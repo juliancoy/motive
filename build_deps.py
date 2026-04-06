@@ -466,6 +466,41 @@ def setup_freetype():
     run_command("make install", cwd=build_dir)
     print(f"FreeType built and installed to {install_dir}")
 
+def setup_bullet():
+    """Build Bullet Physics library from the submodule."""
+    ensure_exists_or_exit("bullet3")
+    
+    bullet_dir = Path("bullet3")
+    build_dir = bullet_dir / "build"
+    
+    # Check if already built
+    lib_dir = build_dir / "lib"
+    if lib_dir.exists() and any(lib_dir.glob("libBulletDynamics*")):
+        print("Bullet Physics already built; skipping rebuild.")
+        return
+    
+    print("Building Bullet Physics...")
+    build_dir.mkdir(exist_ok=True)
+    
+    # CMake configuration flags
+    cmake_flags = [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DUSE_DOUBLE_PRECISION=OFF",
+        "-DBUILD_CPU_DEMOS=OFF",
+        "-DBUILD_OPENGL3_DEMOS=OFF",
+        "-DBUILD_BULLET2_DEMOS=OFF",
+        "-DBUILD_EXTRAS=OFF",
+        "-DBUILD_UNIT_TESTS=OFF",
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+    ]
+    
+    cmake_cmd = f"cmake .. " + " ".join(cmake_flags)
+    run_command(cmake_cmd, cwd=build_dir)
+    run_command(f"make -j{os.cpu_count()}", cwd=build_dir)
+    
+    print(f"Bullet Physics built in {build_dir}")
+
 def main():
     print("=== Checking and setting up development dependencies ===")
     setup_vulkan_headers()
@@ -475,6 +510,7 @@ def main():
     setup_ffnvcodec()
     setup_ffmpeg()
     setup_freetype()
+    setup_bullet()
     print("=== Setup complete ===")
 
 if __name__ == "__main__":

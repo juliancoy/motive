@@ -15,6 +15,7 @@
 
 #include "object_transform.h"
 #include "animation.h"
+#include "physics_interface.h"
 
 class Engine;
 class Model;
@@ -227,6 +228,31 @@ public:
     int idleClipIndex = -1;
     int walkClipIndex = -1;
     int runClipIndex = -1;
+    
+    // Physics body (if physics is enabled for this model)
+    motive::IPhysicsBody* physicsBody = nullptr;
+    
+    // Enable physics for this model
+    void enablePhysics(motive::IPhysicsWorld& world, const motive::PhysicsBodyConfig& config = motive::PhysicsBodyConfig());
+    void disablePhysics(motive::IPhysicsWorld& world);
+    bool hasPhysics() const { return physicsBody != nullptr; }
+    motive::IPhysicsBody* getPhysicsBody() const { return physicsBody; }
+    
+    // Update character physics using physics engine
+    void updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world);
+    
+    // Animation-Physics Coupling
+    std::string animationPhysicsCoupling = "AnimationOnly";  // Default
+    void setAnimationPhysicsCoupling(const std::string& coupling) { animationPhysicsCoupling = coupling; }
+    const std::string& getAnimationPhysicsCoupling() const { return animationPhysicsCoupling; }
+    
+    // Per-object gravity settings
+    bool useGravity = true;
+    glm::vec3 customGravity = glm::vec3(0.0f);
+    void setUseGravity(bool use) { useGravity = use; }
+    bool getUseGravity() const { return useGravity; }
+    void setCustomGravity(const glm::vec3& gravity) { customGravity = gravity; }
+    const glm::vec3& getCustomGravity() const { return customGravity; }
 
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);

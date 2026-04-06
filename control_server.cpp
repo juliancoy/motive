@@ -405,6 +405,32 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/physics_coupling")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("physics_coupling"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("physics_coupling control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/physics_gravity")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("physics_gravity"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("physics_gravity control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
 
         return jsonResponse(404, compactJson(QJsonObject{
             {QStringLiteral("ok"), false},

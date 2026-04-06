@@ -83,6 +83,17 @@ private:
     QCheckBox* m_animationPlayingCheck = nullptr;
     QCheckBox* m_animationLoopCheck = nullptr;
     QDoubleSpinBox* m_animationSpeedSpin = nullptr;
+    
+    // Animation-Physics Coupling
+    QComboBox* m_animationPhysicsCouplingCombo = nullptr;
+    
+    // Per-object Physics Gravity
+    QCheckBox* m_elementUseGravityCheck = nullptr;
+    QDoubleSpinBox* m_elementGravityX = nullptr;
+    QDoubleSpinBox* m_elementGravityY = nullptr;
+    QDoubleSpinBox* m_elementGravityZ = nullptr;
+    QWidget* m_elementGravityWidget = nullptr;
+    
     QWidget* m_lightTypeWidget = nullptr;
     QComboBox* m_lightTypeCombo = nullptr;
     QDoubleSpinBox* m_lightBrightnessSpin = nullptr;

@@ -44,7 +44,10 @@ void ViewportSceneController::loadAssetFromPath(const QString& path)
         true,
         true,
         1.0f,
-        true
+        true,
+        QStringLiteral("AnimationOnly"),  // animationPhysicsCoupling
+        true,  // useGravity
+        QVector3D(0.0f, 0.0f, 0.0f)  // customGravity
     });
     m_currentAssetPath = path;
     if (!m_runtime.isInitialized() || !m_runtime.engine())
@@ -280,6 +283,51 @@ void ViewportSceneController::updateSceneItemAnimationState(int index, const QSt
         m_runtime.engine()->models[static_cast<size_t>(index)])
     {
         m_runtime.engine()->models[static_cast<size_t>(index)]->setAnimationPlaybackState(activeClip.toStdString(), playing, loop, speed);
+    }
+}
+
+void ViewportSceneController::updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+    m_sceneEntries[index].animationPhysicsCoupling = couplingMode;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        m_runtime.engine()->models[static_cast<size_t>(index)]->setAnimationPhysicsCoupling(couplingMode.toStdString());
+    }
+}
+
+void ViewportSceneController::updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+    m_sceneEntries[index].useGravity = useGravity;
+    m_sceneEntries[index].customGravity = customGravity;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        auto& model = m_runtime.engine()->models[static_cast<size_t>(index)];
+        model->setUseGravity(useGravity);
+        model->setCustomGravity(glm::vec3(customGravity.x(), customGravity.y(), customGravity.z()));
+        
+        // If physics body already exists, update it
+        if (auto* body = model->getPhysicsBody())
+        {
+            body->setUseGravity(useGravity);
+            if (customGravity.x() != 0.0f || customGravity.y() != 0.0f || customGravity.z() != 0.0f)
+            {
+                body->setCustomGravity(glm::vec3(customGravity.x(), customGravity.y(), customGravity.z()));
+            }
+        }
     }
 }
 

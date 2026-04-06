@@ -406,6 +406,22 @@ bool ViewportHostWidget::isCharacterControlEnabled(int sceneIndex) const
     return model->character.isControllable;
 }
 
+motive::IPhysicsBody* ViewportHostWidget::getPhysicsBodyForSceneItem(int sceneIndex) const
+{
+    if (!m_runtime || !m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return nullptr;
+    }
+    
+    const auto& model = m_runtime->engine()->models[sceneIndex];
+    if (!model)
+    {
+        return nullptr;
+    }
+    
+    return model->getPhysicsBody();
+}
+
 void ViewportHostWidget::setFreeFlyCameraEnabled(bool enabled)
 {
     m_freeFlyCameraEnabled = enabled;
@@ -956,6 +972,23 @@ void ViewportHostWidget::updateSceneItemAnimationState(int index, const QString&
     notifySceneChanged();
 }
 
+void ViewportHostWidget::updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode)
+{
+    if (!m_sceneController)
+    {
+        qWarning() << "[ViewportHost] Cannot update coupling - scene controller is null";
+        return;
+    }
+    m_sceneController->updateSceneItemAnimationPhysicsCoupling(index, couplingMode);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity)
+{
+    m_sceneController->updateSceneItemPhysicsGravity(index, useGravity, customGravity);
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::renameSceneItem(int index, const QString& name)
 {
     m_sceneController->renameSceneItem(index, name);
@@ -1386,7 +1419,15 @@ void ViewportHostWidget::renderFrame()
                 // Update character physics before animation
                 if (model->character.isControllable)
                 {
-                    model->updateCharacterPhysics(dt);
+                    // Use physics world version if available to create physics body
+                    if (auto* physicsWorld = m_runtime->engine()->getPhysicsWorld())
+                    {
+                        model->updateCharacterPhysics(dt, *physicsWorld);
+                    }
+                    else
+                    {
+                        model->updateCharacterPhysics(dt);
+                    }
                 }
                 
                 model->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),

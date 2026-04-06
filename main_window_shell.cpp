@@ -2,6 +2,9 @@
 #include "asset_browser_widget.h"
 #include "viewport_host_widget.h"
 #include "transform_undo_command.h"
+#include "physics_interface.h"
+
+#include <glm/glm.hpp>
 
 #include <QShortcut>
 #include <QUndoView>
@@ -375,9 +378,22 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     animationSpeedLayout->addWidget(new QLabel(QStringLiteral("Speed:"), animationSpeedWidget));
     animationSpeedLayout->addWidget(m_animationSpeedSpin);
     animationSpeedLayout->addStretch(1);
+    
+    // Animation-Physics Coupling dropdown
+    m_animationPhysicsCouplingCombo = new QComboBox(m_animationControlsWidget);
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Animation Only"), QStringLiteral("AnimationOnly"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Kinematic"), QStringLiteral("Kinematic"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Root Motion + Physics"), QStringLiteral("RootMotionPhysics"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Physics Driven"), QStringLiteral("PhysicsDriven"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Ragdoll"), QStringLiteral("Ragdoll"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Partial Ragdoll"), QStringLiteral("PartialRagdoll"));
+    m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Active Ragdoll"), QStringLiteral("ActiveRagdoll"));
+    
     animationControlsLayout->addWidget(m_animationClipCombo);
     animationControlsLayout->addWidget(animationFlagsWidget);
     animationControlsLayout->addWidget(animationSpeedWidget);
+    animationControlsLayout->addWidget(new QLabel(QStringLiteral("Physics Coupling:"), m_animationControlsWidget));
+    animationControlsLayout->addWidget(m_animationPhysicsCouplingCombo);
 
     m_lightTypeCombo = new QComboBox(inspectorPanel);
     m_lightTypeCombo->addItem(QStringLiteral("Directional"), QStringLiteral("directional"));
@@ -452,6 +468,22 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     scaleLayout->addWidget(new QLabel("Z:", scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleZ);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
+    
+    // Per-object Gravity controls
+    m_elementUseGravityCheck = new QCheckBox(QStringLiteral("Use World Gravity"), inspectorPanel);
+    m_elementUseGravityCheck->setChecked(true);
+    m_elementGravityWidget = new QWidget(inspectorPanel);
+    auto* elementGravityLayout = new QHBoxLayout(m_elementGravityWidget);
+    m_elementGravityX = createSpinBox(inspectorPanel, -50.0, 50.0, 0.1);
+    m_elementGravityY = createSpinBox(inspectorPanel, -50.0, 50.0, 0.1);
+    m_elementGravityZ = createSpinBox(inspectorPanel, -50.0, 50.0, 0.1);
+    elementGravityLayout->addWidget(new QLabel("X:", m_elementGravityWidget));
+    elementGravityLayout->addWidget(m_elementGravityX);
+    elementGravityLayout->addWidget(new QLabel("Y:", m_elementGravityWidget));
+    elementGravityLayout->addWidget(m_elementGravityY);
+    elementGravityLayout->addWidget(new QLabel("Z:", m_elementGravityWidget));
+    elementGravityLayout->addWidget(m_elementGravityZ);
+    elementGravityLayout->setContentsMargins(0, 0, 0, 0);
 
     inspectorLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
     inspectorLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
@@ -475,6 +507,8 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Translation"), translationWidget);
     inspectorLayout->addRow(QStringLiteral("Rotation"), rotationWidget);
     inspectorLayout->addRow(QStringLiteral("Scale"), scaleWidget);
+    inspectorLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
+    inspectorLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
     m_rightTabs->addTab(inspectorPanel, QStringLiteral("Element"));
     inspectorDock->setWidget(m_rightTabs);
     addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
@@ -513,12 +547,41 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         m_sceneItems[row].animationPlaying = m_animationPlayingCheck->isChecked();
         m_sceneItems[row].animationLoop = m_animationLoopCheck->isChecked();
         m_sceneItems[row].animationSpeed = static_cast<float>(m_animationSpeedSpin->value());
+        if (m_animationPhysicsCouplingCombo) {
+            m_sceneItems[row].animationPhysicsCoupling = m_animationPhysicsCouplingCombo->currentData().toString();
+            m_viewportHost->updateSceneItemAnimationPhysicsCoupling(row, m_animationPhysicsCouplingCombo->currentData().toString());
+        }
         saveProjectState();
     };
     connect(m_animationClipCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
     connect(m_animationPlayingCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
     connect(m_animationLoopCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
     connect(m_animationSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
+    connect(m_animationPhysicsCouplingCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
+    
+    // Connect per-object gravity controls
+    auto applyGravityInspector = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size() || !m_elementUseGravityCheck) return;
+        
+        m_sceneItems[row].useGravity = m_elementUseGravityCheck->isChecked();
+        m_sceneItems[row].customGravity = QVector3D(
+            static_cast<float>(m_elementGravityX ? m_elementGravityX->value() : 0.0),
+            static_cast<float>(m_elementGravityY ? m_elementGravityY->value() : 0.0),
+            static_cast<float>(m_elementGravityZ ? m_elementGravityZ->value() : 0.0)
+        );
+        
+        // Update physics through viewport host
+        m_viewportHost->updateSceneItemPhysicsGravity(row, m_sceneItems[row].useGravity, m_sceneItems[row].customGravity);
+        
+        saveProjectState();
+    };
+    connect(m_elementUseGravityCheck, &QCheckBox::toggled, this, [applyGravityInspector](bool) { applyGravityInspector(); });
+    connect(m_elementGravityX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
+    connect(m_elementGravityY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
+    connect(m_elementGravityZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
 
     connect(m_primitiveCullModeCombo, &QComboBox::currentIndexChanged, this, [this]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_primitiveCullModeCombo)

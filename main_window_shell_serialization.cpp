@@ -111,7 +111,10 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("animationPlaying"), item.animationPlaying},
             {QStringLiteral("animationLoop"), item.animationLoop},
             {QStringLiteral("animationSpeed"), item.animationSpeed},
-            {QStringLiteral("visible"), item.visible}
+            {QStringLiteral("visible"), item.visible},
+            {QStringLiteral("animationPhysicsCoupling"), item.animationPhysicsCoupling},
+            {QStringLiteral("useGravity"), item.useGravity},
+            {QStringLiteral("customGravity"), QJsonArray{item.customGravity.x(), item.customGravity.y(), item.customGravity.z()}}
         });
     }
     return array;
@@ -153,7 +156,10 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             object.value(QStringLiteral("animationPlaying")).toBool(true),
             object.value(QStringLiteral("animationLoop")).toBool(true),
             static_cast<float>(object.value(QStringLiteral("animationSpeed")).toDouble(1.0)),
-            object.value(QStringLiteral("visible")).toBool(true)
+            object.value(QStringLiteral("visible")).toBool(true),
+            object.value(QStringLiteral("animationPhysicsCoupling")).toString(QStringLiteral("AnimationOnly")),
+            object.value(QStringLiteral("useGravity")).toBool(true),
+            readVector(object.value(QStringLiteral("customGravity")), QVector3D(0.0f, 0.0f, 0.0f))
         });
     }
     return result;

@@ -144,6 +144,9 @@ include_paths = [
     os.path.abspath(os.path.join(this_dir, "common_vv/libs")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/include")),
     os.path.abspath(os.path.join(this_dir, "vk_video_decoder/libs")),
+    os.path.abspath(os.path.join(this_dir, "bullet3/src")),
+    os.path.abspath(os.path.join(this_dir, "ufbx")),
+    os.path.abspath(os.path.join(this_dir, "jolt")),
     # ncnn integration optional; keep out of default include paths.
 ]
 for system_include in ("/usr/include/freetype2", "/usr/local/include/freetype2"):
@@ -157,6 +160,13 @@ lib_paths = [
     os.path.abspath(os.path.join(this_dir, "freetype/build")),
     # ncnn integration optional; keep out of default library paths.
     os.path.abspath(os.path.join(this_dir, ".")),
+    # Bullet Physics library paths
+    os.path.abspath(os.path.join(this_dir, "bullet3/build/src/BulletDynamics")),
+    os.path.abspath(os.path.join(this_dir, "bullet3/build/src/BulletCollision")),
+    os.path.abspath(os.path.join(this_dir, "bullet3/build/src/LinearMath")),
+    # ncnn/glslang library paths
+    os.path.abspath(os.path.join(this_dir, "ncnn/build/src")),
+    os.path.abspath(os.path.join(this_dir, "ncnn/build/glslang/glslang")),
 ]
 core_libraries = [
     "glfw3",
@@ -168,14 +178,13 @@ core_libraries = [
     "avutil",
     "swresample",
     "freetype",
-    # "ncnn" (optional; enable only when built/installed)
-    "glslang",
-    "glslang-default-resource-limits",
     "m",
     "pthread",
     "dl",
     "gomp",
 ]
+
+
 
 # Optional libraries may not be present on every system; include them only if
 # we can actually find an archive or a shared object to link against.
@@ -280,6 +289,65 @@ def collect_link_args(required_libs, optional_libs):
 
 
 library_link_args = collect_link_args(core_libraries, optional_libraries)
+
+# Add Qt libraries if available
+qt_link_flags = try_pkg_config_flags("Qt6Core", "Qt6Gui", "Qt6Widgets", mode="--libs")
+if qt_link_flags:
+    library_link_args.append(qt_link_flags)
+
+# Always enable Jolt if library is present
+if os.path.exists(os.path.abspath(os.path.join(this_dir, "jolt/Build/Linux_Release/libJolt.a"))):
+    # Jolt is available - add define for conditional compilation
+    # Note: This would need to be passed to the compiler via extra_flags in compile_cpp_to_o
+    pass
+
+# Add Bullet libraries directly (they use full paths)
+bullet_lib_dir = os.path.abspath(os.path.join(this_dir, "bullet3/build/src"))
+bullet_libraries = [
+    os.path.join(bullet_lib_dir, "BulletDynamics/libBulletDynamics.a"),
+    os.path.join(bullet_lib_dir, "BulletCollision/libBulletCollision.a"),
+    os.path.join(bullet_lib_dir, "LinearMath/libLinearMath.a"),
+]
+for bullet_lib in bullet_libraries:
+    if os.path.exists(bullet_lib):
+        library_link_args.append(bullet_lib)
+    else:
+        print(f"Warning: Bullet library not found: {bullet_lib}")
+
+# Add Jolt library if available
+jolt_lib = os.path.abspath(os.path.join(this_dir, "jolt/Build/Linux_Release/libJolt.a"))
+if os.path.exists(jolt_lib):
+    library_link_args.append(jolt_lib)
+    print("Jolt Physics library found and linked")
+else:
+    print("Note: Jolt Physics library not found (optional)")
+
+# Add ncnn/glslang libraries
+ncnn_lib_dir = os.path.abspath(os.path.join(this_dir, "ncnn/build"))
+ncnn_libraries = [
+    os.path.join(ncnn_lib_dir, "glslang/glslang/libglslang.a"),
+    os.path.join(ncnn_lib_dir, "glslang/glslang/libglslang-default-resource-limits.a"),
+    os.path.join(ncnn_lib_dir, "src/libncnn.a"),
+]
+for ncnn_lib in ncnn_libraries:
+    if os.path.exists(ncnn_lib):
+        library_link_args.append(ncnn_lib)
+    else:
+        print(f"Note: ncnn/glslang library not found: {ncnn_lib}")
+
+# Add ufbx object file if available
+ufbx_obj = os.path.abspath(os.path.join(this_dir, "ufbx/ufbx.o"))
+if os.path.exists(ufbx_obj):
+    library_link_args.append(ufbx_obj)
+else:
+    # Try to compile ufbx.c
+    ufbx_c = os.path.abspath(os.path.join(this_dir, "ufbx/ufbx.c"))
+    if os.path.exists(ufbx_c):
+        ufbx_compile_cmd = "gcc -c -O2 -fPIC ufbx/ufbx.c -o ufbx/ufbx.o"
+        print("Compiling ufbx.c...")
+        result = subprocess.run(ufbx_compile_cmd, shell=True, cwd=this_dir)
+        if result.returncode == 0 and os.path.exists(ufbx_obj):
+            library_link_args.append(ufbx_obj)
 qt_packages = ["Qt6Widgets", "Qt6Gui", "Qt6Core"]
 qt_include_flags = try_pkg_config_flags(*qt_packages, mode="--cflags")
 qt_link_flags = try_pkg_config_flags(*qt_packages, mode="--libs")

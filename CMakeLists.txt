@@ -61,6 +61,9 @@ set(MOTIVE_INCLUDE_DIRS
     "${MOTIVE_ROOT}/vk_video_decoder/include"
     "${MOTIVE_ROOT}/vk_video_decoder/libs"
     "${MOTIVE_ROOT}/ufbx"
+    "${MOTIVE_ROOT}/bullet3/src"
+    "${MOTIVE_ROOT}/jolt"
+    "${MOTIVE_ROOT}/jolt/Build/Linux_Release"
 )
 
 set(MOTIVE_LIBRARY_DIRS
@@ -71,6 +74,8 @@ set(MOTIVE_LIBRARY_DIRS
     "${MOTIVE_ROOT}/ncnn/build/src"
     "${MOTIVE_ROOT}/ncnn/build/glslang/glslang"
     "${MOTIVE_ROOT}"
+    "${MOTIVE_ROOT}/bullet3/build/lib"
+    "${MOTIVE_ROOT}/jolt/Build/Linux_Release"
 )
 
 motive_find_library(MOTIVE_GLFW_LIBRARY REQUIRED
@@ -94,6 +99,14 @@ motive_find_library(MOTIVE_FREETYPE_LIBRARY REQUIRED NAMES freetype PATHS "${MOT
 motive_find_library(MOTIVE_NCNN_LIBRARY REQUIRED NAMES ncnn PATHS "${MOTIVE_ROOT}/ncnn/build/src")
 motive_find_library(MOTIVE_GLSLANG_LIBRARY REQUIRED NAMES glslang PATHS "${MOTIVE_ROOT}/ncnn/build/glslang/glslang")
 motive_find_library(MOTIVE_GLSLANG_LIMITS_LIBRARY REQUIRED NAMES glslang-default-resource-limits PATHS "${MOTIVE_ROOT}/ncnn/build/glslang/glslang")
+
+# Bullet Physics libraries
+motive_find_library(MOTIVE_BULLET_DYNAMICS_LIBRARY REQUIRED NAMES BulletDynamics 
+    PATHS "${MOTIVE_ROOT}/bullet3/build/src/BulletDynamics")
+motive_find_library(MOTIVE_BULLET_COLLISION_LIBRARY REQUIRED NAMES BulletCollision 
+    PATHS "${MOTIVE_ROOT}/bullet3/build/src/BulletCollision")
+motive_find_library(MOTIVE_BULLET_LINEAR_MATH_LIBRARY REQUIRED NAMES LinearMath 
+    PATHS "${MOTIVE_ROOT}/bullet3/build/src/LinearMath")
 
 motive_find_library(MOTIVE_PNG_LIBRARY NAMES png PATHS ${MOTIVE_LIBRARY_DIRS})
 motive_find_library(MOTIVE_BROTLIDEC_LIBRARY NAMES brotlidec PATHS ${MOTIVE_LIBRARY_DIRS})
@@ -120,6 +133,9 @@ set(MOTIVE_COMMON_LINK_LIBS
     ${MOTIVE_NCNN_LIBRARY}
     ${MOTIVE_GLSLANG_LIBRARY}
     ${MOTIVE_GLSLANG_LIMITS_LIBRARY}
+    ${MOTIVE_BULLET_DYNAMICS_LIBRARY}
+    ${MOTIVE_BULLET_COLLISION_LIBRARY}
+    ${MOTIVE_BULLET_LINEAR_MATH_LIBRARY}
     OpenMP::OpenMP_CXX
     Threads::Threads
     ${CMAKE_DL_LIBS}
@@ -143,6 +159,17 @@ foreach(optional_lib
         list(APPEND MOTIVE_COMMON_LINK_LIBS ${${optional_lib}})
     endif()
 endforeach()
+
+# Jolt Physics library (optional)
+motive_find_library(MOTIVE_JOLT_LIBRARY NAMES Jolt PATHS "${MOTIVE_ROOT}/jolt/Build/Linux_Release")
+
+if(MOTIVE_JOLT_LIBRARY)
+    message(STATUS "Jolt Physics library found: ${MOTIVE_JOLT_LIBRARY}")
+    add_compile_definitions(MOTIVE_JOLT_AVAILABLE=1)
+    list(APPEND MOTIVE_COMMON_LINK_LIBS ${MOTIVE_JOLT_LIBRARY})
+else()
+    message(STATUS "Jolt Physics library not found, Jolt backend will be unavailable")
+endif()
 
 file(GLOB MOTIVE_ROOT_CPP CONFIGURE_DEPENDS "${MOTIVE_ROOT}/*.cpp")
 file(GLOB_RECURSE MOTIVE_COMMON_VV_CPP CONFIGURE_DEPENDS "${MOTIVE_ROOT}/common_vv/libs/*.cpp")

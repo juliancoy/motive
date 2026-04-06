@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "model.h"
+#include "physics_factory.h"
 #include <../tinygltf/tiny_gltf.h>
 #include <array>
 
@@ -33,6 +34,13 @@ Engine::Engine()
     renderDevice.initialize();
     msaaSampleCount = queryMaxUsableSampleCount();
     createLightResources();
+    
+    // Initialize physics world using factory
+    physicsWorld = motive::PhysicsFactory::createWorld(physicsSettings.engineType);
+    if (physicsWorld) {
+        physicsWorld->initialize();
+        physicsWorld->setGravity(physicsSettings.gravity);
+    }
 }
 
 void Engine::nameVulkanObject(uint64_t handle, VkObjectType type, const char* name) {
@@ -166,6 +174,9 @@ Engine::~Engine()
         vkDeviceWaitIdle(logicalDevice);
     }
 
+    // Shutdown physics before models are destroyed
+    physicsWorld.reset();
+    
     models.clear();
 
     for (auto &display : displays)
@@ -315,6 +326,42 @@ VkSampleCountFlagBits Engine::clampSampleCount(VkSampleCountFlagBits requested) 
             return candidate;
     }
     return VK_SAMPLE_COUNT_1_BIT;
+}
+
+void Engine::updatePhysics(float deltaTime)
+{
+    if (physicsWorld) {
+        physicsWorld->stepSimulation(deltaTime, physicsSettings.maxSubSteps);
+        if (physicsSettings.autoSync) {
+            physicsWorld->syncAllTransforms();
+        }
+    }
+}
+
+void Engine::syncPhysicsToModels()
+{
+    if (physicsWorld) {
+        physicsWorld->syncAllTransforms();
+    }
+}
+
+void Engine::setPhysicsEngine(motive::PhysicsEngineType type)
+{
+    if (physicsSettings.engineType == type) return;
+    
+    // Store old bodies info if needed
+    // For now, we just recreate the world
+    physicsWorld.reset();
+    
+    physicsSettings.engineType = type;
+    physicsWorld = motive::PhysicsFactory::createWorld(type);
+    
+    if (physicsWorld) {
+        physicsWorld->initialize();
+        physicsWorld->setGravity(physicsSettings.gravity);
+    }
+    
+    std::cout << "[Engine] Switched physics engine to: " << motive::PhysicsFactory::getBackendName(type) << std::endl;
 }
 
 // Image to buffer copy for frame capture
