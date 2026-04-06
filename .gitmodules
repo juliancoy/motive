@@ -25,3 +25,6 @@
 [submodule "jolt"]
 	path = jolt
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "VulkanMemoryAllocator"]
+	path = VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
