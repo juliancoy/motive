@@ -5,7 +5,7 @@
 #include "model.h"
 #include "light.h"
 #include "utils.h"
-#include "glyph.h"
+#include "text_rendering.h"
 #include "video_frame_utils.h"
 
 #include <iostream>

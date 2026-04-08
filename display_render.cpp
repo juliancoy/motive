@@ -84,7 +84,7 @@ void Display::render()
         return;
     }
 
-    const int MAX_FRAMES_IN_FLIGHT = 1;
+    const uint32_t maxFramesInFlight = swapchainManager.getMaxFramesInFlight();
 
     if (framebufferResized)
     {
@@ -305,7 +305,7 @@ void Display::render()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    VkSemaphore renderFinishedSemaphore = swapchainManager.getRenderFinishedSemaphore(imageIndex);
+    VkSemaphore renderFinishedSemaphore = swapchainManager.getRenderFinishedSemaphore(currentFrame);
     VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
@@ -338,6 +338,6 @@ void Display::render()
         fpsLastSampleTime = now;
     }
 
-    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    currentFrame = (currentFrame + 1) % maxFramesInFlight;
     glfwPollEvents();
 }

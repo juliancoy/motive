@@ -12,7 +12,7 @@
 #include <limits>
 
 #include "engine.h"
-#include "glyph.h"
+#include "text_rendering.h"
 #include "overlay.hpp"
 
 namespace

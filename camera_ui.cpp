@@ -1,5 +1,5 @@
 #include "shell.h"
-#include "viewport_host_widget.h"
+#include "host_widget.h"
 
 #include <QCheckBox>
 #include <QColor>
@@ -52,6 +52,12 @@ void MainWindowShell::setupCameraSettingsPanel()
         m_viewportHost->setMeshConsolidationEnabled(checked);
         saveProjectState();
     });
+    
+    // Parallel loading toggle
+    auto* parallelLoadCheck = new QCheckBox(QStringLiteral("Enable parallel model loading"), cameraPanel);
+    parallelLoadCheck->setChecked(true);
+    parallelLoadCheck->setToolTip(QStringLiteral("Load multiple models in parallel using multiple CPU cores (requires restart)"));
+    cameraLayout->addRow(QStringLiteral("Performance"), parallelLoadCheck);
     
     // Validation layers toggle
     m_validationLayersCheck = new QCheckBox(QStringLiteral("Enable Vulkan validation layers"), cameraPanel);
@@ -132,6 +138,9 @@ void MainWindowShell::setupCameraSettingsPanel()
     });
 
     m_rightTabs->addTab(cameraPanel, QStringLiteral("Global"));
+    
+    // Store reference to parallel load checkbox for persistence (optional)
+    // Note: This would need a member variable to be added to shell.h if we want to persist the setting
 }
 
 void MainWindowShell::updateCameraSettingsPanel()

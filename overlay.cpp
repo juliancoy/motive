@@ -9,7 +9,7 @@
 #include <glm/glm.hpp>
 
 #include "engine.h"
-#include "glyph.h"
+#include "text_rendering.h"
 #include "utils.h"
 
 namespace overlay

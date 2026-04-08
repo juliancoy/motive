@@ -1,12 +1,12 @@
-#include "viewport_host_widget.h"
+#include "host_widget.h"
 
 #include "camera.h"  // Include for Camera class
-#include "viewport_asset_loader.h"
-#include "viewport_camera_controller.h"
-#include "viewport_hierarchy_builder.h"
+#include "asset_loader.h"
+#include "camera_controller.h"
+#include "hierarchy_builder.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
-#include "viewport_scene_controller.h"
+#include "scene_controller.h"
 
 #include "camera.h"
 #include "display.h"
@@ -1544,10 +1544,19 @@ void ViewportHostWidget::notifyCameraChangedIfNeeded()
 
 void ViewportHostWidget::notifySceneChanged()
 {
-    if (m_sceneChangedCallback)
+    if (!m_sceneChangedCallback)
     {
-        m_sceneChangedCallback(sceneItems());
+        return;
     }
+    
+    // Defer to main thread if called from worker thread
+    // This prevents crashes when parallel loader invokes callbacks
+    QTimer::singleShot(0, this, [this]() {
+        if (m_sceneChangedCallback)
+        {
+            m_sceneChangedCallback(sceneItems());
+        }
+    });
 }
 
 void ViewportHostWidget::applySceneLightToRuntime()

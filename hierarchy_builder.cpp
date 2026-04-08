@@ -1,8 +1,8 @@
-#include "viewport_hierarchy_builder.h"
+#include "hierarchy_builder.h"
 
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
-#include "viewport_scene_controller.h"
+#include "scene_controller.h"
 
 #include "camera.h"
 #include "display.h"

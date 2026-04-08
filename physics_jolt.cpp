@@ -8,7 +8,12 @@
 // Only compile if Jolt is available
 #ifdef MOTIVE_JOLT_AVAILABLE
 
-// Jolt assertion callback (required by Jolt library)
+// Must include Jolt headers before using any JPH types
+#include <Jolt/Jolt.h>
+#include <Jolt/Core/IssueReporting.h>
+
+// Jolt assertion callback (required by Jolt library when asserts are enabled)
+#ifdef JPH_ENABLE_ASSERTS
 static bool MotiveAssertFailed(const char* inExpression, const char* inMessage, const char* inFile, JPH::uint inLine) {
     std::cerr << "[Jolt Assert] " << inFile << ":" << inLine << " - " << inExpression;
     if (inMessage) std::cerr << ": " << inMessage;
@@ -16,10 +21,11 @@ static bool MotiveAssertFailed(const char* inExpression, const char* inMessage, 
     return true; // Return true to break into debugger
 }
 
-// Define the extern AssertFailed variable that Jolt expects
+// Define the extern AssertFailed symbol that Jolt expects
 namespace JPH {
     AssertFailedFunction AssertFailed = MotiveAssertFailed;
 }
+#endif // JPH_ENABLE_ASSERTS
 
 namespace motive {
 

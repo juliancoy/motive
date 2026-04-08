@@ -27,7 +27,6 @@ class Model;  // Forward declaration
 #include "light_manager.h"
 #include "buffer_manager.h"
 #include "physics_interface.h"
-#include "physics_factory.h"
 
 class Engine
 {
@@ -106,6 +105,10 @@ public:
     motive::PhysicsSettings& getPhysicsSettings() { return physicsSettings; }
     const motive::PhysicsSettings& getPhysicsSettings() const { return physicsSettings; }
     
+    // Parallel loading settings
+    void setParallelModelLoading(bool enabled) { parallelModelLoading = enabled; }
+    bool isParallelModelLoadingEnabled() const { return parallelModelLoading; }
+    
     // Image to buffer copy for frame capture
     void copyImageToBuffer(VkImage srcImage, VkBuffer dstBuffer, 
                           uint32_t width, uint32_t height, 
@@ -146,4 +149,7 @@ private:
     // Physics world (abstracted)
     std::unique_ptr<motive::IPhysicsWorld> physicsWorld;
     motive::PhysicsSettings physicsSettings;
+    
+    // Settings
+    bool parallelModelLoading = false;  // Default to serial loading (safer)
 };

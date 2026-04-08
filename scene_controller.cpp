@@ -1,6 +1,6 @@
-#include "viewport_scene_controller.h"
+#include "scene_controller.h"
 
-#include "viewport_asset_loader.h"
+#include "asset_loader.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
 
@@ -442,20 +442,38 @@ void ViewportSceneController::restorePendingEntries()
     const QList<ViewportHostWidget::SceneItem> pendingEntries = m_pendingSceneEntries;
     m_pendingSceneEntries.clear();
 
-    for (auto entry : pendingEntries)
+    // Track total loading time
+    auto totalStart = std::chrono::high_resolution_clock::now();
+    
+    // Use batch loading for multiple entries when parallel loading is enabled
+    // TEMPORARILY DISABLED - testing crash fix
+    if (false && pendingEntries.size() > 1 && 
+        m_runtime.engine() && 
+        m_runtime.engine()->isParallelModelLoadingEnabled())
     {
-        try
+        std::vector<std::pair<int, ViewportHostWidget::SceneItem>> items;
+        items.reserve(pendingEntries.size());
+        
+        int startIndex = m_sceneEntries.size();
+        for (int i = 0; i < pendingEntries.size(); ++i)
         {
-            const int sceneIndex = m_sceneEntries.size();
-            if (entry.visible)
-            {
-                ViewportAssetLoader::loadModelIntoEngineSlot(m_runtime, sceneIndex, entry);
-            }
-            else
-            {
-                ViewportAssetLoader::ensureModelSlot(m_runtime, sceneIndex);
-            }
-
+            items.push_back({startIndex + i, pendingEntries[i]});
+        }
+        
+        qDebug() << "[ViewportSceneController] Batch loading" << items.size() << "models with parallel loader";
+        
+        // Load all models in parallel
+        ViewportAssetLoader::loadModelsIntoEngineBatch(m_runtime, items,
+            [](int completed, int total) {
+                qDebug() << "[ViewportSceneController] Loading progress:" << completed << "/" << total;
+            });
+        
+        // Update scene entries with animation clip info
+        for (int i = 0; i < pendingEntries.size(); ++i)
+        {
+            auto entry = pendingEntries[i];
+            const int sceneIndex = startIndex + i;
+            
             if (m_runtime.engine() &&
                 sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
                 m_runtime.engine()->models[static_cast<size_t>(sceneIndex)] &&
@@ -469,10 +487,58 @@ void ViewportSceneController::restorePendingEntries()
             }
             m_sceneEntries.push_back(entry);
         }
-        catch (const std::exception& ex)
+        
+        auto totalEnd = std::chrono::high_resolution_clock::now();
+        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(totalEnd - totalStart).count();
+        qDebug() << "[ViewportSceneController] PARALLEL load complete:" << items.size() << "models in" << totalMs << "ms";
+    }
+    else
+    {
+        // Sequential loading (single item or parallel disabled)
+        qDebug() << "[ViewportSceneController] Sequential loading" << pendingEntries.size() << "models";
+        
+        for (auto entry : pendingEntries)
         {
-            qWarning() << "[ViewportHost] Failed to restore scene asset:" << entry.sourcePath << ex.what();
+            auto modelStart = std::chrono::high_resolution_clock::now();
+            
+            try
+            {
+                const int sceneIndex = m_sceneEntries.size();
+                if (entry.visible)
+                {
+                    ViewportAssetLoader::loadModelIntoEngineSlot(m_runtime, sceneIndex, entry);
+                }
+                else
+                {
+                    ViewportAssetLoader::ensureModelSlot(m_runtime, sceneIndex);
+                }
+
+                auto modelEnd = std::chrono::high_resolution_clock::now();
+                auto modelMs = std::chrono::duration_cast<std::chrono::milliseconds>(modelEnd - modelStart).count();
+                qDebug() << "[ViewportSceneController] Sequential load:" << entry.name << "took" << modelMs << "ms";
+
+                if (m_runtime.engine() &&
+                    sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
+                    m_runtime.engine()->models[static_cast<size_t>(sceneIndex)] &&
+                    entry.activeAnimationClip.isEmpty())
+                {
+                    const auto& clips = m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]->animationClips;
+                    if (!clips.empty())
+                    {
+                        entry.activeAnimationClip = QString::fromStdString(clips.front().name);
+                    }
+                }
+                m_sceneEntries.push_back(entry);
+            }
+            catch (const std::exception& ex)
+            {
+                qWarning() << "[ViewportHost] Failed to restore scene asset:" << entry.sourcePath << ex.what();
+            }
         }
+        
+        auto totalEnd = std::chrono::high_resolution_clock::now();
+        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(totalEnd - totalStart).count();
+        qDebug() << "[ViewportSceneController] SEQUENTIAL load complete:" << pendingEntries.size() << "models in" << totalMs << "ms";
     }
 }
 

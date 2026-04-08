@@ -1,5 +1,4 @@
 #include "physics_interface.h"
-#include "physics_factory.h"
 #include "physics_bullet.h"
 
 // Always include Jolt header (it auto-detects availability)

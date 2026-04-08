@@ -14,10 +14,7 @@
 #include <vulkan/vulkan.h>
 
 #include "model.h"
-
-namespace glyph {
-struct OverlayBitmap;
-}
+#include "text_rendering.h"
 
 extern "C" {
 struct AVFormatContext;

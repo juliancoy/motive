@@ -716,11 +716,18 @@ void SwapchainManager::recreateSwapchain(int width, int height)
     
     cleanupSwapchainResources();
     createSwapchain();
+    createSyncObjects();
 }
 
 uint32_t SwapchainManager::acquireNextImage(uint32_t currentFrame, uint32_t* imageIndex)
 {
     VkDevice device = engine_->logicalDevice;
+    if (currentFrame >= inFlightFences_.size() ||
+        currentFrame >= imageAvailableSemaphores_.size() ||
+        swapchain_ == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("Swapchain synchronization state is invalid during image acquisition.");
+    }
     
     vkWaitForFences(device, 1, &inFlightFences_[currentFrame], VK_TRUE, UINT64_MAX);
     

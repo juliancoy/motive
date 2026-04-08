@@ -14,12 +14,8 @@
 #include "grading.hpp"
 #include "utils.h"
 #include "annexb_demuxer.h"
-#include "mini_decoder.h"
-#include "mini_decoder_session.h"
-#include "mini_decode_pipeline.h"
-#include "mini_encoder.h"
-#include "mini_encoder_session.h"
-#include "mini_encode_pipeline.h"
+#include "vulkan_video_decoder.h"
+#include "vulkan_video_encoder.h"
 
 namespace
 {
@@ -262,11 +258,11 @@ int main(int argc, char** argv)
     // Minimal decoder path setup
     // Try H.265 first (since our test file is H.265), fall back to H.264
     std::cout << "[Encode] Selecting decode profile...\n";
-    auto profile = selectDecodeProfile(engine, MiniCodec::H265);
+    auto profile = motive::vkvideo::selectDecodeProfile(engine, motive::vkvideo::DecodeCodec::H265);
     if (!profile)
     {
         std::cerr << "[Encode] H.265 decode not available, trying H.264...\n";
-        profile = selectDecodeProfile(engine, MiniCodec::H264);
+        profile = motive::vkvideo::selectDecodeProfile(engine, motive::vkvideo::DecodeCodec::H264);
     }
     if (!profile)
     {
@@ -274,15 +270,15 @@ int main(int argc, char** argv)
         return 1;
     }
     std::cout << "[Encode] Profile selected, creating decode session...\n";
-    auto session = createDecodeSession(engine, *profile, VkExtent2D{1920, 1080}, /*maxDpbSlots*/4);
+    auto session = motive::vkvideo::createDecodeSession(engine, *profile, VkExtent2D{1920, 1080}, /*maxDpbSlots*/4);
     if (!session)
     {
         std::cerr << "[Encode] Failed to create decode session.\n";
         return 1;
     }
     std::cout << "[Encode] Decode session created, initializing resources...\n";
-    MiniDecodeResources decRes{};
-    if (!initDecodeResources(engine, *session, decRes, 4 * 1024 * 1024))
+    motive::vkvideo::DecodeResources decRes{};
+    if (!motive::vkvideo::initDecodeResources(engine, *session, decRes, 4 * 1024 * 1024))
     {
         std::cerr << "[Encode] Failed to init decode resources.\n";
         return 1;
@@ -291,23 +287,23 @@ int main(int argc, char** argv)
 
     // Encode pipeline setup
     std::cout << "[Encode] Selecting encode profile...\n";
-    MiniEncodeCodec encodeCodec = (profile->codec == MiniCodec::H264) ? MiniEncodeCodec::H264 : MiniEncodeCodec::H265;
-    auto encodeProfile = selectEncodeProfile(engine, encodeCodec);
+    motive::vkvideo::EncodeCodec encodeCodec = (profile->codec == motive::vkvideo::DecodeCodec::H264) ? motive::vkvideo::EncodeCodec::H264 : motive::vkvideo::EncodeCodec::H265;
+    auto encodeProfile = motive::vkvideo::selectEncodeProfile(engine, encodeCodec);
     if (!encodeProfile)
     {
         std::cerr << "[Encode] No suitable encode profile found.\n";
         return 1;
     }
     std::cout << "[Encode] Encode profile selected, creating encode session...\n";
-    auto encodeSession = createEncodeSession(engine, *encodeProfile, VkExtent2D{1920, 1080}, /*maxDpbSlots*/4);
+    auto encodeSession = motive::vkvideo::createEncodeSession(engine, *encodeProfile, VkExtent2D{1920, 1080}, /*maxDpbSlots*/4);
     if (!encodeSession)
     {
         std::cerr << "[Encode] Failed to create encode session.\n";
         return 1;
     }
     std::cout << "[Encode] Encode session created, initializing resources...\n";
-    MiniEncodeResources encRes{};
-    if (!initEncodeResources(engine, *encodeSession, encRes))
+    motive::vkvideo::EncodeResources encRes{};
+    if (!motive::vkvideo::initEncodeResources(engine, *encodeSession, encRes))
     {
         std::cerr << "[Encode] Failed to init encode resources.\n";
         return 1;
@@ -356,8 +352,8 @@ int main(int argc, char** argv)
         }
         
         uint32_t slot = 0;
-        std::cout << "[Encode] Calling recordDecode...\n";
-        if (!recordDecode(engine, *session, decRes, nal, nalSize, VkExtent2D{1920, 1080}, slot))
+        std::cout << "[Encode] Calling motive::vkvideo::recordDecode...\n";
+        if (!motive::vkvideo::recordDecode(engine, *session, decRes, nal, nalSize, VkExtent2D{1920, 1080}, slot))
         {
             std::cerr << "[Encode] Decode submit failed at frame " << framesProcessed << "\n";
             break;
@@ -369,7 +365,7 @@ int main(int argc, char** argv)
         std::cout << "[Encode] Encoding frame...\n";
         uint32_t encodeSlot = 0;
         // Use the decoded DPB image as source, it's already in the right YUV format
-        if (!recordEncode(engine,
+        if (!motive::vkvideo::recordEncode(engine,
                           *encodeSession,
                           encRes,
                           session->dpbImages[slot],
@@ -383,7 +379,7 @@ int main(int argc, char** argv)
         }
         std::cout << "[Encode] Encode submitted, retrieving bitstream...\n";
         std::vector<uint8_t> bitstream;
-        if (!retrieveEncodedBitstream(engine, *encodeSession, encRes, bitstream))
+        if (!motive::vkvideo::retrieveEncodedBitstream(engine, *encodeSession, encRes, bitstream))
         {
             std::cerr << "[Encode] Failed to retrieve encoded bitstream\n";
             break;
@@ -406,10 +402,10 @@ int main(int argc, char** argv)
     }
 
     // Cleanup encode resources
-    destroyEncodeResources(engine, encRes);
+    motive::vkvideo::destroyEncodeResources(engine, encRes);
     if (encodeSession)
     {
-        destroyEncodeSession(engine, *encodeSession);
+        motive::vkvideo::destroyEncodeSession(engine, *encodeSession);
     }
     // decode resources cleanup already handled by destructors? Not yet, but we can add later.
 

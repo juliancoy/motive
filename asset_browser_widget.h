@@ -1,12 +1,19 @@
 #pragma once
 
-#include "asset_browser_types.h"
-
 #include <QHash>
 #include <QPoint>
 #include <QPixmap>
 #include <QString>
 #include <QWidget>
+
+// Asset selection structure (moved from asset_browser_types.h)
+struct AssetBrowserSelection
+{
+    QString filePath;
+    QString directoryPath;
+    QString displayName;
+    bool isDirectory = false;
+};
 #include <functional>
 
 class QFileSystemModel;

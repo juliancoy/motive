@@ -1,6 +1,6 @@
 #include "shell.h"
 #include "asset_browser_widget.h"
-#include "viewport_host_widget.h"
+#include "host_widget.h"
 #include "transform_undo_command.h"
 #include "physics_interface.h"
 

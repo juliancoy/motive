@@ -18,7 +18,7 @@
 #include <glm/gtx/component_wise.hpp>
 #include <vulkan/vulkan.h>
 
-#include "glyph.h"
+#include "text_rendering.h"
 #include "swapchain_manager.h"
 
 // Forward declarations

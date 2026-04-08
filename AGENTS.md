@@ -177,14 +177,14 @@ Qt6-based editor with REST API.
 | `model.cpp` | GLTF/FBX loading, mesh consolidation |
 | `primitive.cpp` | Vertex buffers, descriptor sets, instancing |
 | `video.cpp` | FFmpeg decoder integration |
-| `mini_decoder*.cpp` | Vulkan Video decode (headless path) |
-| `mini_encoder*.cpp` | Vulkan Video encode (headless path) |
+| `vulkan_video_decoder.h/cpp` | Vulkan Video decode (merged from mini_decoder*) |
+| `vulkan_video_encoder.h/cpp` | Vulkan Video encode (merged from mini_encoder*) |
 | `overlay.cpp` | Compute shader overlays for 2D mode |
 | `control_server.cpp` | REST API server for editor |
 | `motive_editor_app.cpp` | Qt6 editor application |
-| `viewport_*.cpp` | Editor viewport components |
+| `shell*.cpp` | Editor viewport components |
 | `file_selector_cpp.cpp` | ImGui file browser |
-| `physics_world.cpp` | Bullet Physics integration |
+| `physics_interface.h/cpp` | Physics abstraction interface and factory |
 
 ## Video Pipeline
 
@@ -423,7 +423,7 @@ make
 
 ### Integrate with Editor
 1. Extend `control_server.cpp` for new API endpoints
-2. Add UI components in `viewport_*.cpp` files
+2. Add UI components in `shell*.cpp` files
 3. Update serialization in `project_session.cpp`
 
 ## Important Notes

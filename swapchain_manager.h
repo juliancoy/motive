@@ -62,6 +62,7 @@ public:
     VkExtent2D getExtent() const { return extent_; }
     int getWidth() const { return static_cast<int>(extent_.width); }
     int getHeight() const { return static_cast<int>(extent_.height); }
+    uint32_t getMaxFramesInFlight() const { return MAX_FRAMES_IN_FLIGHT; }
 
     // Frame synchronization
     uint32_t acquireNextImage(uint32_t currentFrame, uint32_t* imageIndex);

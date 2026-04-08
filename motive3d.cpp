@@ -9,7 +9,10 @@
 #include <deque>
 #include <chrono>
 #include <iomanip>
+#include <thread>
 #include <array>
+#include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -22,7 +25,8 @@
 #include "utils.h"
 #include "light.h"
 #include "video.h"
-#include "glyph.h"
+#include "text_rendering.h"
+#include "parallel_asset_loader.h"
 
 namespace
 {
@@ -285,6 +289,7 @@ namespace
         bool forceGridLayout = false;
         bool forceObeliskLayout = false;
         bool disableCulling = false;
+        bool parallelLoading = false;  // Default OFF (use --parallel to enable)
         std::filesystem::path gltfPath;
     };
 
@@ -320,6 +325,28 @@ namespace
             else if (arg == "--disable-cullinh")
             {
                 options.disableCulling = true;
+            }
+            else if (arg == "--parallel")
+            {
+                options.parallelLoading = true;
+            }
+            else if (arg == "--no-parallel-load")
+            {
+                options.parallelLoading = false;
+            }
+            else if (arg == "--help" || arg == "-h")
+            {
+                std::cout << "Usage: motive3d [options] [file.gltf/glb]\n"
+                          << "\nOptions:\n"
+                          << "  --gltf[=path]      Load GLTF/GLB model (default: the_utah_teapot.glb)\n"
+                          << "  --grid             Force grid video layout\n"
+                          << "  --obelisk          Force obelisk video layout\n"
+                          << "  --disable-culling  Disable frustum culling\n"
+                          << "  --parallel         Enable parallel model loading (default: OFF)\n"
+                          << "  --no-parallel-load Disable parallel model loading\n"
+                          << "  --test-decode      Run video decode benchmark\n"
+                          << "  --help, -h         Show this help message\n";
+                exit(0);
             }
             else if (arg.rfind(gltfEqualsPrefix, 0) == 0)
             {
@@ -775,6 +802,13 @@ int main(int argc, char *argv[])
     auto *primaryCamera = new Camera(engine, display, defaultCameraPos, defaultCameraRotation);
     display->addCamera(primaryCamera);
 
+    // Set parallel loading option from command line
+    engine->setParallelModelLoading(options.parallelLoading);
+    if (options.parallelLoading)
+    {
+        std::cout << "[Engine] Parallel model loading enabled" << std::endl;
+    }
+
     if (options.loadGltf)
     {
         std::filesystem::path gltfPath = options.gltfPath.empty() ? std::filesystem::path("the_utah_teapot.glb") : options.gltfPath;
@@ -787,10 +821,55 @@ int main(int argc, char *argv[])
 
         try
         {
-            auto gltfModel = std::make_unique<Model>(gltfPath.string(), engine);
-            gltfModel->resizeToUnitBox();
-            gltfModel->rotate(-90.0f, 0.0f, 0.0f); // Adjust orientation if needed
-            engine->addModel(std::move(gltfModel));
+            if (engine->isParallelModelLoadingEnabled())
+            {
+                // Use parallel loading
+                using namespace motive;
+                auto start = std::chrono::steady_clock::now();
+                
+                std::vector<std::pair<std::string, ParallelAssetLoader::LoadOptions>> requests;
+                ParallelAssetLoader::LoadOptions opts;
+                opts.rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+                requests.push_back({gltfPath.string(), opts});
+                
+                std::atomic<bool> loadComplete{false};
+                ParallelAssetLoader::LoadResult result;
+                
+                getAssetLoader().loadModels(engine, requests,
+                    nullptr,  // No progress callback for single model
+                    [&result, &loadComplete](std::vector<ParallelAssetLoader::LoadResult> results) {
+                        if (!results.empty()) {
+                            result = std::move(results[0]);
+                        }
+                        loadComplete = true;
+                    });
+                
+                // Process GPU uploads until complete
+                while (!loadComplete) {
+                    getAssetLoader().processGpuUploads(engine);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                
+                auto end = std::chrono::steady_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                
+                if (result.success && result.model) {
+                    std::cout << "[ParallelLoader] Model loaded in " << ms << "ms" << std::endl;
+                    engine->addModel(std::move(result.model));
+                } else {
+                    std::cerr << "[ParallelLoader] Failed to load: " << result.error << std::endl;
+                    delete engine;
+                    return 1;
+                }
+            }
+            else
+            {
+                // Synchronous loading
+                auto gltfModel = std::make_unique<Model>(gltfPath.string(), engine);
+                gltfModel->resizeToUnitBox();
+                gltfModel->rotate(-90.0f, 0.0f, 0.0f);
+                engine->addModel(std::move(gltfModel));
+            }
         }
         catch (const std::exception &ex)
         {
@@ -990,6 +1069,10 @@ int main(int argc, char *argv[])
     {
         while (!glfwWindowShouldClose(display->window))
         {
+            // Process any pending GPU uploads from parallel loader
+            if (engine->isParallelModelLoadingEnabled()) {
+                motive::getAssetLoader().processGpuUploads(engine);
+            }
             updateVideoFrame();
             display->render();
         }

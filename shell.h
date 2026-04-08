@@ -1,7 +1,7 @@
 #pragma once
 
 #include "project_session.h"
-#include "viewport_host_widget.h"
+#include "host_widget.h"
 
 #include <QCloseEvent>
 #include <QComboBox>

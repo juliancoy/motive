@@ -32,6 +32,7 @@ void ViewportRuntime::initialize(int width, int height, bool use2DPipeline)
     }
 
     m_engineRaw = new Engine();
+    // Parallel loading setting is inherited from Engine's compile-time default
     m_display = m_engineRaw->createWindow(width, height, "Motive Embedded Viewport", false, use2DPipeline, true);
     m_camera = new Camera(m_engineRaw, m_display, glm::vec3(0.0f, 0.0f, 3.0f), glm::vec2(glm::radians(0.0f), 0.0f));
     m_display->addCamera(m_camera);

@@ -1,5 +1,5 @@
 #include "shell.h"
-#include "viewport_host_widget.h"
+#include "host_widget.h"
 
 #include <QDir>
 #include <QFont>

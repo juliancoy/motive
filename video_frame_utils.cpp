@@ -92,7 +92,7 @@ bool configurePlanarFormat(VideoDecoder& decoder, AVPixelFormat pixFormat)
         decoder.bytesPerComponent = config.bitDepth > 8 ? 2 : 1;
         decoder.bitDepth = config.bitDepth;
         decoder.chromaWidth = std::max<uint32_t>(1u, (decoder.width + decoder.chromaDivX - 1) / decoder.chromaDivX);
-        decoder.chromaHeight = std::max<uint32_t>(1u, (decoder.height + decoder.chromaDivY - 1) / decoder.chromaDivY);
+        decoder.chromaHeight = std::max<uint32_t>(1u, (decoder.height + config.chromaDivY - 1) / config.chromaDivY);
         decoder.yPlaneSize = decoder.width * decoder.height;
         decoder.uvPlaneSize = decoder.chromaWidth * decoder.chromaHeight;
         decoder.yPlaneBytes = static_cast<size_t>(decoder.width) * decoder.height * decoder.bytesPerComponent;
