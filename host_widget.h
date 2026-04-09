@@ -16,6 +16,7 @@ class QDragEnterEvent;
 class QDropEvent;
 class QFocusEvent;
 class QMouseEvent;
+class QMoveEvent;
 class QResizeEvent;
 class QShowEvent;
 
@@ -214,6 +215,7 @@ public:
 
 protected:
     void showEvent(QShowEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
