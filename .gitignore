@@ -31,3 +31,4 @@ build-asan
 projects
 thirdpersonshooter
 .build_manifest.json
+build-windows

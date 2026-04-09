@@ -25,7 +25,7 @@ set(MOTIVE_FFMPEG_DIR "${MOTIVE_ROOT}/FFmpeg/.build/install")
 set(MOTIVE_SHADER_DIR "${MOTIVE_ROOT}/shaders")
 
 find_package(Threads REQUIRED)
-find_package(OpenMP REQUIRED COMPONENTS CXX)
+find_package(OpenMP QUIET COMPONENTS CXX)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 find_program(GLSLANG_VALIDATOR NAMES glslangValidator REQUIRED)
 
@@ -136,11 +136,16 @@ set(MOTIVE_COMMON_LINK_LIBS
     ${MOTIVE_BULLET_DYNAMICS_LIBRARY}
     ${MOTIVE_BULLET_COLLISION_LIBRARY}
     ${MOTIVE_BULLET_LINEAR_MATH_LIBRARY}
-    OpenMP::OpenMP_CXX
     Threads::Threads
     ${CMAKE_DL_LIBS}
     m
 )
+
+if(OpenMP_CXX_FOUND)
+    list(APPEND MOTIVE_COMMON_LINK_LIBS OpenMP::OpenMP_CXX)
+else()
+    message(STATUS "OpenMP CXX not found, continuing without OpenMP support")
+endif()
 
 foreach(optional_lib
     MOTIVE_PNG_LIBRARY
