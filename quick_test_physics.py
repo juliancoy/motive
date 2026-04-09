@@ -4,7 +4,7 @@
 import requests
 import sys
 
-BASE = "http://localhost:40130"
+BASE = "http://localhost:40132"
 
 def test():
     # Check health
@@ -13,7 +13,7 @@ def test():
         print(f"✅ Server OK: {r.json()}")
     except Exception as e:
         print(f"❌ Server not running: {e}")
-        print("Start motive_editor first: ./motive_editor --control-port 40130")
+        print("Start motive_editor first: ./motive_editor --control-port 40132")
         sys.exit(1)
     
     # Get scene items

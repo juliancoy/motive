@@ -4,7 +4,7 @@
 import requests
 import json
 
-BASE = "http://localhost:40130"
+BASE = "http://localhost:40132"
 
 def test_direct():
     """Test with direct HTTP to see raw response"""
@@ -12,7 +12,7 @@ def test_direct():
     
     print("=== DIRECT HTTP TEST ===")
     
-    conn = http.client.HTTPConnection("localhost", 40130)
+    conn = http.client.HTTPConnection("localhost", 40132)
     
     # Test GET /health
     print("\n1. Testing GET /health...")

@@ -160,7 +160,7 @@ Qt6-based editor with REST API.
 ./motive_editor [project_dir] # Open project (default: projects/default)
 ```
 
-**Editor REST API endpoints:** (default port 5050)
+**Editor REST API endpoints:** (default port 40132)
 - `GET /health` - Server status
 - `GET /hierarchy` - Scene hierarchy
 - `GET /profile/scene` - Camera position, FPS, etc.

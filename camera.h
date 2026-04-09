@@ -110,6 +110,8 @@ public:
     // Camera identification
     void setCameraName(const std::string& name) { cameraName = name; }
     const std::string& getCameraName() const { return cameraName; }
+    void setCameraId(const std::string& id) { cameraId = id; }
+    const std::string& getCameraId() const { return cameraId; }
 
 private:
     Engine* engine;
@@ -138,6 +140,7 @@ private:
     int followTargetIndex = -1;  // Scene index of the target model (-1 = none)
     FollowSettings followSettings;
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
+    std::string cameraId;
     
     // Smooth follow interpolation state
     glm::vec3 currentFollowPosition;  // Current interpolated camera position

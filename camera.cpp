@@ -235,6 +235,19 @@ void Camera::handleCursorPos(double xpos, double ypos)
 
 #include "model.h"  // For character controller
 
+namespace {
+
+glm::vec3 followAnchorPosition(const Model& model, const FollowSettings& settings)
+{
+    if (model.character.isControllable)
+    {
+        return model.getCharacterPosition() + settings.targetOffset;
+    }
+    return model.boundsCenter + settings.targetOffset;
+}
+
+}
+
 void Camera::handleKey(int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_P && action == GLFW_PRESS)
@@ -248,7 +261,7 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         return;
     }
 
-    if (!controlsEnabled)
+    if (!controlsEnabled && !(characterTarget && characterTarget->character.isControllable))
     {
         return;
     }
@@ -536,7 +549,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
     }
     
     // Get target position (bounds center + optional offset)
-    glm::vec3 targetCenter = targetModel->boundsCenter + followSettings.targetOffset;
+    glm::vec3 targetCenter = followAnchorPosition(*targetModel, followSettings);
     
     // Calculate desired camera position based on spherical coordinates
     float yaw = followSettings.relativeYaw;
@@ -557,6 +570,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
     // Initialize on first frame
     if (!followInitialized) {
         currentFollowPosition = desiredPosition;
+        cameraPos = desiredPosition;
         followInitialized = true;
     }
     

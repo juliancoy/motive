@@ -23,6 +23,18 @@ struct Frustum
     std::array<glm::vec4, 6> planes;
 };
 
+bool cameraUsesCustomViewport(const Camera& camera)
+{
+    constexpr float kViewportEpsilon = 0.001f;
+    if (!camera.isFullscreenViewportEnabled())
+    {
+        return true;
+    }
+
+    return std::abs(camera.getFullscreenPercentX() - 1.0f) > kViewportEpsilon ||
+           std::abs(camera.getFullscreenPercentY() - 1.0f) > kViewportEpsilon;
+}
+
 Frustum extractFrustum(const glm::mat4& vp)
 {
     Frustum f;
@@ -126,7 +138,31 @@ void Display::render()
     }
     swapchainManager.setImageInFlight(imageIndex, swapchainManager.getInFlightFence(currentFrame));
 
-    for (auto& camera : cameras)
+    std::vector<Camera*> renderCameras;
+    renderCameras.reserve(cameras.size());
+
+    const bool hasCustomViewportLayout = std::any_of(cameras.begin(), cameras.end(),
+        [](Camera* camera)
+        {
+            return camera && cameraUsesCustomViewport(*camera);
+        });
+
+    if (hasCustomViewportLayout)
+    {
+        for (Camera* camera : cameras)
+        {
+        if (camera && camera->width > 1.0f && camera->height > 1.0f)
+        {
+            renderCameras.push_back(camera);
+        }
+        }
+    }
+    else if (Camera* activeCamera = getActiveCamera())
+    {
+        renderCameras.push_back(activeCamera);
+    }
+
+    for (Camera* camera : renderCameras)
     {
         camera->update(imageIndex);
     }
@@ -161,9 +197,13 @@ void Display::render()
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    for (size_t cameraIndex = 0; cameraIndex < cameras.size(); cameraIndex++)
+    for (size_t cameraIndex = 0; cameraIndex < renderCameras.size(); cameraIndex++)
     {
-        auto& camera = cameras[cameraIndex];
+        Camera* camera = renderCameras[cameraIndex];
+        if (!camera)
+        {
+            continue;
+        }
 
         VkViewport viewport{};
         viewport.x = camera->centerpoint.x - camera->width / 2.0f;

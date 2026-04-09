@@ -5,6 +5,7 @@
 #   --asan          Enable AddressSanitizer
 #   --no-validation Disable Vulkan validation layers
 #   --clean         Clean build directory first
+#   --full          Build runtime executables in addition to motive_editor
 #   --jobs N        Number of parallel jobs (default: auto)
 #   --verbose       Verbose build output
 
@@ -23,6 +24,7 @@ ENABLE_ASAN=OFF
 ENABLE_VALIDATION=ON
 CLEAN_BUILD=OFF
 VERBOSE=OFF
+FULL_BUILD=OFF
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 # Parse arguments
@@ -44,6 +46,11 @@ while [[ $# -gt 0 ]]; do
             echo -e "${YELLOW}🧹 Clean build requested${NC}"
             shift
             ;;
+        --full)
+            FULL_BUILD=ON
+            echo -e "${BLUE}ℹ️  Full build enabled (runtime executables will be built)${NC}"
+            shift
+            ;;
         --jobs)
             JOBS="$2"
             shift 2
@@ -61,6 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --asan          Enable AddressSanitizer (Debug build)"
             echo "  --no-validation Disable Vulkan validation layers"
             echo "  --clean         Clean build directory first"
+            echo "  --full          Build motive3d, motive2d, and encode in addition to motive_editor"
             echo "  --jobs N        Number of parallel jobs (default: auto)"
             echo "  --verbose       Verbose build output"
             echo "  --help, -h      Show this help message"
@@ -84,6 +92,7 @@ echo "================================"
 echo "Build type:     $BUILD_TYPE"
 echo "ASan:           $ENABLE_ASAN"
 echo "Validation:     $ENABLE_VALIDATION"
+echo "Full build:     $FULL_BUILD"
 echo "Parallel jobs:  $JOBS"
 echo ""
 
@@ -137,6 +146,11 @@ fi
 echo ""
 echo -e "${BLUE}🔧 Building...${NC}"
 BUILD_ARGS=(--parallel "$JOBS")
+if [ "$FULL_BUILD" = "ON" ]; then
+    BUILD_ARGS+=(--target motive3d motive2d encode motive_editor)
+else
+    BUILD_ARGS+=(--target motive_editor)
+fi
 
 if [ "$VERBOSE" = "ON" ]; then
     BUILD_ARGS+=(--verbose)
@@ -152,7 +166,12 @@ echo ""
 echo -e "${GREEN}✅ Build successful!${NC}"
 echo ""
 echo "Built targets:"
-for f in motive3d motive2d encode motive_editor; do
+if [ "$FULL_BUILD" = "ON" ]; then
+    TARGETS=(motive3d motive2d encode motive_editor)
+else
+    TARGETS=(motive_editor)
+fi
+for f in "${TARGETS[@]}"; do
     if [ -f "${BUILD_DIR}/$f" ]; then
         size=$(du -h "${BUILD_DIR}/$f" | cut -f1)
         echo "  $f ($size)"
@@ -160,8 +179,14 @@ for f in motive3d motive2d encode motive_editor; do
 done
 
 echo ""
-echo -e "${GREEN}🎉 All done! Run ./motive3d to start the application.${NC}"
-echo ""
-echo "Runtime options:"
-echo "  ./motive3d --parallel    Enable parallel scene loading"
-echo "  ./motive3d --help        Show all runtime options"
+if [ "$FULL_BUILD" = "ON" ]; then
+    echo -e "${GREEN}🎉 All done! Run ./motive3d to start the application.${NC}"
+    echo ""
+    echo "Runtime options:"
+    echo "  ./motive3d --parallel    Enable parallel scene loading"
+    echo "  ./motive3d --help        Show all runtime options"
+else
+    echo -e "${GREEN}🎉 All done! motive_editor is ready.${NC}"
+    echo ""
+    echo "Use ./build.sh --full if you also want motive3d, motive2d, and encode."
+fi

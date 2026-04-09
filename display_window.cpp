@@ -138,23 +138,19 @@ void Display::handleFramebufferResize(int newWidth, int newHeight)
 
 void Display::handleMouseButton(int button, int action, int mods)
 {
-    for (auto* camera : cameras)
+    Camera* camera = getActiveCamera();
+    if (camera)
     {
-        if (camera)
-        {
-            camera->handleMouseButton(button, action, mods);
-        }
+        camera->handleMouseButton(button, action, mods);
     }
 }
 
 void Display::handleCursorPos(double xpos, double ypos)
 {
-    for (auto* camera : cameras)
+    Camera* camera = getActiveCamera();
+    if (camera)
     {
-        if (camera)
-        {
-            camera->handleCursorPos(xpos, ypos);
-        }
+        camera->handleCursorPos(xpos, ypos);
     }
 }
 
@@ -166,12 +162,10 @@ void Display::handleKey(int key, int scancode, int action, int mods)
         return;
     }
 
-    for (auto* camera : cameras)
+    Camera* camera = getActiveCamera();
+    if (camera)
     {
-        if (camera)
-        {
-            camera->handleKey(key, scancode, action, mods);
-        }
+        camera->handleKey(key, scancode, action, mods);
     }
 }
 
@@ -182,11 +176,9 @@ void Display::handleWindowFocusChanged(int focused)
         return;
     }
 
-    for (auto* camera : cameras)
+    Camera* camera = getActiveCamera();
+    if (camera)
     {
-        if (camera)
-        {
-            camera->clearInputState();
-        }
+        camera->clearInputState();
     }
 }

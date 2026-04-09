@@ -8,6 +8,8 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 namespace motive::ui {
 
 namespace {
@@ -38,6 +40,7 @@ ProjectSession::ProjectSession()
         m_currentProjectId = defaultProjectId();
         m_currentProjectRoot = QDir::currentPath();
         saveCurrentProject();
+        saveCurrentProjectMarker();
     }
 }
 
@@ -116,6 +119,16 @@ bool ProjectSession::currentValidationLayersEnabled() const
 bool ProjectSession::currentFreeFlyCameraEnabled() const
 {
     return m_currentFreeFlyCameraEnabled;
+}
+
+int ProjectSession::currentViewportCount() const
+{
+    return m_currentViewportCount;
+}
+
+QJsonArray ProjectSession::currentViewportCameraIds() const
+{
+    return m_currentViewportCameraIds;
 }
 
 QString ProjectSession::projectsDirPath() const
@@ -221,6 +234,7 @@ bool ProjectSession::createProject(const QString& name, const QString& rootPath)
     m_currentProjectId = id;
     m_currentProjectRoot = QFileInfo(rootPath).isDir() ? QFileInfo(rootPath).absoluteFilePath() : QDir::currentPath();
     saveCurrentProject();
+    saveCurrentProjectMarker();
     return true;
 }
 
@@ -298,6 +312,16 @@ void ProjectSession::setCurrentFreeFlyCameraEnabled(bool enabled)
     m_currentFreeFlyCameraEnabled = enabled;
 }
 
+void ProjectSession::setCurrentViewportCount(int count)
+{
+    m_currentViewportCount = std::clamp(count, 1, 4);
+}
+
+void ProjectSession::setCurrentViewportCameraIds(const QJsonArray& ids)
+{
+    m_currentViewportCameraIds = ids;
+}
+
 void ProjectSession::saveCurrentProject() const
 {
     if (m_currentProjectId.isEmpty())
@@ -328,7 +352,6 @@ void ProjectSession::saveCurrentProject() const
 
     file.write(QJsonDocument(buildProjectDocument(existingRoot)).toJson(QJsonDocument::Indented));
     QFile::remove(legacyStateFilePathForProject(m_currentProjectId));
-    saveCurrentProjectMarker();
 }
 
 bool ProjectSession::loadProject(const QString& projectId)
@@ -371,6 +394,16 @@ bool ProjectSession::loadProject(const QString& projectId)
 void ProjectSession::saveCurrentProjectMarker() const
 {
     ensureProjectsDirectory();
+    QFile existing(currentProjectMarkerPath());
+    if (existing.open(QIODevice::ReadOnly))
+    {
+        const QByteArray current = existing.readAll().trimmed();
+        if (current == m_currentProjectId.toUtf8())
+        {
+            return;
+        }
+    }
+
     QFile file(currentProjectMarkerPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
     {
@@ -400,7 +433,9 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("renderPath"), m_currentRenderPath},
         {QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled},
         {QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled},
-        {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled}
+        {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled},
+        {QStringLiteral("viewportCount"), m_currentViewportCount},
+        {QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds}
     };
 }
 
@@ -457,6 +492,8 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled);
     appendSetIfChanged(QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled);
     appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled);
+    appendSetIfChanged(QStringLiteral("viewportCount"), m_currentViewportCount);
+    appendSetIfChanged(QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds);
 
     root[QStringLiteral("changes")] = changes;
     return root;
@@ -499,12 +536,15 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("sceneItems"), root.value(QStringLiteral("sceneItems")).toArray()},
         {QStringLiteral("sceneAssetPaths"), root.value(QStringLiteral("sceneAssetPaths")).toArray()},
         {QStringLiteral("cameraConfigs"), root.value(QStringLiteral("cameraConfigs")).toArray()},
-        {QStringLiteral("cameraPosition"), QJsonArray{0.0, 0.0, 3.0}},
-        {QStringLiteral("cameraRotation"), QJsonArray{0.0, 0.0, 0.0}},
+        {QStringLiteral("cameraPosition"), root.contains(QStringLiteral("cameraPosition")) ? root.value(QStringLiteral("cameraPosition")) : QJsonValue(QJsonArray{0.0, 0.0, 3.0})},
+        {QStringLiteral("cameraRotation"), root.contains(QStringLiteral("cameraRotation")) ? root.value(QStringLiteral("cameraRotation")) : QJsonValue(QJsonArray{0.0, 0.0, 0.0})},
+        {QStringLiteral("cameraSpeed"), root.value(QStringLiteral("cameraSpeed")).toDouble(0.01)},
         {QStringLiteral("renderPath"), root.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"))},
         {QStringLiteral("meshConsolidationEnabled"), root.contains(QStringLiteral("meshConsolidationEnabled")) ? root.value(QStringLiteral("meshConsolidationEnabled")).toBool(true) : true},
         {QStringLiteral("validationLayersEnabled"), root.contains(QStringLiteral("validationLayersEnabled")) ? root.value(QStringLiteral("validationLayersEnabled")).toBool(true) : true},
-        {QStringLiteral("freeFlyCameraEnabled"), root.contains(QStringLiteral("freeFlyCameraEnabled")) ? root.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true) : true}
+        {QStringLiteral("freeFlyCameraEnabled"), root.contains(QStringLiteral("freeFlyCameraEnabled")) ? root.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true) : true},
+        {QStringLiteral("viewportCount"), root.contains(QStringLiteral("viewportCount")) ? root.value(QStringLiteral("viewportCount")).toInt(1) : 1},
+        {QStringLiteral("viewportCameraIds"), root.value(QStringLiteral("viewportCameraIds")).toArray()}
     };
 }
 
@@ -557,6 +597,8 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     m_currentMeshConsolidationEnabled = state.value(QStringLiteral("meshConsolidationEnabled")).toBool(true);
     m_currentValidationLayersEnabled = state.value(QStringLiteral("validationLayersEnabled")).toBool(true);
     m_currentFreeFlyCameraEnabled = state.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true);
+    m_currentViewportCount = std::clamp(state.value(QStringLiteral("viewportCount")).toInt(1), 1, 4);
+    m_currentViewportCameraIds = state.value(QStringLiteral("viewportCameraIds")).toArray();
     m_currentSceneLight = state.value(QStringLiteral("sceneLight")).toObject();
     if (m_currentSceneItems.isEmpty())
     {

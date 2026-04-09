@@ -17,6 +17,11 @@
 
 #include <QDebug>
 #include <QDragEnterEvent>
+#include <QComboBox>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QUuid>
+#include <QFrame>
 #include <QDropEvent>
 #include <QFocusEvent>
 #include <QJsonObject>
@@ -31,10 +36,126 @@
 #include <QVBoxLayout>
 
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <vulkan/vulkan.h>
 
 namespace motive::ui {
+
+namespace {
+
+bool couplingRequiresPhysics(const Model& model)
+{
+    return model.getAnimationPhysicsCoupling() != "AnimationOnly";
+}
+
+bool couplingUsesKinematicBody(const Model& model)
+{
+    return !model.character.isControllable && model.getAnimationPhysicsCoupling() == "Kinematic";
+}
+
+QJsonObject primitiveOverrideObject(int meshIndex, int primitiveIndex, const QString& cullMode, bool forceAlphaOne)
+{
+    return QJsonObject{
+        {QStringLiteral("meshIndex"), meshIndex},
+        {QStringLiteral("primitiveIndex"), primitiveIndex},
+        {QStringLiteral("cullMode"), cullMode},
+        {QStringLiteral("forceAlphaOne"), forceAlphaOne}
+    };
+}
+
+void removePrimitiveOverrideIfDefault(QJsonArray& overrides, int meshIndex, int primitiveIndex, const QString& cullMode, bool forceAlphaOne)
+{
+    const bool isDefault = (cullMode == QStringLiteral("back")) && !forceAlphaOne;
+    for (int i = overrides.size() - 1; i >= 0; --i)
+    {
+        if (!overrides.at(i).isObject())
+        {
+            continue;
+        }
+
+        const QJsonObject existing = overrides.at(i).toObject();
+        if (existing.value(QStringLiteral("meshIndex")).toInt(-1) != meshIndex ||
+            existing.value(QStringLiteral("primitiveIndex")).toInt(-1) != primitiveIndex)
+        {
+            continue;
+        }
+
+        if (isDefault)
+        {
+            overrides.removeAt(i);
+        }
+        else
+        {
+            overrides[i] = primitiveOverrideObject(meshIndex, primitiveIndex, cullMode, forceAlphaOne);
+        }
+        return;
+    }
+
+    if (!isDefault)
+    {
+        overrides.push_back(primitiveOverrideObject(meshIndex, primitiveIndex, cullMode, forceAlphaOne));
+    }
+}
+
+glm::vec3 followAnchorPosition(const Model& model, const glm::vec3& targetOffset = glm::vec3(0.0f))
+{
+    if (model.character.isControllable)
+    {
+        return model.getCharacterPosition() + targetOffset;
+    }
+    return model.boundsCenter + targetOffset;
+}
+
+void reconfigurePhysicsBodyForMode(Model& model, motive::IPhysicsWorld& physicsWorld)
+{
+    if (!couplingRequiresPhysics(model))
+    {
+        if (model.getPhysicsBody() && !model.character.isControllable)
+        {
+            model.disablePhysics(physicsWorld);
+        }
+        return;
+    }
+
+    motive::PhysicsBodyConfig config;
+    config.shapeType = model.character.isControllable
+        ? motive::CollisionShapeType::Capsule
+        : motive::CollisionShapeType::Box;
+    config.mass = model.character.isControllable ? 70.0f : 1.0f;
+    config.friction = model.character.isControllable ? 0.3f : 0.5f;
+    config.restitution = 0.0f;
+    config.useModelBounds = true;
+    config.isCharacter = model.character.isControllable;
+    config.isKinematic = couplingUsesKinematicBody(model);
+    config.useGravity = model.getUseGravity();
+    config.customGravity = model.getCustomGravity();
+
+    model.enablePhysics(physicsWorld, config);
+}
+
+QString makeCameraId()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+ViewportHostWidget::ViewportLayout normalizedViewportLayout(const ViewportHostWidget::ViewportLayout& layout)
+{
+    ViewportHostWidget::ViewportLayout normalized;
+    normalized.count = std::clamp(layout.count, 1, 4);
+    normalized.cameraIds = layout.cameraIds;
+    while (normalized.cameraIds.size() < normalized.count)
+    {
+        normalized.cameraIds.append(QString());
+    }
+    while (normalized.cameraIds.size() > normalized.count)
+    {
+        normalized.cameraIds.removeLast();
+    }
+    return normalized;
+}
+
+}
 
 ViewportHostWidget::ViewportHostWidget(QWidget* parent)
     : QWidget(parent)
@@ -55,6 +176,9 @@ ViewportHostWidget::ViewportHostWidget(QWidget* parent)
 
     m_renderTimer.setInterval(16);
     connect(&m_renderTimer, &QTimer::timeout, this, [this]() { renderFrame(); });
+
+    m_viewportLayout = normalizedViewportLayout(m_viewportLayout);
+    syncViewportSelectorChoices();
 }
 
 ViewportHostWidget::~ViewportHostWidget()
@@ -328,6 +452,11 @@ ViewportHostWidget::PerformanceMetrics ViewportHostWidget::performanceMetrics() 
 
 void ViewportHostWidget::enableCharacterControl(int sceneIndex, bool enabled)
 {
+    setCharacterControlState(sceneIndex, enabled, true);
+}
+
+void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, bool repositionForCharacterMode)
+{
     if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
     {
         return;
@@ -341,12 +470,13 @@ void ViewportHostWidget::enableCharacterControl(int sceneIndex, bool enabled)
     
     model->character.isControllable = enabled;
     
-    // When enabling, teleport character up so he drops down by gravity
-    if (enabled)
+    // Only the explicit editor character-control action should reposition the model.
+    if (enabled && repositionForCharacterMode)
     {
         glm::vec3 pos = glm::vec3(model->worldTransform[3]);
         pos.y = 5.0f;  // Start 5 units above ground (closer drop)
         model->worldTransform[3] = glm::vec4(pos, 1.0f);
+        model->recomputeBounds();
         model->character.velocity = glm::vec3(0.0f);
         model->character.isGrounded = false;
         qDebug() << "[ViewportHost] Character teleported to Y=5 to drop by gravity";
@@ -372,6 +502,17 @@ void ViewportHostWidget::enableCharacterControl(int sceneIndex, bool enabled)
             
             qDebug() << "[ViewportHost] Camera positioned at:" << camPos.x << camPos.y << camPos.z;
         }
+    }
+    else if (!enabled)
+    {
+        model->character.velocity = glm::vec3(0.0f);
+        model->character.inputDir = glm::vec3(0.0f);
+        model->character.isGrounded = false;
+        model->character.jumpRequested = false;
+        model->character.keyW = false;
+        model->character.keyA = false;
+        model->character.keyS = false;
+        model->character.keyD = false;
     }
     
     // Set as camera's character target
@@ -480,19 +621,29 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
     QList<CameraConfig> configs;
     
     if (!m_runtime->display()) {
-        return configs;
+        return m_pendingCameraConfigs;
     }
     
     for (Camera* camera : m_runtime->display()->cameras) {
         if (!camera) continue;
+        if (camera->getCameraId().empty()) {
+            camera->setCameraId(makeCameraId().toStdString());
+        }
         
         CameraConfig config;
+        config.id = QString::fromStdString(camera->getCameraId());
         config.name = QString::fromStdString(camera->getCameraName());
         
         // Check if this is a follow camera
         if (camera->isFollowModeEnabled() && camera->getFollowTargetIndex() >= 0) {
             config.type = CameraConfig::Type::Follow;
             config.followTargetIndex = camera->getFollowSceneIndex();
+            config.position = QVector3D(camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z);
+            config.rotation = QVector3D(
+                glm::degrees(camera->cameraRotation.y),
+                glm::degrees(camera->cameraRotation.x),
+                0.0f
+            );
             
             const FollowSettings& fs = camera->getFollowSettings();
             config.followDistance = fs.distance;
@@ -515,6 +666,46 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
     }
     
     return configs;
+}
+
+ViewportHostWidget::ViewportLayout ViewportHostWidget::viewportLayout() const
+{
+    return normalizedViewportLayout(m_viewportLayout);
+}
+
+void ViewportHostWidget::setViewportLayout(const ViewportLayout& layout)
+{
+    const ViewportLayout normalized = normalizedViewportLayout(layout);
+    if (m_viewportLayout.count == normalized.count && m_viewportLayout.cameraIds == normalized.cameraIds)
+    {
+        return;
+    }
+
+    m_viewportLayout = normalized;
+    updateViewportLayout();
+    syncViewportSelectorChoices();
+    layoutViewportSelectors();
+    m_focusedViewportIndex = std::clamp(m_focusedViewportIndex, 0, std::max(0, viewportCount() - 1));
+    updateViewportBorders();
+
+    if (m_cameraChangedCallback)
+    {
+        m_cameraChangedCallback();
+    }
+
+    syncViewportSelectorChoices();
+}
+
+void ViewportHostWidget::setViewportCount(int count)
+{
+    ViewportLayout layout = viewportLayout();
+    layout.count = count;
+    setViewportLayout(layout);
+}
+
+int ViewportHostWidget::viewportCount() const
+{
+    return normalizedViewportLayout(m_viewportLayout).count;
 }
 
 // Helper function for creating follow cameras with full settings
@@ -545,7 +736,9 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
     }
     
     // Calculate initial camera position based on settings
-    glm::vec3 targetCenter = targetModel->boundsCenter;
+    glm::vec3 targetCenter = followAnchorPosition(
+        *targetModel,
+        glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z()));
     float yawRad = glm::radians(yaw);
     float pitchRad = glm::radians(pitch);
     
@@ -584,6 +777,7 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
     
     followCam->setFollowTarget(sceneIndex, followSettings);
     followCam->setControlsEnabled(false);  // Follow cameras don't have direct controls
+    followCam->setCameraId(makeCameraId().toStdString());
     
     qDebug() << "[ViewportHost] Created follow camera (internal) for scene" << sceneIndex 
              << "distance" << distance << "yaw" << yaw << "pitch" << pitch 
@@ -594,6 +788,8 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
 
 void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
 {
+    m_pendingCameraConfigs = configs;
+
     if (!m_runtime->display() || !m_runtime->engine()) {
         return;
     }
@@ -610,15 +806,8 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
             // Check if target model exists
             if (config.followTargetIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
                 !m_runtime->engine()->models[static_cast<size_t>(config.followTargetIndex)]) {
-                qDebug() << "[ViewportHost] Cannot restore follow camera: target scene index" 
+                qDebug() << "[ViewportHost] Deferring follow camera restore: target scene index"
                          << config.followTargetIndex << "not loaded yet";
-                // Create as free camera instead
-                glm::vec3 pos(config.position.x(), config.position.y(), config.position.z());
-                glm::vec2 rot(glm::radians(config.rotation.y()), glm::radians(config.rotation.x()));
-                Camera* cam = m_runtime->display()->createCamera(config.name.toStdString(), pos, rot);
-                if (cam) {
-                    cam->setControlsEnabled(true);
-                }
                 continue;
             }
             
@@ -634,6 +823,7 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
                 config.followTargetOffset
             );
             if (followCam) {
+                followCam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
                 followCam->setCameraName(config.name.toStdString());
             }
         } else {
@@ -642,6 +832,7 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
             glm::vec2 rot(glm::radians(config.rotation.y()), glm::radians(config.rotation.x()));
             Camera* cam = m_runtime->display()->createCamera(config.name.toStdString(), pos, rot);
             if (cam) {
+                cam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
                 cam->setControlsEnabled(true);
             }
         }
@@ -649,11 +840,17 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
     
     // Ensure we have at least one camera
     if (m_runtime->display()->cameras.empty()) {
-        m_runtime->display()->createCamera("Main Camera");
+        Camera* camera = m_runtime->display()->createCamera("Main Camera");
+        if (camera) {
+            camera->setCameraId(makeCameraId().toStdString());
+        }
     }
+
+    updateViewportLayout();
+    syncViewportSelectorChoices();
 }
 
-int ViewportHostWidget::createFollowCamera(int sceneIndex, float distance, float yaw, float pitch)
+int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float yaw, float pitch)
 {
     if (!m_runtime->engine() || sceneIndex < 0 || 
         sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
@@ -674,14 +871,12 @@ int ViewportHostWidget::createFollowCamera(int sceneIndex, float distance, float
     // Check if a follow camera already exists for this scene
     Camera* existingCamera = m_runtime->display()->findCameraByName(cameraNameStd);
     if (existingCamera) {
-        // Camera exists - find and activate it
         auto& cameras = m_runtime->display()->cameras;
         auto it = std::find(cameras.begin(), cameras.end(), existingCamera);
         if (it != cameras.end()) {
-            // Move this camera to the front of the list (make it active)
-            std::rotate(cameras.begin(), it, it + 1);
-            qDebug() << "[ViewportHost] Switched to existing follow camera for scene" << sceneIndex;
-            return std::distance(cameras.begin(), it);
+            const int existingIndex = static_cast<int>(std::distance(cameras.begin(), it));
+            qDebug() << "[ViewportHost] Reusing existing follow camera for scene" << sceneIndex;
+            return existingIndex;
         }
     }
     
@@ -692,7 +887,7 @@ int ViewportHostWidget::createFollowCamera(int sceneIndex, float distance, float
     }
     
     // Calculate initial camera position based on settings
-    glm::vec3 targetCenter = targetModel->boundsCenter;
+    glm::vec3 targetCenter = followAnchorPosition(*targetModel);
     float yawRad = glm::radians(yaw);
     float pitchRad = glm::radians(pitch);
     
@@ -719,6 +914,9 @@ int ViewportHostWidget::createFollowCamera(int sceneIndex, float distance, float
         qDebug() << "[ViewportHost] Failed to create follow camera";
         return -1;
     }
+    if (followCam->getCameraId().empty()) {
+        followCam->setCameraId(makeCameraId().toStdString());
+    }
     
     // Configure follow settings
     FollowSettings followSettings;
@@ -734,8 +932,9 @@ int ViewportHostWidget::createFollowCamera(int sceneIndex, float distance, float
     
     qDebug() << "[ViewportHost] Created follow camera for scene" << sceneIndex 
              << "distance" << distance << "yaw" << yaw << "pitch" << pitch;
-    
-    // Return the index of the new camera
+
+    updateViewportLayout();
+    syncViewportSelectorChoices();
     return static_cast<int>(m_runtime->display()->cameras.size()) - 1;
 }
 
@@ -755,14 +954,49 @@ void ViewportHostWidget::deleteCamera(int cameraIndex)
     
     // Ensure we have at least one camera
     if (cameras.empty() && m_runtime->engine()) {
-        m_runtime->display()->createCamera("Main Camera");
+        Camera* newCamera = m_runtime->display()->createCamera("Main Camera");
+        if (newCamera) {
+            newCamera->setCameraId(makeCameraId().toStdString());
+        }
     }
+
+    updateViewportLayout();
+    syncViewportSelectorChoices();
 }
 
 int ViewportHostWidget::activeCameraIndex() const
 {
     // The active camera is always at index 0 in our implementation
     return 0;
+}
+
+int ViewportHostWidget::cameraIndexForId(const QString& cameraId) const
+{
+    if (!m_runtime->display() || cameraId.isEmpty())
+    {
+        return -1;
+    }
+
+    const auto& cameras = m_runtime->display()->cameras;
+    for (size_t i = 0; i < cameras.size(); ++i)
+    {
+        if (cameras[i] && QString::fromStdString(cameras[i]->getCameraId()) == cameraId)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+QString ViewportHostWidget::activeCameraId() const
+{
+    if (!m_runtime->display())
+    {
+        return {};
+    }
+
+    Camera* camera = m_runtime->display()->getActiveCamera();
+    return camera ? QString::fromStdString(camera->getCameraId()) : QString();
 }
 
 void ViewportHostWidget::setActiveCamera(int cameraIndex)
@@ -776,14 +1010,46 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
         return;
     }
     
+    const auto* models = m_runtime->engine() ? &m_runtime->engine()->models : nullptr;
+    Camera* previousActiveCamera = cameras.empty() ? nullptr : cameras.front();
+    const int previousTargetIndex = (previousActiveCamera && previousActiveCamera->isFollowModeEnabled())
+        ? previousActiveCamera->getFollowTargetIndex()
+        : -1;
+
     // Get the camera that will become active (before rotation)
     Camera* newActiveCamera = cameras[cameraIndex];
+
+    if (newActiveCamera && viewportCount() == 1)
+    {
+        ViewportLayout layout = viewportLayout();
+        layout.cameraIds[0] = QString::fromStdString(newActiveCamera->getCameraId());
+        m_viewportLayout = normalizedViewportLayout(layout);
+    }
     
     // Move the selected camera to the front (index 0) to make it active
     std::rotate(cameras.begin(), cameras.begin() + cameraIndex, cameras.begin() + cameraIndex + 1);
+    updateViewportLayout();
+
+    if (newActiveCamera)
+    {
+        // Keep viewport interaction mode aligned with the active camera type.
+        m_freeFlyCameraEnabled = !newActiveCamera->isFollowModeEnabled();
+    }
+
+    if (previousActiveCamera && previousActiveCamera != newActiveCamera)
+    {
+        previousActiveCamera->setCharacterTarget(nullptr);
+        previousActiveCamera->clearInputState();
+    }
     
-    // Now cameras[0] is the active camera
-    // If it's a follow camera, set up character control
+    if (previousTargetIndex >= 0 && previousTargetIndex != (newActiveCamera ? newActiveCamera->getFollowTargetIndex() : -1))
+    {
+        setCharacterControlState(previousTargetIndex, false, false);
+    }
+
+    // Now cameras[0] is the active camera.
+    // Follow cameras explicitly opt the target into character control, but without teleporting
+    // or sharing mutable camera state with other camera objects.
     if (newActiveCamera && newActiveCamera->isFollowModeEnabled()) {
         int targetIndex = newActiveCamera->getFollowTargetIndex();
         if (targetIndex >= 0 && m_runtime->engine() && 
@@ -792,16 +1058,24 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
             
             Model* targetModel = m_runtime->engine()->models[static_cast<size_t>(targetIndex)].get();
             if (targetModel) {
-                // Enable character control on the target
-                targetModel->character.isControllable = true;
-                // Set as character target for the active camera
+                setCharacterControlState(targetIndex, true, false);
                 newActiveCamera->setCharacterTarget(targetModel);
+                newActiveCamera->updateFollow(0.0f, *models);
+                newActiveCamera->update(0);
                 qDebug() << "[ViewportHost] Follow camera activated, character control enabled for scene" << targetIndex;
             }
         }
     } else if (newActiveCamera) {
-        // Clear character target for free cameras
+        if (previousTargetIndex >= 0)
+        {
+            setCharacterControlState(previousTargetIndex, false, false);
+        }
         newActiveCamera->setCharacterTarget(nullptr);
+    }
+
+    if (m_cameraChangedCallback)
+    {
+        m_cameraChangedCallback();
     }
 }
 
@@ -819,6 +1093,9 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
     Camera* camera = cameras[cameraIndex];
     if (!camera) return;
     
+    if (!config.id.isEmpty()) {
+        camera->setCameraId(config.id.toStdString());
+    }
     camera->setCameraName(config.name.toStdString());
     
     if (config.type == CameraConfig::Type::Follow && config.followTargetIndex >= 0) {
@@ -834,10 +1111,6 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         // Update follow target and settings
         camera->setFollowTarget(config.followTargetIndex, fs);
         camera->setControlsEnabled(false);  // Follow cameras don't have direct controls
-        
-        // Update camera name to reflect the target
-        QString newName = QStringLiteral("Follow Cam (Scene %1)").arg(config.followTargetIndex);
-        camera->setCameraName(newName.toStdString());
     } else if (config.type == CameraConfig::Type::Free) {
         // Update position for free camera
         camera->cameraPos = glm::vec3(config.position.x(), config.position.y(), config.position.z());
@@ -851,6 +1124,9 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         }
         camera->setControlsEnabled(true);
     }
+
+    updateViewportLayout();
+    syncViewportSelectorChoices();
 }
 
 void ViewportHostWidget::updateFollowCameras(float dt)
@@ -864,6 +1140,257 @@ void ViewportHostWidget::updateFollowCameras(float dt)
     for (auto* camera : m_runtime->display()->cameras) {
         if (camera && camera->isFollowModeEnabled()) {
             camera->updateFollow(dt, models);
+        }
+    }
+}
+
+QString ViewportHostWidget::cameraIdForViewportIndex(int index) const
+{
+    const ViewportLayout layout = normalizedViewportLayout(m_viewportLayout);
+    if (index < 0 || index >= layout.cameraIds.size())
+    {
+        return {};
+    }
+    return layout.cameraIds[index];
+}
+
+QRect ViewportHostWidget::viewportRectForIndex(int index) const
+{
+    const int w = std::max(1, width());
+    const int h = std::max(1, height());
+    switch (viewportCount())
+    {
+        case 2:
+            return (index == 0) ? QRect(0, 0, w / 2, h) : QRect(w / 2, 0, w - (w / 2), h);
+        case 3:
+            if (index == 0) return QRect(0, 0, w / 2, h);
+            if (index == 1) return QRect(w / 2, 0, w - (w / 2), h / 2);
+            return QRect(w / 2, h / 2, w - (w / 2), h - (h / 2));
+        case 4:
+            if (index == 0) return QRect(0, 0, w / 2, h / 2);
+            if (index == 1) return QRect(w / 2, 0, w - (w / 2), h / 2);
+            if (index == 2) return QRect(0, h / 2, w / 2, h - (h / 2));
+            return QRect(w / 2, h / 2, w - (w / 2), h - (h / 2));
+        case 1:
+        default:
+            return QRect(0, 0, w, h);
+    }
+}
+
+void ViewportHostWidget::layoutViewportSelectors()
+{
+    while (m_viewportCameraSelectors.size() < viewportCount())
+    {
+        auto* combo = new QComboBox(this);
+        combo->setStyleSheet(QStringLiteral(
+            "QComboBox { background: rgba(16,22,29,220); color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 6px; padding: 3px 8px; }"
+            "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"));
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, combo](int idx)
+        {
+            if (idx < 0)
+            {
+                return;
+            }
+            const int viewportIndex = m_viewportCameraSelectors.indexOf(combo);
+            if (viewportIndex < 0)
+            {
+                return;
+            }
+            ViewportLayout layout = viewportLayout();
+            layout.cameraIds[viewportIndex] = combo->currentData().toString();
+            setViewportLayout(layout);
+            if (layout.count == 1)
+            {
+                const int cameraIndex = cameraIndexForId(layout.cameraIds[viewportIndex]);
+                if (cameraIndex >= 0)
+                {
+                    setActiveCamera(cameraIndex);
+                }
+            }
+        });
+        combo->show();
+        combo->raise();
+        m_viewportCameraSelectors.append(combo);
+    }
+
+    for (int i = 0; i < m_viewportCameraSelectors.size(); ++i)
+    {
+        QComboBox* combo = m_viewportCameraSelectors[i];
+        if (!combo)
+        {
+            continue;
+        }
+        combo->setVisible(i < viewportCount());
+        if (!combo->isVisible())
+        {
+            continue;
+        }
+        const QRect rect = viewportRectForIndex(i);
+        combo->setGeometry(rect.x() + 12, rect.y() + 12, std::min(220, std::max(160, rect.width() - 24)), 30);
+        combo->raise();
+    }
+
+    updateViewportBorders();
+}
+
+void ViewportHostWidget::syncViewportSelectorChoices()
+{
+    const auto configs = cameraConfigs();
+    const ViewportLayout layout = viewportLayout();
+    layoutViewportSelectors();
+
+    for (int i = 0; i < m_viewportCameraSelectors.size(); ++i)
+    {
+        QComboBox* combo = m_viewportCameraSelectors[i];
+        if (!combo || i >= layout.count)
+        {
+            continue;
+        }
+
+        combo->blockSignals(true);
+        combo->clear();
+        for (const auto& config : configs)
+        {
+            combo->addItem(config.name.isEmpty() ? QStringLiteral("Camera") : config.name, config.id);
+        }
+
+        int selectedIndex = combo->findData(layout.cameraIds.value(i));
+        if (selectedIndex < 0 && combo->count() > 0)
+        {
+            selectedIndex = std::min(i, combo->count() - 1);
+        }
+        if (selectedIndex >= 0)
+        {
+            combo->setCurrentIndex(selectedIndex);
+        }
+        combo->blockSignals(false);
+    }
+}
+
+void ViewportHostWidget::updateViewportBorders()
+{
+    while (m_viewportBorders.size() < viewportCount())
+    {
+        auto* frame = new QFrame(this);
+        frame->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        frame->setStyleSheet(QStringLiteral("QFrame { background: transparent; border: 2px solid #6b7280; }"));
+        frame->show();
+        frame->raise();
+        m_viewportBorders.append(frame);
+    }
+
+    for (int i = 0; i < m_viewportBorders.size(); ++i)
+    {
+        QFrame* frame = m_viewportBorders[i];
+        if (!frame)
+        {
+            continue;
+        }
+        frame->setVisible(viewportCount() > 1 && i < viewportCount());
+        if (!frame->isVisible())
+        {
+            continue;
+        }
+
+        const QRect rect = viewportRectForIndex(i).adjusted(0, 0, -1, -1);
+        frame->setGeometry(rect);
+        const QString borderColor = (i == m_focusedViewportIndex) ? QStringLiteral("#22c55e")
+                                                                  : QStringLiteral("#6b7280");
+        frame->setStyleSheet(QStringLiteral(
+            "QFrame { background: transparent; border: 2px solid %1; }").arg(borderColor));
+        frame->raise();
+    }
+
+    for (QComboBox* combo : m_viewportCameraSelectors)
+    {
+        if (combo && combo->isVisible())
+        {
+            combo->raise();
+        }
+    }
+}
+
+int ViewportHostWidget::viewportIndexAt(const QPoint& position) const
+{
+    for (int i = 0; i < viewportCount(); ++i)
+    {
+        if (viewportRectForIndex(i).contains(position))
+        {
+            return i;
+        }
+    }
+    return 0;
+}
+
+void ViewportHostWidget::setFocusedViewportIndex(int index)
+{
+    const int clampedIndex = std::clamp(index, 0, std::max(0, viewportCount() - 1));
+    m_focusedViewportIndex = clampedIndex;
+    updateViewportBorders();
+
+    const int cameraIndex = cameraIndexForId(cameraIdForViewportIndex(clampedIndex));
+    if (cameraIndex >= 0)
+    {
+        setActiveCamera(cameraIndex);
+    }
+}
+
+void ViewportHostWidget::updateViewportLayout()
+{
+    if (!m_runtime->display())
+    {
+        return;
+    }
+
+    ViewportLayout layout = normalizedViewportLayout(m_viewportLayout);
+    auto& cameras = m_runtime->display()->cameras;
+    QStringList availableIds;
+    for (Camera* camera : cameras)
+    {
+        if (camera)
+        {
+            availableIds.append(QString::fromStdString(camera->getCameraId()));
+        }
+    }
+
+    for (int i = 0; i < layout.count; ++i)
+    {
+        if (!availableIds.contains(layout.cameraIds[i]))
+        {
+            layout.cameraIds[i] = (i < availableIds.size()) ? availableIds[i] : QString();
+        }
+    }
+    m_viewportLayout = layout;
+
+    for (Camera* camera : cameras)
+    {
+        if (!camera)
+        {
+            continue;
+        }
+        const QString id = QString::fromStdString(camera->getCameraId());
+        const int viewportIndex = layout.cameraIds.indexOf(id);
+        if (viewportIndex < 0)
+        {
+            camera->setFullscreenViewportEnabled(false);
+            camera->setViewport(0.0f, 0.0f, 1.0f, 1.0f);
+            continue;
+        }
+
+        const QRect rect = viewportRectForIndex(viewportIndex);
+        camera->setFullscreenViewportEnabled(false);
+        camera->setViewport(rect.x() + (rect.width() * 0.5f),
+                            rect.y() + (rect.height() * 0.5f),
+                            static_cast<float>(std::max(1, rect.width())),
+                            static_cast<float>(std::max(1, rect.height())));
+    }
+
+    if (layout.count == 1)
+    {
+        const int cameraIndex = cameraIndexForId(layout.cameraIds.value(0));
+        if (cameraIndex > 0 && cameraIndex < static_cast<int>(cameras.size()))
+        {
+            std::rotate(cameras.begin(), cameras.begin() + cameraIndex, cameras.begin() + cameraIndex + 1);
         }
     }
 }
@@ -980,6 +1507,17 @@ void ViewportHostWidget::updateSceneItemAnimationPhysicsCoupling(int index, cons
         return;
     }
     m_sceneController->updateSceneItemAnimationPhysicsCoupling(index, couplingMode);
+
+    if (m_runtime && m_runtime->engine() && m_runtime->engine()->getPhysicsWorld() &&
+        index >= 0 &&
+        index < static_cast<int>(m_runtime->engine()->models.size()) &&
+        m_runtime->engine()->models[static_cast<size_t>(index)])
+    {
+        reconfigurePhysicsBodyForMode(
+            *m_runtime->engine()->models[static_cast<size_t>(index)],
+            *m_runtime->engine()->getPhysicsWorld());
+    }
+
     notifySceneChanged();
 }
 
@@ -1043,6 +1581,16 @@ void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int
         const ObjectTransform updated = mesh.primitives[static_cast<size_t>(primitiveIndex)]->buildObjectTransformData();
         memcpy(mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped, &updated, sizeof(updated));
     }
+
+    auto& entries = m_sceneController->loadedEntries();
+    if (sceneIndex >= 0 && sceneIndex < entries.size())
+    {
+        removePrimitiveOverrideIfDefault(entries[sceneIndex].primitiveOverrides,
+                                         meshIndex,
+                                         primitiveIndex,
+                                         cullMode,
+                                         mesh.primitives[static_cast<size_t>(primitiveIndex)]->forceAlphaOne);
+    }
 }
 
 void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled)
@@ -1071,6 +1619,16 @@ void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex
     {
         const ObjectTransform updated = mesh.primitives[static_cast<size_t>(primitiveIndex)]->buildObjectTransformData();
         memcpy(mesh.primitives[static_cast<size_t>(primitiveIndex)]->ObjectTransformUBOMapped, &updated, sizeof(updated));
+    }
+
+    auto& entries = m_sceneController->loadedEntries();
+    if (sceneIndex >= 0 && sceneIndex < entries.size())
+    {
+        removePrimitiveOverrideIfDefault(entries[sceneIndex].primitiveOverrides,
+                                         meshIndex,
+                                         primitiveIndex,
+                                         primitiveCullMode(sceneIndex, meshIndex, primitiveIndex),
+                                         enabled);
     }
 }
 
@@ -1120,6 +1678,9 @@ void ViewportHostWidget::resizeEvent(QResizeEvent* event)
     {
         m_runtime->resize(width(), height());
     }
+    updateViewportLayout();
+    layoutViewportSelectors();
+    updateViewportBorders();
 }
 
 void ViewportHostWidget::focusInEvent(QFocusEvent* event)
@@ -1129,6 +1690,7 @@ void ViewportHostWidget::focusInEvent(QFocusEvent* event)
     {
         m_runtime->focusNativeWindow(static_cast<unsigned long>(winId()));
     }
+    updateViewportBorders();
 }
 
 void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
@@ -1142,11 +1704,13 @@ void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
     {
         m_cameraChangedCallback();
     }
+    updateViewportBorders();
 }
 
 void ViewportHostWidget::mousePressEvent(QMouseEvent* event)
 {
     setFocus(Qt::MouseFocusReason);
+    setFocusedViewportIndex(viewportIndexAt(event->pos()));
     
     // Start orbiting on right-click (only in character follow mode)
     if (event->button() == Qt::RightButton && !m_freeFlyCameraEnabled)
@@ -1339,6 +1903,10 @@ void ViewportHostWidget::ensureViewportInitialized()
         if (!m_sceneController->pendingEntries().isEmpty())
         {
             m_sceneController->restorePendingEntries();
+            if (!m_pendingCameraConfigs.isEmpty())
+            {
+                setCameraConfigs(m_pendingCameraConfigs);
+            }
             notifySceneChanged();
         }
         else
@@ -1357,6 +1925,9 @@ void ViewportHostWidget::ensureViewportInitialized()
 
         m_runtime->embedNativeWindow(static_cast<unsigned long>(winId()));
         m_runtime->resize(width(), height());
+        updateViewportLayout();
+        syncViewportSelectorChoices();
+        layoutViewportSelectors();
         if (m_statusLabel)
         {
             m_statusLabel->hide();
@@ -1408,6 +1979,7 @@ void ViewportHostWidget::renderFrame()
 
     if (m_runtime->engine())
     {
+        auto* physicsWorld = m_runtime->engine()->getPhysicsWorld();
         auto& entries = m_sceneController->loadedEntries();
         for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
         {
@@ -1415,12 +1987,16 @@ void ViewportHostWidget::renderFrame()
             if (m_runtime->engine()->models[i])
             {
                 auto& model = m_runtime->engine()->models[i];
-                
-                // Update character physics before animation
+
+                if (physicsWorld && couplingRequiresPhysics(*model) && !model->getPhysicsBody())
+                {
+                    reconfigurePhysicsBodyForMode(*model, *physicsWorld);
+                }
+
+                // Update character/controller state before stepping the world.
                 if (model->character.isControllable)
                 {
-                    // Use physics world version if available to create physics body
-                    if (auto* physicsWorld = m_runtime->engine()->getPhysicsWorld())
+                    if (physicsWorld && couplingRequiresPhysics(*model))
                     {
                         model->updateCharacterPhysics(dt, *physicsWorld);
                     }
@@ -1429,13 +2005,22 @@ void ViewportHostWidget::renderFrame()
                         model->updateCharacterPhysics(dt);
                     }
                 }
-                
+                else if (physicsWorld && model->getPhysicsBody() && couplingUsesKinematicBody(*model))
+                {
+                    model->getPhysicsBody()->syncTransformToPhysics();
+                }
+
                 model->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
                                                                          entry.animationPlaying,
                                                                          entry.animationLoop,
                                                                          entry.animationSpeed);
                 model->updateAnimation(deltaSeconds);
             }
+        }
+
+        if (physicsWorld)
+        {
+            m_runtime->engine()->updatePhysics(dt);
         }
         
         // Update camera to follow character if enabled

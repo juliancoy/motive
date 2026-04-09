@@ -197,6 +197,10 @@ void ViewportSceneController::updateSceneItemTransform(int index, const QVector3
         model->setSceneTransform(glm::vec3(translation.x(), translation.y(), translation.z()),
                                  glm::vec3(rotation.x(), rotation.y(), rotation.z()),
                                  glm::vec3(scale.x(), scale.y(), scale.z()));
+        if (auto* body = model->getPhysicsBody())
+        {
+            body->syncTransformToPhysics();
+        }
     }
 }
 

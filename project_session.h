@@ -30,6 +30,8 @@ public:
     bool currentMeshConsolidationEnabled() const;
     bool currentValidationLayersEnabled() const;
     bool currentFreeFlyCameraEnabled() const;
+    int currentViewportCount() const;
+    QJsonArray currentViewportCameraIds() const;
     QString projectsDirPath() const;
     QString currentProjectMarkerPath() const;
     QString projectPath(const QString& projectId) const;
@@ -56,6 +58,8 @@ public:
     void setCurrentMeshConsolidationEnabled(bool enabled);
     void setCurrentValidationLayersEnabled(bool enabled);
     void setCurrentFreeFlyCameraEnabled(bool enabled);
+    void setCurrentViewportCount(int count);
+    void setCurrentViewportCameraIds(const QJsonArray& ids);
     void saveCurrentProject() const;
 
 private:
@@ -82,6 +86,8 @@ private:
     bool m_currentMeshConsolidationEnabled = true;
     bool m_currentValidationLayersEnabled = true;
     bool m_currentFreeFlyCameraEnabled = true;  // Default to free fly mode
+    int m_currentViewportCount = 1;
+    QJsonArray m_currentViewportCameraIds;
 };
 
 }  // namespace motive::ui

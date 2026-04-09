@@ -11,7 +11,7 @@ Tests the follow camera functionality via REST API:
 Usage:
     python3 test_follow_cam.py [port]
     
-Default port is 5050.
+Default port is 40132.
 """
 
 import sys
@@ -22,7 +22,7 @@ import urllib.error
 
 
 class MotiveApiClient:
-    def __init__(self, port=5050):
+    def __init__(self, port=40132):
         self.base_url = f"http://127.0.0.1:{port}"
     
     def _call(self, method, endpoint, data=None):
@@ -79,7 +79,7 @@ class MotiveApiClient:
         return profile.get("cameraPosition")
 
 
-def test_follow_camera(port=5050):
+def test_follow_camera(port=40132):
     """Run follow camera tests."""
     client = MotiveApiClient(port)
     
@@ -183,6 +183,6 @@ def test_follow_camera(port=5050):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5050
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 40132
     success = test_follow_camera(port)
     sys.exit(0 if success else 1)

@@ -256,6 +256,7 @@ public:
 
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);
+    void syncWorldTransformToPrimitives();
     bool computeProceduralBounds(glm::vec3& minBounds, glm::vec3& maxBounds) const;
 
     std::unordered_map<int, std::weak_ptr<SharedTextureResources>> gltfMaterialTextureCache;

@@ -2,9 +2,9 @@
 
 # Follow Camera REST API Test Script
 # Usage: ./test_follow_cam.sh [port]
-# Default port is 5050
+# Default port is 40132
 
-PORT=${1:-5050}
+PORT=${1:-40132}
 BASE_URL="http://127.0.0.1:$PORT"
 
 echo "========================================="

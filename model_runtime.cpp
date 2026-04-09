@@ -320,6 +320,11 @@ void Model::applyProceduralIdleAnimation(double deltaSeconds)
 void Model::applyTransformToPrimitives(const glm::mat4 &transform)
 {
     worldTransform = transform * worldTransform;
+    syncWorldTransformToPrimitives();
+}
+
+void Model::syncWorldTransformToPrimitives()
+{
     for (auto &mesh : meshes)
     {
         for (auto &primitive : mesh.primitives)
@@ -329,7 +334,7 @@ void Model::applyTransformToPrimitives(const glm::mat4 &transform)
                 continue;
             }
 
-            primitive->transform = transform * primitive->transform;
+            primitive->transform = worldTransform;
 
             if (primitive->ObjectTransformUBOMapped)
             {
@@ -471,7 +476,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     
     // Apply position to world transform
     worldTransform[3] = glm::vec4(currentPos, 1.0f);
-    applyTransformToPrimitives(worldTransform);
+    syncWorldTransformToPrimitives();
     
     // Update animation state based on directional keys and speed
     const float horizontalSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));

@@ -8,7 +8,7 @@ import requests
 import json
 import sys
 
-BASE_URL = "http://localhost:40130"
+BASE_URL = "http://localhost:40132"
 
 def test_health():
     """Check if the control server is running"""
@@ -189,7 +189,7 @@ def main():
     
     # Check server
     if not test_health():
-        print("\nMake sure motive_editor is running with --control-port 40130")
+        print("\nMake sure motive_editor is running with --control-port 40132")
         sys.exit(1)
     
     # Get scene info

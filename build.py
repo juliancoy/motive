@@ -86,8 +86,10 @@ LIB_ALIASES = {
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Build the Motive engine')
 parser.add_argument('--rebuild', action='store_true', help='Force rebuild all files, ignoring timestamps')
+parser.add_argument('--full', action='store_true', help='Also build the standalone runtime executables (motive3d, motive2d, encode)')
 args = parser.parse_args()
 REBUILD = args.rebuild
+FULL_BUILD = args.full
 
 # Paths
 this_dir = os.path.dirname(__file__)
@@ -97,7 +99,8 @@ manifest_path = os.path.join(this_dir, ".build_manifest.json")
 ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
-main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+full_main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+main_sources = list(full_main_sources) if FULL_BUILD else []
 qt_main_sources = ["motive_editor_main.cpp"]
 exclude_sources = [
     "brain_viewer_engine.cpp",  # currently does not match the main engine APIs
@@ -107,7 +110,7 @@ so_sources = []
 for file in os.listdir(this_dir):
     if (
         file.endswith(".cpp")
-        and file not in main_sources
+        and file not in full_main_sources
         and file not in qt_main_sources
         and file not in exclude_sources
         and not file.startswith("editor_ref_")
@@ -475,6 +478,8 @@ if not need_link_so and not REBUILD:
             break
 
 if REBUILD or need_link_so or any(changed_list):
+    if os.path.exists("libengine.a"):
+        os.remove("libengine.a")
     so_link_cmd = f"ar rcs libengine.a {' '.join(so_objects)}"
     print(f"\nLinking static library:\n{so_link_cmd}")
     so_link_result = subprocess.run(so_link_cmd, shell=True)
@@ -484,26 +489,29 @@ if REBUILD or need_link_so or any(changed_list):
 else:
     print("\nStatic library up to date.")
 
-# Link main executables when needed
-for src, obj in zip(main_sources, main_objects):
-    binary_name = os.path.splitext(src)[0]
-    need_link = not os.path.exists(binary_name)
-    if not need_link and not REBUILD:
-        bin_mtime = os.path.getmtime(binary_name)
-        deps = [obj, "libengine.a"]
-        for dep in deps:
-            if os.path.exists(dep) and os.path.getmtime(dep) > bin_mtime:
-                need_link = True
-                break
-    if REBUILD or need_link:
-        main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
-        print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
-        main_link_result = subprocess.run(main_link_cmd, shell=True)
-        if main_link_result.returncode != 0:
-            print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
-            sys.exit(main_link_result.returncode)
-    else:
-        print(f"\nExecutable {binary_name} up to date.")
+if FULL_BUILD:
+    # Link main executables when needed
+    for src, obj in zip(main_sources, main_objects):
+        binary_name = os.path.splitext(src)[0]
+        need_link = not os.path.exists(binary_name)
+        if not need_link and not REBUILD:
+            bin_mtime = os.path.getmtime(binary_name)
+            deps = [obj, "libengine.a"]
+            for dep in deps:
+                if os.path.exists(dep) and os.path.getmtime(dep) > bin_mtime:
+                    need_link = True
+                    break
+        if REBUILD or need_link:
+            main_link_cmd = f"g++ {debug_flags} {sanitize_flags} {lib_flags} {obj} -L. -lengine {lib_links} -o {binary_name}"
+            print(f"\nLinking executable {binary_name}:\n{main_link_cmd}")
+            main_link_result = subprocess.run(main_link_cmd, shell=True)
+            if main_link_result.returncode != 0:
+                print(f"❌ Failed to link executable {binary_name}.", file=sys.stderr)
+                sys.exit(main_link_result.returncode)
+        else:
+            print(f"\nExecutable {binary_name} up to date.")
+else:
+    print("\nSkipping runtime executables. Use --full to build motive3d, motive2d, and encode.")
 
 # Link Qt editor executable when needed
 for src, obj in zip(qt_main_sources, qt_main_objects):
