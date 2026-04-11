@@ -19,6 +19,9 @@ QJsonObject cameraConfigToJson(const ViewportHostWidget::CameraConfig& config)
     obj[QStringLiteral("followPitch")] = config.followPitch;
     obj[QStringLiteral("followSmoothSpeed")] = config.followSmoothSpeed;
     obj[QStringLiteral("followTargetOffset")] = QJsonArray{config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z()};
+    obj[QStringLiteral("freeFly")] = config.freeFly;
+    obj[QStringLiteral("nearClip")] = config.nearClip;
+    obj[QStringLiteral("farClip")] = config.farClip;
     return obj;
 }
 
@@ -53,6 +56,9 @@ ViewportHostWidget::CameraConfig cameraConfigFromJson(const QJsonObject& obj)
     config.followPitch = static_cast<float>(obj.value(QStringLiteral("followPitch")).toDouble(20.0));
     config.followSmoothSpeed = static_cast<float>(obj.value(QStringLiteral("followSmoothSpeed")).toDouble(5.0));
     config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
+    config.freeFly = obj.value(QStringLiteral("freeFly")).toBool(true);
+    config.nearClip = static_cast<float>(obj.value(QStringLiteral("nearClip")).toDouble(0.1));
+    config.farClip = static_cast<float>(obj.value(QStringLiteral("farClip")).toDouble(100.0));
     
     return config;
 }

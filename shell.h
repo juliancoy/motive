@@ -120,6 +120,8 @@ private:
     QLabel* m_followParamsLabel = nullptr;
 
     QDoubleSpinBox* m_cameraSpeedSpin = nullptr;
+    QDoubleSpinBox* m_nearClipSpin = nullptr;
+    QDoubleSpinBox* m_farClipSpin = nullptr;
     QComboBox* m_renderPathCombo = nullptr;
     QComboBox* m_viewportCountCombo = nullptr;
     QCheckBox* m_meshConsolidationCheck = nullptr;

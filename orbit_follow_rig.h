@@ -4,13 +4,13 @@
 
 #include "camera_follow_settings.h"
 
-struct OrbitCameraPose
+struct FollowOrbitPose
 {
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec2 rotation = glm::vec2(0.0f);
 };
 
-class OrbitCameraRig
+class FollowOrbit
 {
 public:
     void configure(int sceneIndex, const FollowSettings& settings);
@@ -20,12 +20,17 @@ public:
     int sceneIndex() const;
     const FollowSettings& settings() const;
 
-    OrbitCameraPose update(const glm::vec3& targetCenter,
+    FollowOrbitPose update(const glm::vec3& targetCenter,
                            const glm::vec3& targetForward,
                            float deltaTime,
-                           const OrbitCameraPose& currentPose);
+                           const FollowOrbitPose& currentPose);
+    static FollowOrbitPose computePose(const glm::vec3& targetCenter,
+                                       float targetYaw,
+                                       const FollowSettings& settings);
+    static float computeTargetYaw(const glm::vec3& targetForward);
 
 private:
+    static glm::vec3 computeOrbitDirection(float worldYaw, float pitch);
     static float normalizeAngle(float angle);
 
     int sceneIndex_ = -1;

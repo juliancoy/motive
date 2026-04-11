@@ -76,6 +76,28 @@ void ViewportCameraController::resetCamera()
     }
 }
 
+void ViewportCameraController::setPerspectiveNearFar(float near, float far)
+{
+    if (m_runtime.camera())
+    {
+        m_runtime.camera()->setPerspectiveNearFar(near, far);
+    }
+}
+
+void ViewportCameraController::getPerspectiveNearFar(float& near, float& far) const
+{
+    if (m_runtime.camera())
+    {
+        near = m_runtime.camera()->getPerspectiveNear();
+        far = m_runtime.camera()->getPerspectiveFar();
+    }
+    else
+    {
+        near = 0.1f;
+        far = 100.0f;
+    }
+}
+
 void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index)
 {
     if (index < 0 || index >= m_sceneController.loadedEntries().size() || !m_runtime.camera() || !m_runtime.engine())

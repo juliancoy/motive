@@ -121,6 +121,11 @@ bool ProjectSession::currentFreeFlyCameraEnabled() const
     return m_currentFreeFlyCameraEnabled;
 }
 
+float ProjectSession::currentMinPreviewTriangleAreaPx() const
+{
+    return m_currentMinPreviewTriangleAreaPx;
+}
+
 int ProjectSession::currentViewportCount() const
 {
     return m_currentViewportCount;
@@ -312,6 +317,11 @@ void ProjectSession::setCurrentFreeFlyCameraEnabled(bool enabled)
     m_currentFreeFlyCameraEnabled = enabled;
 }
 
+void ProjectSession::setCurrentMinPreviewTriangleAreaPx(float areaPx)
+{
+    m_currentMinPreviewTriangleAreaPx = std::clamp(areaPx, 0.0f, 16.0f);
+}
+
 void ProjectSession::setCurrentViewportCount(int count)
 {
     m_currentViewportCount = std::clamp(count, 1, 4);
@@ -434,6 +444,7 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled},
         {QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled},
         {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled},
+        {QStringLiteral("minPreviewTriangleAreaPx"), m_currentMinPreviewTriangleAreaPx},
         {QStringLiteral("viewportCount"), m_currentViewportCount},
         {QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds}
     };
@@ -492,6 +503,7 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled);
     appendSetIfChanged(QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled);
     appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled);
+    appendSetIfChanged(QStringLiteral("minPreviewTriangleAreaPx"), m_currentMinPreviewTriangleAreaPx);
     appendSetIfChanged(QStringLiteral("viewportCount"), m_currentViewportCount);
     appendSetIfChanged(QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds);
 
@@ -543,6 +555,7 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("meshConsolidationEnabled"), root.contains(QStringLiteral("meshConsolidationEnabled")) ? root.value(QStringLiteral("meshConsolidationEnabled")).toBool(true) : true},
         {QStringLiteral("validationLayersEnabled"), root.contains(QStringLiteral("validationLayersEnabled")) ? root.value(QStringLiteral("validationLayersEnabled")).toBool(true) : true},
         {QStringLiteral("freeFlyCameraEnabled"), root.contains(QStringLiteral("freeFlyCameraEnabled")) ? root.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true) : true},
+        {QStringLiteral("minPreviewTriangleAreaPx"), root.value(QStringLiteral("minPreviewTriangleAreaPx")).toDouble(0.25)},
         {QStringLiteral("viewportCount"), root.contains(QStringLiteral("viewportCount")) ? root.value(QStringLiteral("viewportCount")).toInt(1) : 1},
         {QStringLiteral("viewportCameraIds"), root.value(QStringLiteral("viewportCameraIds")).toArray()}
     };
@@ -597,6 +610,10 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     m_currentMeshConsolidationEnabled = state.value(QStringLiteral("meshConsolidationEnabled")).toBool(true);
     m_currentValidationLayersEnabled = state.value(QStringLiteral("validationLayersEnabled")).toBool(true);
     m_currentFreeFlyCameraEnabled = state.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true);
+    m_currentMinPreviewTriangleAreaPx = std::clamp(
+        static_cast<float>(state.value(QStringLiteral("minPreviewTriangleAreaPx")).toDouble(0.25)),
+        0.0f,
+        16.0f);
     m_currentViewportCount = std::clamp(state.value(QStringLiteral("viewportCount")).toInt(1), 1, 4);
     m_currentViewportCameraIds = state.value(QStringLiteral("viewportCameraIds")).toArray();
     m_currentSceneLight = state.value(QStringLiteral("sceneLight")).toObject();

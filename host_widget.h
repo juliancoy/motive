@@ -58,7 +58,11 @@ public:
         float followPitch = 20.0f;
         float followSmoothSpeed = 5.0f;
         QVector3D followTargetOffset = QVector3D(0.0f, 0.0f, 0.0f);
+        bool freeFly = true;
+        float nearClip = 0.1f;
+        float farClip = 100.0f;
         bool isFollowCamera() const { return type == Type::Follow && followTargetIndex >= 0; }
+        bool isFreeFlyCamera() const { return freeFly; }
     };
 
     struct SceneItem
@@ -152,6 +156,8 @@ public:
     void setCameraPosition(const QVector3D& position);
     void setCameraRotation(const QVector3D& rotation);
     void setCameraSpeed(float speed);
+    void setPerspectiveNearFar(float near, float far);
+    void getPerspectiveNearFar(float& near, float& far) const;
     void resetCamera();
     void setBackgroundColor(const QColor& color);
     void setRenderPath(const QString& renderPath);

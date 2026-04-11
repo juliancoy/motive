@@ -532,6 +532,13 @@ void ViewportSceneController::restorePendingEntries()
                         entry.activeAnimationClip = QString::fromStdString(clips.front().name);
                     }
                 }
+                
+                // Apply physics coupling mode if not the default
+                if (!entry.animationPhysicsCoupling.isEmpty() && entry.animationPhysicsCoupling != QStringLiteral("AnimationOnly"))
+                {
+                    updateSceneItemAnimationPhysicsCoupling(sceneIndex, entry.animationPhysicsCoupling);
+                }
+                
                 m_sceneEntries.push_back(entry);
             }
             catch (const std::exception& ex)

@@ -41,6 +41,8 @@ public:
     void setPreviewAnchorWidget(QWidget* widget);
     void setActivationCallback(std::function<void(const AssetBrowserSelection&)> callback);
     void setRootPathChangedCallback(std::function<void(const QString&)> callback);
+    float minPreviewTriangleAreaPx() const;
+    void setMinPreviewTriangleAreaPx(float areaPx);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -73,6 +75,7 @@ private:
     QToolButton* m_refreshButton = nullptr;
     QToolButton* m_galleryBackButton = nullptr;
     QHash<QString, QPixmap> m_previewPixmapCache;
+    float m_minPreviewTriangleAreaPx = 0.25f;
     QPoint m_treeDragStartPos;
     QPoint m_galleryDragStartPos;
 };

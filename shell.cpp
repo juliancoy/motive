@@ -469,6 +469,19 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_followTargetCombo->addItem(QStringLiteral("None (Free Camera)"), -1);
     m_followTargetLabel = new QLabel(inspectorPanel);
     
+    // Free fly camera toggle
+    m_freeFlyCameraCheck = new QCheckBox(QStringLiteral("Free fly mode (WASD moves camera)"), inspectorPanel);
+    m_freeFlyCameraCheck->setChecked(true);
+    m_freeFlyCameraCheck->setToolTip(QStringLiteral("When enabled, WASD moves the camera. When disabled, WASD controls the character and right-drag orbits."));
+    
+    // Near/Far clipping planes
+    m_nearClipSpin = createSpinBox(inspectorPanel, 0.001, 100.0, 0.01);
+    m_nearClipSpin->setValue(0.1);
+    m_nearClipSpin->setToolTip(QStringLiteral("Near clipping plane distance"));
+    m_farClipSpin = createSpinBox(inspectorPanel, 0.1, 10000.0, 0.1);
+    m_farClipSpin->setValue(100.0);
+    m_farClipSpin->setToolTip(QStringLiteral("Far clipping plane distance"));
+    
     // Create follow camera parameter controls
     m_followParamsLabel = new QLabel(QStringLiteral("Follow Parameters"), inspectorPanel);
     m_followDistanceSpin = createSpinBox(inspectorPanel, 0.1, 100.0, 0.1);
@@ -548,6 +561,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
     inspectorLayout->addRow(QStringLiteral("Paint Color"), paintColorContainer);
     inspectorLayout->addRow(QStringLiteral("Animation"), m_animationControlsWidget);
+    inspectorLayout->addRow(QStringLiteral("Camera Mode"), m_freeFlyCameraCheck);
+    inspectorLayout->addRow(QStringLiteral("Near Clip"), m_nearClipSpin);
+    inspectorLayout->addRow(QStringLiteral("Far Clip"), m_farClipSpin);
     inspectorLayout->addRow(QStringLiteral("Follow Target"), m_followTargetCombo);
     inspectorLayout->addRow(m_followParamsLabel);
     inspectorLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
@@ -836,16 +852,43 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         
-        ViewportHostWidget::CameraConfig& config = configs[cameraIndex];
-        if (!config.isFollowCamera()) {
-            return;  // Only update follow params for follow cameras
+        ViewportHostWidget::CameraConfig config = configs[cameraIndex];
+        
+        // Update follow parameters from spin boxes (only for follow cameras)
+        if (config.isFollowCamera()) {
+            if (m_followDistanceSpin) config.followDistance = m_followDistanceSpin->value();
+            if (m_followYawSpin) config.followYaw = m_followYawSpin->value();
+            if (m_followPitchSpin) config.followPitch = m_followPitchSpin->value();
+            if (m_followSmoothSpin) config.followSmoothSpeed = m_followSmoothSpin->value();
         }
         
-        // Update follow parameters from spin boxes
-        if (m_followDistanceSpin) config.followDistance = m_followDistanceSpin->value();
-        if (m_followYawSpin) config.followYaw = m_followYawSpin->value();
-        if (m_followPitchSpin) config.followPitch = m_followPitchSpin->value();
-        if (m_followSmoothSpin) config.followSmoothSpeed = m_followSmoothSpin->value();
+        // Update clipping planes for all cameras
+        if (m_nearClipSpin) config.nearClip = m_nearClipSpin->value();
+        if (m_farClipSpin) config.farClip = m_farClipSpin->value();
+        
+        m_viewportHost->updateCameraConfig(cameraIndex, config);
+        saveProjectState();
+    };
+    
+    // Handler for free fly checkbox (applies to any camera, not just follow cameras)
+    auto applyFreeFlyMode = [this, resolveCameraIndexFromTreeItem]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_freeFlyCameraCheck) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        if (!current) return;
+        
+        const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+            return;
+        }
+        
+        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
+        auto configs = m_viewportHost->cameraConfigs();
+        if (cameraIndex < 0 || cameraIndex >= configs.size()) {
+            return;
+        }
+        
+        ViewportHostWidget::CameraConfig config = configs[cameraIndex];
+        config.freeFly = m_freeFlyCameraCheck->isChecked();
         
         m_viewportHost->updateCameraConfig(cameraIndex, config);
         saveProjectState();
@@ -855,6 +898,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_followYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
     connect(m_followPitchSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
     connect(m_followSmoothSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_nearClipSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_farClipSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
+    connect(m_freeFlyCameraCheck, &QCheckBox::toggled, this, [applyFreeFlyMode](bool) { applyFreeFlyMode(); });
 
     // Connect spin box value changes to update scene items
     auto updateTransform = [this]() {

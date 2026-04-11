@@ -434,7 +434,7 @@ void Camera::updateCameraMatrices()
     }
     else
     {
-        projectionMatrix = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        projectionMatrix = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, perspNear, perspFar);
     }
     projectionMatrix[1][1] *= -1;
     camera0TransformUBO.proj = projectionMatrix;
@@ -485,6 +485,13 @@ void Camera::setPerspectiveProjection()
     std::cout << "[Camera] Perspective projection enabled" << std::endl;
 }
 
+void Camera::setPerspectiveNearFar(float nearPlane, float farPlane)
+{
+    perspNear = std::max(0.001f, nearPlane);
+    perspFar = std::max(perspNear + 0.001f, farPlane);
+    std::cout << "[Camera] Perspective near/far set: near=" << perspNear << ", far=" << perspFar << std::endl;
+}
+
 void Camera::setControlsEnabled(bool enabled)
 {
     controlsEnabled = enabled;
@@ -508,34 +515,34 @@ void Camera::setCharacterTarget(Model* model)
 void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
 {
     if (sceneIndex >= 0) {
-        orbitRig.configure(sceneIndex, settings);
+        followOrbit.configure(sceneIndex, settings);
         std::cout << "[Camera] Follow target set: scene index " << sceneIndex << std::endl;
         std::cout << "[Camera] Follow settings: distance=" << settings.distance
                   << ", yaw=" << settings.relativeYaw 
                   << ", pitch=" << settings.relativePitch 
                   << ", smooth=" << settings.smoothSpeed << std::endl;
     } else {
-        orbitRig.clear();
+        followOrbit.clear();
         std::cout << "[Camera] Follow target cleared" << std::endl;
     }
 }
 
 void Camera::setFollowSettings(const FollowSettings& settings)
 {
-    const int sceneIndex = orbitRig.sceneIndex();
+    const int sceneIndex = followOrbit.sceneIndex();
     if (sceneIndex >= 0 || settings.enabled)
     {
-        orbitRig.configure(sceneIndex, settings);
+        followOrbit.configure(sceneIndex, settings);
     }
 }
 
 void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models)
 {
-    if (!orbitRig.isEnabled()) {
+    if (!followOrbit.isEnabled()) {
         return;
     }
 
-    const int sceneIndex = orbitRig.sceneIndex();
+    const int sceneIndex = followOrbit.sceneIndex();
     if (sceneIndex < 0 || sceneIndex >= static_cast<int>(models.size()) || !models[sceneIndex]) {
         return;
     }
@@ -545,7 +552,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
         return;
     }
 
-    const FollowSettings& settings = orbitRig.settings();
+    const FollowSettings& settings = followOrbit.settings();
     const glm::vec3 targetCenter = followAnchorPosition(*targetModel, settings);
 
     glm::vec3 targetForward(0.0f, 0.0f, 1.0f);
@@ -556,8 +563,8 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
         targetForward = glm::normalize(planarForward);
     }
 
-    const OrbitCameraPose currentPose{cameraPos, cameraRotation};
-    const OrbitCameraPose nextPose = orbitRig.update(targetCenter, targetForward, deltaTime, currentPose);
+    const FollowOrbitPose currentPose{cameraPos, cameraRotation};
+    const FollowOrbitPose nextPose = followOrbit.update(targetCenter, targetForward, deltaTime, currentPose);
     cameraPos = nextPose.position;
     cameraRotation = nextPose.rotation;
 }

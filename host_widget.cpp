@@ -1,14 +1,13 @@
 #include "host_widget.h"
 
-#include "camera.h"  // Include for Camera class
+#include "camera.h"  // Include for Camera class and FollowOrbit
 #include "asset_loader.h"
 #include "camera_controller.h"
 #include "hierarchy_builder.h"
+#include "orbit_follow_rig.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
 #include "scene_controller.h"
-
-#include "camera.h"
 #include "display.h"
 #include "engine.h"
 #include "light.h"
@@ -508,6 +507,23 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
     
     model->character.isControllable = enabled;
     
+    // When enabling character control with physics (WASD movement), ensure physics coupling is set
+    // to "Kinematic" if it's currently "AnimationOnly" (the default)
+    // Note: Free fly camera must be disabled for WASD to control the character
+    if (enabled)
+    {
+        auto& entries = m_sceneController->loadedEntries();
+        if (sceneIndex < static_cast<int>(entries.size()))
+        {
+            QString currentCoupling = entries[sceneIndex].animationPhysicsCoupling;
+            if (currentCoupling == QStringLiteral("AnimationOnly"))
+            {
+                qDebug() << "[ViewportHost] Enabling physics for character control - switching from AnimationOnly to Kinematic";
+                updateSceneItemAnimationPhysicsCoupling(sceneIndex, QStringLiteral("Kinematic"));
+            }
+        }
+    }
+    
     // Only the explicit editor character-control action should reposition the model.
     if (enabled && repositionForCharacterMode)
     {
@@ -529,13 +545,9 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
             camPos.y += heightOff;
             m_runtime->camera()->cameraPos = camPos;
             
-            // Calculate rotation to look at character
-            glm::vec3 lookTarget = pos + glm::vec3(0.0f, 0.8f, 0.0f);
-            glm::vec3 front = glm::normalize(lookTarget - camPos);
-            float yaw = atan2(front.x, front.z) + 3.14159f;
-            float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
-            if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
-            m_runtime->camera()->cameraRotation = glm::vec2(yaw, pitch);
+            const glm::vec3 lookTarget = pos + glm::vec3(0.0f, 0.8f, 0.0f);
+            const glm::vec3 front = glm::normalize(lookTarget - camPos);
+            m_runtime->camera()->cameraRotation = detail::cameraRotationForDirection(front);
             m_runtime->camera()->update(0);
             
             qDebug() << "[ViewportHost] Camera positioned at:" << camPos.x << camPos.y << camPos.z;
@@ -632,13 +644,9 @@ void ViewportHostWidget::setFreeFlyCameraEnabled(bool enabled)
                     camPos.y += heightOff;
                     m_runtime->camera()->cameraPos = camPos;
                     
-                    // Calculate rotation to look at character
-                    glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
-                    glm::vec3 front = glm::normalize(lookTarget - camPos);
-                    float yaw = atan2(front.x, front.z) + 3.14159f;
-                    float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
-                    if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
-                    m_runtime->camera()->cameraRotation = glm::vec2(yaw, pitch);
+                    const glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
+                    const glm::vec3 front = glm::normalize(lookTarget - camPos);
+                    m_runtime->camera()->cameraRotation = detail::cameraRotationForDirection(front);
                     m_runtime->camera()->update(0);
                     
                     qDebug() << "[ViewportHost] Camera positioned behind character at:" << camPos.x << camPos.y << camPos.z;
@@ -689,6 +697,7 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
             config.followPitch = glm::degrees(fs.relativePitch);
             config.followSmoothSpeed = fs.smoothSpeed;
             config.followTargetOffset = QVector3D(fs.targetOffset.x, fs.targetOffset.y, fs.targetOffset.z);
+            config.freeFly = false;
         } else {
             config.type = CameraConfig::Type::Free;
             config.position = QVector3D(camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z);
@@ -698,7 +707,10 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
                 glm::degrees(camera->cameraRotation.x),  // pitch
                 0.0f
             );
+            config.freeFly = m_freeFlyCameraEnabled;
         }
+        config.nearClip = camera->getPerspectiveNear();
+        config.farClip = camera->getPerspectiveFar();
         
         configs.append(config);
     }
@@ -779,23 +791,23 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
 
     if (targetModel)
     {
-        // Calculate initial camera position based on target and settings.
         glm::vec3 targetCenter = followAnchorPosition(
             *targetModel,
             glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z()));
-        glm::vec3 offset;
-        offset.x = sin(yawRad) * cos(pitchRad) * distance;
-        offset.y = sin(pitchRad) * distance;
-        offset.z = cos(yawRad) * cos(pitchRad) * distance;
-        initialPos = targetCenter + offset;
+        FollowSettings initialFollowSettings;
+        initialFollowSettings.relativeYaw = yawRad;
+        initialFollowSettings.relativePitch = pitchRad;
+        initialFollowSettings.distance = distance;
+        initialFollowSettings.smoothSpeed = smoothSpeed;
+        initialFollowSettings.targetOffset = glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z());
+        initialFollowSettings.enabled = true;
 
-        // Calculate initial rotation to look at target
-        glm::vec3 toTarget = targetCenter - initialPos;
-        if (glm::length(toTarget) > 0.0001f)
-        {
-            initialYaw = atan2(toTarget.x, toTarget.z) + 3.14159f;
-            initialPitch = -asin(glm::clamp(toTarget.y / glm::length(toTarget), -1.0f, 1.0f));
-        }
+        const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
+        const float targetYaw = FollowOrbit::computeTargetYaw(modelForward);
+        const FollowOrbitPose initialPose = FollowOrbit::computePose(targetCenter, targetYaw, initialFollowSettings);
+        initialPos = initialPose.position;
+        initialYaw = initialPose.rotation.x;
+        initialPitch = initialPose.rotation.y;
     }
     
     // Create the follow camera
@@ -861,6 +873,8 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
             if (followCam) {
                 followCam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
                 followCam->setCameraName(config.name.toStdString());
+                followCam->setFreeFlyCamera(false);
+                followCam->setPerspectiveNearFar(config.nearClip, config.farClip);
             }
         } else {
             // Create free camera
@@ -870,6 +884,8 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
             if (cam) {
                 cam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
                 cam->setControlsEnabled(true);
+                cam->setFreeFlyCamera(config.freeFly);
+                cam->setPerspectiveNearFar(config.nearClip, config.farClip);
             }
         }
     }
@@ -922,28 +938,26 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
         return -1;
     }
     
-    // Calculate initial camera position based on settings
     glm::vec3 targetCenter = followAnchorPosition(*targetModel);
     float yawRad = glm::radians(yaw);
     float pitchRad = glm::radians(pitch);
-    
-    glm::vec3 offset;
-    offset.x = sin(yawRad) * cos(pitchRad) * distance;
-    offset.y = sin(pitchRad) * distance;
-    offset.z = cos(yawRad) * cos(pitchRad) * distance;
-    
-    glm::vec3 initialPos = targetCenter + offset;
-    
-    // Calculate initial rotation to look at target
-    glm::vec3 toTarget = targetCenter - initialPos;
-    float initialYaw = atan2(toTarget.x, toTarget.z) + 3.14159f;
-    float initialPitch = -asin(glm::clamp(toTarget.y / glm::length(toTarget), -1.0f, 1.0f));
+    FollowSettings followSettings;
+    followSettings.relativeYaw = yawRad;
+    followSettings.relativePitch = pitchRad;
+    followSettings.distance = distance;
+    followSettings.smoothSpeed = 5.0f;
+    followSettings.targetOffset = glm::vec3(0.0f);
+    followSettings.enabled = true;
+
+    const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
+    const float targetYaw = FollowOrbit::computeTargetYaw(modelForward);
+    const FollowOrbitPose initialPose = FollowOrbit::computePose(targetCenter, targetYaw, followSettings);
     
     // Create the follow camera
     Camera* followCam = m_runtime->display()->createCamera(
         cameraNameStd,
-        initialPos,
-        glm::vec2(initialYaw, initialPitch)
+        initialPose.position,
+        initialPose.rotation
     );
     
     if (!followCam) {
@@ -953,15 +967,6 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
     if (followCam->getCameraId().empty()) {
         followCam->setCameraId(makeCameraId().toStdString());
     }
-    
-    // Configure follow settings
-    FollowSettings followSettings;
-    followSettings.relativeYaw = yawRad;
-    followSettings.relativePitch = pitchRad;
-    followSettings.distance = distance;
-    followSettings.smoothSpeed = 5.0f;  // Default smoothing
-    followSettings.targetOffset = glm::vec3(0.0f);
-    followSettings.enabled = true;
     
     followCam->setFollowTarget(sceneIndex, followSettings);
     followCam->setControlsEnabled(false);  // Follow cameras don't have direct controls
@@ -1084,8 +1089,8 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
 
     if (newActiveCamera)
     {
-        // Keep viewport interaction mode aligned with the active camera type.
-        m_freeFlyCameraEnabled = !newActiveCamera->isFollowModeEnabled();
+        // Sync viewport mode with the active camera's free fly setting
+        m_freeFlyCameraEnabled = newActiveCamera->isFreeFlyCamera();
     }
 
     if (previousActiveCamera && previousActiveCamera != newActiveCamera)
@@ -1145,6 +1150,7 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         // Update follow target and settings
         camera->setFollowTarget(config.followTargetIndex, fs);
         camera->setControlsEnabled(false);  // Follow cameras don't have direct controls
+        camera->setFreeFlyCamera(false);
     } else if (config.type == CameraConfig::Type::Free) {
         // Update position for free camera
         camera->cameraPos = glm::vec3(config.position.x(), config.position.y(), config.position.z());
@@ -1157,6 +1163,15 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
             camera->setFollowTarget(-1, fs);
         }
         camera->setControlsEnabled(true);
+        camera->setFreeFlyCamera(config.freeFly);
+    }
+    
+    // Apply clipping planes
+    camera->setPerspectiveNearFar(config.nearClip, config.farClip);
+    
+    // Sync viewport free fly mode if this is the active camera
+    if (cameraIndex == activeCameraIndex()) {
+        m_freeFlyCameraEnabled = camera->isFreeFlyCamera();
     }
 
     updateViewportLayout();
@@ -1583,6 +1598,16 @@ void ViewportHostWidget::setCameraRotation(const QVector3D& rotation)
 void ViewportHostWidget::setCameraSpeed(float speed)
 {
     m_cameraController->setCameraSpeed(speed);
+}
+
+void ViewportHostWidget::setPerspectiveNearFar(float near, float far)
+{
+    m_cameraController->setPerspectiveNearFar(near, far);
+}
+
+void ViewportHostWidget::getPerspectiveNearFar(float& near, float& far) const
+{
+    m_cameraController->getPerspectiveNearFar(near, far);
 }
 
 void ViewportHostWidget::resetCamera()
@@ -2313,16 +2338,11 @@ void ViewportHostWidget::updateCameraFollowCharacter(float dt)
     // Camera always looks at character
     const glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
     const glm::vec3 toTarget = lookTarget - m_runtime->camera()->cameraPos;
-    
+
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
-        float yaw = atan2(front.x, front.z) + 3.14159f;
-        float pitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
-        if (yaw > 3.14159f) yaw -= 2 * 3.14159f;
-        
-        m_runtime->camera()->cameraRotation.x = yaw;
-        m_runtime->camera()->cameraRotation.y = pitch;
+        m_runtime->camera()->cameraRotation = detail::cameraRotationForDirection(front);
     }
     
     m_runtime->camera()->update(0);

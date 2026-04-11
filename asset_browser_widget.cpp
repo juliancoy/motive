@@ -42,6 +42,9 @@ extern "C" {
 namespace motive::ui {
 namespace {
 
+constexpr float kDefaultMinPreviewTriangleAreaPx = 0.25f;
+constexpr float kMaxMinPreviewTriangleAreaPx = 16.0f;
+
 QIcon folderSequenceIcon(const QSize& size = QSize(48, 48))
 {
     QPixmap pixmap(size);
@@ -218,7 +221,9 @@ std::vector<PreviewTriangle> loadFbxPreviewTriangles(const QString& filePath)
     return triangles;
 }
 
-QPixmap renderFbxPreview(const QString& filePath, const QSize& size = QSize(480, 300))
+QPixmap renderFbxPreview(const QString& filePath,
+                         float minTriangleAreaPx,
+                         const QSize& size = QSize(480, 300))
 {
     const std::vector<PreviewTriangle> triangles = loadFbxPreviewTriangles(filePath);
     if (triangles.empty())
@@ -279,6 +284,9 @@ QPixmap renderFbxPreview(const QString& filePath, const QSize& size = QSize(480,
         float z;
     };
 
+    const float clampedMinTriangleAreaPx =
+        std::clamp(minTriangleAreaPx, 0.0f, kMaxMinPreviewTriangleAreaPx);
+
     for (const PreviewTriangle& srcTri : triangles)
     {
         const glm::vec3 a3 = rotatePoint(srcTri.a);
@@ -306,7 +314,7 @@ QPixmap renderFbxPreview(const QString& filePath, const QSize& size = QSize(480,
         const ScreenVertex c = project(c3);
 
         const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-        if (std::abs(area) < 1e-5f)
+        if (std::abs(area) < clampedMinTriangleAreaPx)
         {
             continue;
         }
@@ -508,6 +516,7 @@ AssetBrowserWidget::AssetBrowserWidget(QWidget* parent)
     : QWidget(parent)
 {
     setMinimumWidth(220);
+    m_minPreviewTriangleAreaPx = kDefaultMinPreviewTriangleAreaPx;
     buildUi();
     setRootPath(QDir::currentPath());
 }
@@ -580,6 +589,27 @@ void AssetBrowserWidget::setPreviewAnchorWidget(QWidget* widget)
 void AssetBrowserWidget::setRootPathChangedCallback(std::function<void(const QString&)> callback)
 {
     m_rootPathChangedCallback = std::move(callback);
+}
+
+float AssetBrowserWidget::minPreviewTriangleAreaPx() const
+{
+    return m_minPreviewTriangleAreaPx;
+}
+
+void AssetBrowserWidget::setMinPreviewTriangleAreaPx(float areaPx)
+{
+    const float clampedArea = std::clamp(areaPx, 0.0f, kMaxMinPreviewTriangleAreaPx);
+    if (std::abs(clampedArea - m_minPreviewTriangleAreaPx) < 0.0001f)
+    {
+        return;
+    }
+
+    m_minPreviewTriangleAreaPx = clampedArea;
+    m_previewPixmapCache.clear();
+    if (!m_galleryPath.isEmpty() && m_stack && m_stack->currentIndex() == 1)
+    {
+        populateGallery();
+    }
 }
 
 void AssetBrowserWidget::buildUi()
@@ -824,7 +854,8 @@ QPixmap AssetBrowserWidget::previewPixmapForFile(const QString& filePath)
     }
 
     const QString cacheKey = info.absoluteFilePath() + QLatin1Char('|') +
-                             QString::number(info.lastModified().toMSecsSinceEpoch());
+                             QString::number(info.lastModified().toMSecsSinceEpoch()) + QLatin1Char('|') +
+                             QString::number(m_minPreviewTriangleAreaPx, 'f', 3);
     const auto it = m_previewPixmapCache.constFind(cacheKey);
     if (it != m_previewPixmapCache.constEnd())
     {
@@ -852,7 +883,7 @@ QPixmap AssetBrowserWidget::previewPixmapForFile(const QString& filePath)
     {
         if (info.suffix().compare(QStringLiteral("fbx"), Qt::CaseInsensitive) == 0)
         {
-            pixmap = renderFbxPreview(filePath);
+            pixmap = renderFbxPreview(filePath, m_minPreviewTriangleAreaPx);
         }
         if (pixmap.isNull())
         {

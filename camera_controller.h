@@ -19,6 +19,8 @@ public:
     void setCameraPosition(const QVector3D& position);
     void setCameraRotation(const QVector3D& rotation);
     void setCameraSpeed(float speed);
+    void setPerspectiveNearFar(float near, float far);
+    void getPerspectiveNearFar(float& near, float& far) const;
     void resetCamera();
 
     void relocateSceneItemInFrontOfCamera(int index);

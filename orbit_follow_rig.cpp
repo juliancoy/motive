@@ -1,9 +1,15 @@
-#include "orbit_camera_rig.h"
+#include "orbit_follow_rig.h"
 
 #include <algorithm>
 #include <cmath>
 
-void OrbitCameraRig::configure(int sceneIndex, const FollowSettings& settings)
+namespace
+{
+constexpr float kMinFollowDistance = 0.001f;
+constexpr float kMaxPitchRadians = 1.4f;
+}
+
+void FollowOrbit::configure(int sceneIndex, const FollowSettings& settings)
 {
     sceneIndex_ = sceneIndex;
     settings_ = settings;
@@ -11,7 +17,7 @@ void OrbitCameraRig::configure(int sceneIndex, const FollowSettings& settings)
     headingInitialized_ = false;
 }
 
-void OrbitCameraRig::clear()
+void FollowOrbit::clear()
 {
     sceneIndex_ = -1;
     settings_ = FollowSettings{};
@@ -21,27 +27,27 @@ void OrbitCameraRig::clear()
     targetYaw_ = 0.0f;
 }
 
-bool OrbitCameraRig::isEnabled() const
+bool FollowOrbit::isEnabled() const
 {
     return settings_.enabled && sceneIndex_ >= 0;
 }
 
-int OrbitCameraRig::sceneIndex() const
+int FollowOrbit::sceneIndex() const
 {
     return sceneIndex_;
 }
 
-const FollowSettings& OrbitCameraRig::settings() const
+const FollowSettings& FollowOrbit::settings() const
 {
     return settings_;
 }
 
-OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
+FollowOrbitPose FollowOrbit::update(const glm::vec3& targetCenter,
                                        const glm::vec3& targetForward,
                                        float deltaTime,
-                                       const OrbitCameraPose& currentPose)
+                                       const FollowOrbitPose& currentPose)
 {
-    OrbitCameraPose pose = currentPose;
+    FollowOrbitPose pose = currentPose;
     if (!isEnabled())
     {
         return pose;
@@ -59,7 +65,7 @@ OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
 
     if (!headingInitialized_)
     {
-        targetYaw_ = std::atan2(flattenedForward.x, flattenedForward.z);
+        targetYaw_ = computeTargetYaw(flattenedForward);
         lastTargetCenter_ = targetCenter;
         headingInitialized_ = true;
     }
@@ -74,7 +80,7 @@ OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
         }
         else
         {
-            desiredTargetYaw = std::atan2(flattenedForward.x, flattenedForward.z);
+            desiredTargetYaw = computeTargetYaw(flattenedForward);
         }
 
         const float headingLerp = std::clamp(deltaTime * 8.0f, 0.0f, 1.0f);
@@ -83,14 +89,9 @@ OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
         lastTargetCenter_ = targetCenter;
     }
 
-    const float pitch = std::clamp(settings_.relativePitch, -1.4f, 1.4f);
-    const float worldYaw = normalizeAngle(targetYaw_ + settings_.relativeYaw);
-    const float dist = std::max(0.001f, settings_.distance);
-
-    glm::vec3 desiredDirection;
-    desiredDirection.x = std::sin(worldYaw) * std::cos(pitch);
-    desiredDirection.y = std::sin(pitch);
-    desiredDirection.z = std::cos(worldYaw) * std::cos(pitch);
+    const FollowOrbitPose desiredPose = computePose(targetCenter, targetYaw_, settings_);
+    const float dist = std::max(kMinFollowDistance, settings_.distance);
+    glm::vec3 desiredDirection = desiredPose.position - targetCenter;
     if (glm::length(desiredDirection) < 0.0001f)
     {
         desiredDirection = glm::vec3(0.0f, 0.0f, 1.0f);
@@ -102,7 +103,7 @@ OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
 
     if (!initialized_)
     {
-        pose.position = targetCenter + (desiredDirection * dist);
+        pose = desiredPose;
         initialized_ = true;
     }
 
@@ -128,21 +129,63 @@ OrbitCameraPose OrbitCameraRig::update(const glm::vec3& targetCenter,
     }
 
     pose.position = targetCenter + (blendedDirection * dist);
+    pose.rotation = desiredPose.rotation;
+
+    return pose;
+}
+
+FollowOrbitPose FollowOrbit::computePose(const glm::vec3& targetCenter,
+                                            float targetYaw,
+                                            const FollowSettings& settings)
+{
+    const float pitch = std::clamp(settings.relativePitch, -kMaxPitchRadians, kMaxPitchRadians);
+    const float worldYaw = normalizeAngle(targetYaw + settings.relativeYaw);
+    const float dist = std::max(kMinFollowDistance, settings.distance);
+    const glm::vec3 desiredDirection = computeOrbitDirection(worldYaw, pitch);
+
+    FollowOrbitPose pose;
+    pose.position = targetCenter + (desiredDirection * dist);
 
     const glm::vec3 toTarget = targetCenter - pose.position;
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
         float yaw = std::atan2(front.x, front.z) + 3.14159f;
-        float pitchRadians = -std::asin(glm::clamp(front.y, -1.0f, 1.0f));
-        yaw = normalizeAngle(yaw);
-        pose.rotation = glm::vec2(yaw, pitchRadians);
+        float pitchRadians = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
+        pose.rotation = glm::vec2(normalizeAngle(yaw), pitchRadians);
     }
 
     return pose;
 }
 
-float OrbitCameraRig::normalizeAngle(float angle)
+float FollowOrbit::computeTargetYaw(const glm::vec3& targetForward)
+{
+    glm::vec3 flattenedForward(targetForward.x, 0.0f, targetForward.z);
+    if (glm::length(flattenedForward) < 0.0001f)
+    {
+        flattenedForward = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    else
+    {
+        flattenedForward = glm::normalize(flattenedForward);
+    }
+    return std::atan2(flattenedForward.x, flattenedForward.z);
+}
+
+glm::vec3 FollowOrbit::computeOrbitDirection(float worldYaw, float pitch)
+{
+    glm::vec3 desiredDirection;
+    desiredDirection.x = std::sin(worldYaw) * std::cos(pitch);
+    desiredDirection.y = std::sin(pitch);
+    desiredDirection.z = std::cos(worldYaw) * std::cos(pitch);
+    if (glm::length(desiredDirection) < 0.0001f)
+    {
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    return glm::normalize(desiredDirection);
+}
+
+float FollowOrbit::normalizeAngle(float angle)
 {
     constexpr float kPi = 3.14159265358979323846f;
     constexpr float kTwoPi = 2.0f * kPi;

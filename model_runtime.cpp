@@ -418,8 +418,10 @@ void Model::setCharacterInput(const glm::vec3& moveDir)
 
 glm::vec3 Model::getFollowAnchorPosition() const
 {
-    // Use rendered bounds center for camera framing. Fall back to transform origin
-    // when bounds are not valid (for example during transient load states).
+    // Use the current rendered bounds center for camera framing. Animated meshes
+    // update cpuVertices and recomputeBounds() each frame, so follow cameras orbit
+    // around the current per-frame bounding box center instead of the bind pose.
+    // Fall back to the transform origin during transient load states.
     if (boundsRadius > 0.0f)
     {
         return boundsCenter;

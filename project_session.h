@@ -30,6 +30,7 @@ public:
     bool currentMeshConsolidationEnabled() const;
     bool currentValidationLayersEnabled() const;
     bool currentFreeFlyCameraEnabled() const;
+    float currentMinPreviewTriangleAreaPx() const;
     int currentViewportCount() const;
     QJsonArray currentViewportCameraIds() const;
     QString projectsDirPath() const;
@@ -58,6 +59,7 @@ public:
     void setCurrentMeshConsolidationEnabled(bool enabled);
     void setCurrentValidationLayersEnabled(bool enabled);
     void setCurrentFreeFlyCameraEnabled(bool enabled);
+    void setCurrentMinPreviewTriangleAreaPx(float areaPx);
     void setCurrentViewportCount(int count);
     void setCurrentViewportCameraIds(const QJsonArray& ids);
     void saveCurrentProject() const;
@@ -86,6 +88,7 @@ private:
     bool m_currentMeshConsolidationEnabled = true;
     bool m_currentValidationLayersEnabled = true;
     bool m_currentFreeFlyCameraEnabled = true;  // Default to free fly mode
+    float m_currentMinPreviewTriangleAreaPx = 0.25f;
     int m_currentViewportCount = 1;
     QJsonArray m_currentViewportCameraIds;
 };

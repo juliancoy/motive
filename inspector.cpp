@@ -263,6 +263,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             float followYaw = 0.0f;
             float followPitch = 20.0f;
             float followSmooth = 5.0f;
+            float nearClip = 0.1f;
+            float farClip = 100.0f;
             
             if (cameraIndex >= 0 && cameraIndex < configs.size()) {
                 isFollowCamera = configs[cameraIndex].isFollowCamera();
@@ -271,6 +273,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 followYaw = configs[cameraIndex].followYaw;
                 followPitch = configs[cameraIndex].followPitch;
                 followSmooth = configs[cameraIndex].followSmoothSpeed;
+                nearClip = configs[cameraIndex].nearClip;
+                farClip = configs[cameraIndex].farClip;
             }
             
             QString cameraName = QStringLiteral("Camera");
@@ -284,6 +288,32 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorNameValue, cameraName);
             setValue(m_inspectorPathValue, cameraPath);
             setValue(m_animationModeValue, QStringLiteral("Static"));
+            
+            // Show free fly checkbox for all cameras
+            if (m_freeFlyCameraCheck) {
+                m_freeFlyCameraCheck->setVisible(true);
+                bool freeFly = true;
+                if (cameraIndex >= 0 && cameraIndex < configs.size()) {
+                    freeFly = configs[cameraIndex].freeFly;
+                }
+                m_freeFlyCameraCheck->blockSignals(true);
+                m_freeFlyCameraCheck->setChecked(freeFly);
+                m_freeFlyCameraCheck->blockSignals(false);
+            }
+            
+            // Show near/far clip spinboxes for all cameras
+            if (m_nearClipSpin) {
+                m_nearClipSpin->setVisible(true);
+                m_nearClipSpin->blockSignals(true);
+                m_nearClipSpin->setValue(nearClip);
+                m_nearClipSpin->blockSignals(false);
+            }
+            if (m_farClipSpin) {
+                m_farClipSpin->setVisible(true);
+                m_farClipSpin->blockSignals(true);
+                m_farClipSpin->setValue(farClip);
+                m_farClipSpin->blockSignals(false);
+            }
             
             // For free cameras: show transform, hide follow params
             // For follow cameras: show follow params, disable transform
@@ -369,6 +399,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setFollowTargetInspectorVisible(false);
             setAnimationInspector(false);
             setGravityInspector(false);
+            if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
+            if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
+            if (m_farClipSpin) m_farClipSpin->setVisible(false);
             if (m_viewportHost)
             {
                 const auto light = m_viewportHost->sceneLight();
@@ -389,6 +422,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             return;
         }
         setFollowTargetInspectorVisible(false);
+        if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
+        if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
+        if (m_farClipSpin) m_farClipSpin->setVisible(false);
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
@@ -450,6 +486,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     }
     setLightInspectorVisible(false);
     setFollowTargetInspectorVisible(false);
+    if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
+    if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
+    if (m_farClipSpin) m_farClipSpin->setVisible(false);
     QStringList animationClips = m_viewportHost ? m_viewportHost->animationClipNames(row) : QStringList{};
     QString selectedClip = clipName;
     if (selectedClip.isEmpty())

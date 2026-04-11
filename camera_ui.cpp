@@ -92,21 +92,6 @@ void MainWindowShell::setupCameraSettingsPanel()
         m_viewportHost->setCameraSpeed(static_cast<float>(m_cameraSpeedSpin->value()));
     });
     
-    // Free fly camera toggle
-    m_freeFlyCameraCheck = new QCheckBox(QStringLiteral("Enable free fly camera (WASD moves camera)"), cameraPanel);
-    m_freeFlyCameraCheck->setChecked(true);
-    m_freeFlyCameraCheck->setToolTip(QStringLiteral("When enabled, WASD moves the camera. When disabled, WASD controls the character (if character control is enabled)."));
-    cameraLayout->addRow(QStringLiteral("Camera Mode"), m_freeFlyCameraCheck);
-    connect(m_freeFlyCameraCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        if (m_updatingCameraSettings) return;
-        m_projectSession.setCurrentFreeFlyCameraEnabled(checked);
-        saveProjectState();
-        // Update viewport camera mode
-        if (m_viewportHost) {
-            m_viewportHost->setFreeFlyCameraEnabled(checked);
-        }
-    });
-    
     // Background color
     m_bgColorWidget = new QWidget(cameraPanel);
     m_bgColorWidget->setFixedSize(60, 30);
@@ -180,10 +165,6 @@ void MainWindowShell::updateCameraSettingsPanel()
     if (m_validationRestartLabel)
     {
         m_validationRestartLabel->hide(); // Hide restart hint on initial load
-    }
-    if (m_freeFlyCameraCheck)
-    {
-        m_freeFlyCameraCheck->setChecked(m_projectSession.currentFreeFlyCameraEnabled());
     }
     
     m_updatingCameraSettings = false;

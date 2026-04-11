@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "camera_follow_settings.h"
-#include "orbit_camera_rig.h"
+#include "orbit_follow_rig.h"
 
 // Forward declarations
 class Engine;
@@ -81,6 +81,9 @@ public:
     void allocateDescriptorSet();
     void setOrthographicProjection(float width, float height, float nearPlane = 0.1f, float farPlane = 100.0f);
     void setPerspectiveProjection();
+    void setPerspectiveNearFar(float nearPlane, float farPlane);
+    float getPerspectiveNear() const { return perspNear; }
+    float getPerspectiveFar() const { return perspFar; }
     void setControlsEnabled(bool enabled);
     
     // Character controller target (WASD moves this model instead of camera)
@@ -91,20 +94,24 @@ public:
     // The camera stores the scene index and looks up the model each frame,
     // so it continues to work even if models are reloaded
     void setFollowTarget(int sceneIndex, const FollowSettings& settings = FollowSettings());
-    int getFollowTargetIndex() const { return orbitRig.sceneIndex(); }
+    int getFollowTargetIndex() const { return followOrbit.sceneIndex(); }
     void setFollowSettings(const FollowSettings& settings);
-    const FollowSettings& getFollowSettings() const { return orbitRig.settings(); }
+    const FollowSettings& getFollowSettings() const { return followOrbit.settings(); }
     void updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models);  // Update camera position based on follow target
-    bool isFollowModeEnabled() const { return orbitRig.isEnabled(); }
+    bool isFollowModeEnabled() const { return followOrbit.isEnabled(); }
     
     // Get the scene index this camera is following (returns -1 if not following)
-    int getFollowSceneIndex() const { return orbitRig.sceneIndex(); }
+    int getFollowSceneIndex() const { return followOrbit.sceneIndex(); }
     
     // Camera identification
     void setCameraName(const std::string& name) { cameraName = name; }
     const std::string& getCameraName() const { return cameraName; }
     void setCameraId(const std::string& id) { cameraId = id; }
     const std::string& getCameraId() const { return cameraId; }
+    
+    // Free fly camera mode (WASD moves camera vs character)
+    void setFreeFlyCamera(bool freeFly) { freeFlyCamera = freeFly; }
+    bool isFreeFlyCamera() const { return freeFlyCamera; }
 
 private:
     Engine* engine;
@@ -122,6 +129,8 @@ private:
     float orthoHeight = 10.0f;
     float orthoNear = 0.1f;
     float orthoFar = 100.0f;
+    float perspNear = 0.1f;
+    float perspFar = 100.0f;
     bool controlsEnabled = true;
     bool fullscreenViewportEnabled = false;
     float fullscreenPercentX = 1.0f;
@@ -131,5 +140,6 @@ private:
     
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
     std::string cameraId;
-    OrbitCameraRig orbitRig;
+    bool freeFlyCamera = true;  // Free fly mode: WASD moves camera (vs character follow mode)
+    FollowOrbit followOrbit;
 };
