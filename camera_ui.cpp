@@ -7,7 +7,6 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPalette>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -22,16 +21,6 @@ void MainWindowShell::setupCameraSettingsPanel()
     }
 
     auto* cameraPanel = new QWidget(m_rightTabs);
-    // Apply dark theme styling to match asset browser
-    cameraPanel->setStyleSheet(
-        QStringLiteral(
-            "QWidget { background: #10161d; color: #edf2f7; }"
-            "QLabel { color: #edf2f7; }"
-            "QComboBox, QDoubleSpinBox, QCheckBox, QPushButton { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 7px; padding: 4px 8px; }"
-            "QComboBox:hover, QDoubleSpinBox:hover, QPushButton:hover { background: #233142; }"
-            "QComboBox::drop-down { border-left: 1px solid #2e3b4a; }"
-            "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { background: #2e3b4a; border: 1px solid #3a4a5f; }"));
     auto* cameraLayout = new QFormLayout(cameraPanel);
 
     m_renderPathCombo = new QComboBox(cameraPanel);
@@ -41,6 +30,19 @@ void MainWindowShell::setupCameraSettingsPanel()
     connect(m_renderPathCombo, &QComboBox::currentIndexChanged, this, [this]() {
         if (m_updatingCameraSettings || !m_viewportHost || !m_renderPathCombo) return;
         m_viewportHost->setRenderPath(m_renderPathCombo->currentData().toString());
+        saveProjectState();
+    });
+
+    m_viewportCountCombo = new QComboBox(cameraPanel);
+    m_viewportCountCombo->addItem(QStringLiteral("1"), 1);
+    m_viewportCountCombo->addItem(QStringLiteral("2"), 2);
+    m_viewportCountCombo->addItem(QStringLiteral("3"), 3);
+    m_viewportCountCombo->addItem(QStringLiteral("4"), 4);
+    m_viewportCountCombo->setToolTip(QStringLiteral("Choose how many viewport slots are shown."));
+    cameraLayout->addRow(QStringLiteral("Viewport Slots"), m_viewportCountCombo);
+    connect(m_viewportCountCombo, &QComboBox::currentIndexChanged, this, [this]() {
+        if (m_updatingCameraSettings || !m_viewportHost || !m_viewportCountCombo) return;
+        m_viewportHost->setViewportCount(m_viewportCountCombo->currentData().toInt());
         saveProjectState();
     });
 
@@ -158,6 +160,14 @@ void MainWindowShell::updateCameraSettingsPanel()
     if (m_meshConsolidationCheck)
     {
         m_meshConsolidationCheck->setChecked(m_viewportHost->meshConsolidationEnabled());
+    }
+    if (m_viewportCountCombo)
+    {
+        const int index = m_viewportCountCombo->findData(m_viewportHost->viewportCount());
+        if (index >= 0)
+        {
+            m_viewportCountCombo->setCurrentIndex(index);
+        }
     }
     if (m_cameraSpeedSpin)
     {

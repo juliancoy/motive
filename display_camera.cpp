@@ -16,6 +16,10 @@ void Display::addCamera(Camera* camera)
     camera->setWindow(window);
     camera->setFullscreenViewportEnabled(true);
     cameras.push_back(camera);
+    if (!activeCamera)
+    {
+        activeCamera = camera;
+    }
     updateCameraViewports();
     if (graphicsPipelines[static_cast<size_t>(PrimitiveCullMode::Back)] != VK_NULL_HANDLE)
     {
@@ -76,6 +80,10 @@ Camera* Display::createCamera(const std::string& name, const glm::vec3& initialP
     cameraPtr->setWindow(window);
     cameraPtr->setFullscreenViewportEnabled(true);
     cameras.push_back(cameraPtr);
+    if (!activeCamera)
+    {
+        activeCamera = cameraPtr;
+    }
 
     updateCameraViewports();
 
@@ -103,6 +111,11 @@ void Display::removeCamera(Camera* camera)
         cameras.erase(it);
     }
 
+    if (activeCamera == camera)
+    {
+        activeCamera = cameras.empty() ? nullptr : cameras.front();
+    }
+
     auto ownedIt = std::find_if(ownedCameras.begin(), ownedCameras.end(),
         [camera](const std::unique_ptr<Camera>& ptr) { return ptr.get() == camera; });
     if (ownedIt != ownedCameras.end())
@@ -111,4 +124,41 @@ void Display::removeCamera(Camera* camera)
     }
 
     updateCameraViewports();
+}
+
+void Display::setActiveCamera(Camera* camera)
+{
+    if (!camera)
+    {
+        activeCamera = nullptr;
+        return;
+    }
+
+    const auto it = std::find(cameras.begin(), cameras.end(), camera);
+    if (it == cameras.end())
+    {
+        return;
+    }
+
+    activeCamera = camera;
+}
+
+Camera* Display::getActiveCamera() const
+{
+    if (activeCamera)
+    {
+        const auto it = std::find(cameras.begin(), cameras.end(), activeCamera);
+        if (it != cameras.end())
+        {
+            return activeCamera;
+        }
+    }
+    return cameras.empty() ? nullptr : cameras.front();
+}
+
+void Display::setViewportSlots(const std::vector<ViewportSlot>& viewportSlotsIn)
+{
+    std::lock_guard<std::mutex> lock(renderMutex);
+    viewportSlots = viewportSlotsIn;
+    useExplicitViewportSlots = true;
 }

@@ -91,6 +91,7 @@ void Display::shutdown()
         vkQueueWaitIdle(graphicsQueue);
         vkDeviceWaitIdle(engine->logicalDevice);
     }
+    frameSyncState.reset();
 }
 
 Display::~Display()

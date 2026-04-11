@@ -23,18 +23,6 @@ struct Frustum
     std::array<glm::vec4, 6> planes;
 };
 
-bool cameraUsesCustomViewport(const Camera& camera)
-{
-    constexpr float kViewportEpsilon = 0.001f;
-    if (!camera.isFullscreenViewportEnabled())
-    {
-        return true;
-    }
-
-    return std::abs(camera.getFullscreenPercentX() - 1.0f) > kViewportEpsilon ||
-           std::abs(camera.getFullscreenPercentY() - 1.0f) > kViewportEpsilon;
-}
-
 Frustum extractFrustum(const glm::mat4& vp)
 {
     Frustum f;
@@ -97,6 +85,7 @@ void Display::render()
     }
 
     const uint32_t maxFramesInFlight = swapchainManager.getMaxFramesInFlight();
+    const uint32_t frameIndex = static_cast<uint32_t>(frameSyncState.currentFrame());
 
     if (framebufferResized)
     {
@@ -114,12 +103,13 @@ void Display::render()
     }
     else
     {
-        VkFence fence = swapchainManager.getInFlightFence(currentFrame);
-        vkWaitForFences(engine->logicalDevice, 1, &fence, VK_TRUE, UINT64_MAX);
+        frameSyncState.waitForCurrentFrameFence(engine->logicalDevice, [this](size_t index) {
+            return swapchainManager.getInFlightFence(index);
+        });
     }
 
     uint32_t imageIndex = 0;
-    VkResult result = static_cast<VkResult>(swapchainManager.acquireNextImage(currentFrame, &imageIndex));
+    VkResult result = static_cast<VkResult>(swapchainManager.acquireNextImage(frameIndex, &imageIndex));
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -136,39 +126,44 @@ void Display::render()
     {
         vkWaitForFences(engine->logicalDevice, 1, &imageFence, VK_TRUE, UINT64_MAX);
     }
-    swapchainManager.setImageInFlight(imageIndex, swapchainManager.getInFlightFence(currentFrame));
+    swapchainManager.setImageInFlight(imageIndex, swapchainManager.getInFlightFence(frameIndex));
 
-    std::vector<Camera*> renderCameras;
-    renderCameras.reserve(cameras.size());
-
-    const bool hasCustomViewportLayout = std::any_of(cameras.begin(), cameras.end(),
-        [](Camera* camera)
-        {
-            return camera && cameraUsesCustomViewport(*camera);
-        });
-
-    if (hasCustomViewportLayout)
+    std::vector<ViewportSlot> renderViews;
+    if (useExplicitViewportSlots)
     {
+        renderViews.reserve(viewportSlots.size());
+        for (const ViewportSlot& slot : viewportSlots)
+        {
+            if (!slot.camera || slot.width <= 1.0f || slot.height <= 1.0f)
+            {
+                continue;
+            }
+            renderViews.push_back(slot);
+        }
+    }
+    else
+    {
+        renderViews.reserve(cameras.size());
         for (Camera* camera : cameras)
         {
-        if (camera && camera->width > 1.0f && camera->height > 1.0f)
+            if (!camera || camera->width <= 1.0f || camera->height <= 1.0f)
+            {
+                continue;
+            }
+            renderViews.push_back({camera, camera->centerpoint.x, camera->centerpoint.y, camera->width, camera->height});
+        }
+        if (renderViews.empty())
         {
-            renderCameras.push_back(camera);
+            if (Camera* activeCamera = getActiveCamera())
+            {
+                renderViews.push_back({activeCamera, activeCamera->centerpoint.x, activeCamera->centerpoint.y, activeCamera->width, activeCamera->height});
+            }
         }
-        }
-    }
-    else if (Camera* activeCamera = getActiveCamera())
-    {
-        renderCameras.push_back(activeCamera);
     }
 
-    for (Camera* camera : renderCameras)
-    {
-        camera->update(imageIndex);
-    }
-
-    VkFence inFlightFence = swapchainManager.getInFlightFence(currentFrame);
-    vkResetFences(engine->logicalDevice, 1, &inFlightFence);
+    frameSyncState.waitForReusableCommandBuffer(engine->logicalDevice, [this](size_t index) {
+        return swapchainManager.getInFlightFence(index);
+    });
 
     if (vkResetCommandBuffer(commandBuffer, 0) != VK_SUCCESS)
     {
@@ -197,19 +192,24 @@ void Display::render()
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    for (size_t cameraIndex = 0; cameraIndex < renderCameras.size(); cameraIndex++)
+    for (size_t cameraIndex = 0; cameraIndex < renderViews.size(); cameraIndex++)
     {
-        Camera* camera = renderCameras[cameraIndex];
+        const ViewportSlot& slot = renderViews[cameraIndex];
+        Camera* camera = slot.camera;
         if (!camera)
         {
             continue;
         }
 
+        camera->setViewport(slot.centerX, slot.centerY, slot.width, slot.height);
+        camera->setFullscreenViewportEnabled(false);
+        camera->update(imageIndex);
+
         VkViewport viewport{};
-        viewport.x = camera->centerpoint.x - camera->width / 2.0f;
-        viewport.y = camera->centerpoint.y - camera->height / 2.0f;
-        viewport.width = camera->width;
-        viewport.height = camera->height;
+        viewport.x = slot.centerX - slot.width / 2.0f;
+        viewport.y = slot.centerY - slot.height / 2.0f;
+        viewport.width = slot.width;
+        viewport.height = slot.height;
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
@@ -336,7 +336,7 @@ void Display::render()
     }
 
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    VkSemaphore waitSemaphores[] = {swapchainManager.getImageAvailableSemaphore(currentFrame)};
+    VkSemaphore waitSemaphores[] = {swapchainManager.getImageAvailableSemaphore(frameIndex)};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
     submitInfo.waitSemaphoreCount = 1;
@@ -345,18 +345,26 @@ void Display::render()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    VkSemaphore renderFinishedSemaphore = swapchainManager.getRenderFinishedSemaphore(currentFrame);
+    VkSemaphore renderFinishedSemaphore = swapchainManager.getRenderFinishedSemaphore(frameIndex);
     VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    VkFence submitFence = swapchainManager.getInFlightFence(currentFrame);
+    VkFence submitFence = swapchainManager.getInFlightFence(frameIndex);
+    if (submitFence != VK_NULL_HANDLE)
+    {
+        if (vkResetFences(engine->logicalDevice, 1, &submitFence) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to reset in-flight fence before queue submit");
+        }
+    }
     if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, submitFence) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to submit draw command buffer");
     }
+    frameSyncState.markSubmitted();
 
-    result = swapchainManager.presentImage(imageIndex, currentFrame);
+    result = swapchainManager.presentImage(imageIndex, frameIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
@@ -378,6 +386,6 @@ void Display::render()
         fpsLastSampleTime = now;
     }
 
-    currentFrame = (currentFrame + 1) % maxFramesInFlight;
+    frameSyncState.advance(maxFramesInFlight);
     glfwPollEvents();
 }

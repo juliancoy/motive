@@ -45,7 +45,7 @@ void Display::recreateSwapchain()
     
     swapchainManager.recreateSwapchain(width, height);
     
-    currentFrame = 0;
     firstFrame = true;
+    frameSyncState.reset();
     updateCameraViewports();
 }

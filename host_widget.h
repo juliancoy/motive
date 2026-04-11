@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QImage>
 #include <QJsonArray>
+#include <QRect>
 #include <QTimer>
 #include <QVector3D>
 #include <QWidget>
@@ -12,6 +13,9 @@
 #include <memory>
 
 class QLabel;
+class QComboBox;
+class QFrame;
+class QGridLayout;
 class QDragEnterEvent;
 class QDropEvent;
 class QFocusEvent;
@@ -19,6 +23,7 @@ class QMouseEvent;
 class QMoveEvent;
 class QResizeEvent;
 class QShowEvent;
+class Camera;
 
 namespace motive {
 class IPhysicsBody;
@@ -34,33 +39,28 @@ class ViewportHierarchyBuilder;
 class ViewportHostWidget : public QWidget
 {
 public:
-    // Camera configuration (persistent camera settings)
     struct CameraConfig
     {
         enum class Type
         {
-            Free,    // Free-flying camera with position/rotation
-            Follow   // Camera that follows a scene item
+            Free,
+            Follow
         };
-        
+
+        QString id;
         QString name = QStringLiteral("Camera");
         Type type = Type::Free;
-        
-        // For Free cameras: position and rotation
         QVector3D position = QVector3D(0.0f, 0.0f, 3.0f);
-        QVector3D rotation = QVector3D(0.0f, 0.0f, 0.0f);  // Euler angles in degrees
-        
-        // For Follow cameras: which scene item to follow
-        int followTargetIndex = -1;  // -1 means no target (behaves like free camera)
+        QVector3D rotation = QVector3D(0.0f, 0.0f, 0.0f);
+        int followTargetIndex = -1;
         float followDistance = 5.0f;
-        float followYaw = 0.0f;      // Horizontal angle offset (degrees)
-        float followPitch = 20.0f;   // Vertical angle offset (degrees)
+        float followYaw = 0.0f;
+        float followPitch = 20.0f;
         float followSmoothSpeed = 5.0f;
         QVector3D followTargetOffset = QVector3D(0.0f, 0.0f, 0.0f);
-        
         bool isFollowCamera() const { return type == Type::Follow && followTargetIndex >= 0; }
     };
-    
+
     struct SceneItem
     {
         QString name;
@@ -76,13 +76,10 @@ public:
         bool animationLoop = true;
         float animationSpeed = 1.0f;
         bool visible = true;
-        
-        // Animation-Physics Coupling
-        QString animationPhysicsCoupling = QStringLiteral("AnimationOnly");  // Default to animation only
-        
-        // Per-object Physics Gravity
-        bool useGravity = true;  // Use world gravity by default
-        QVector3D customGravity = QVector3D(0.0f, 0.0f, 0.0f);  // Zero = use world gravity
+        QString animationPhysicsCoupling = QStringLiteral("AnimationOnly");
+        bool useGravity = true;
+        QVector3D customGravity = QVector3D(0.0f, 0.0f, 0.0f);
+        QJsonArray primitiveOverrides;
     };
 
     struct SceneLight
@@ -116,10 +113,17 @@ public:
         Type type = Type::SceneItem;
         int sceneIndex = -1;
         int meshIndex = -1;
-        int cameraIndex = -1;  // Index into Display::cameras for Camera type nodes
+        int cameraIndex = -1;
+        QString cameraId;
         int primitiveIndex = -1;
         QString clipName;
         QList<HierarchyNode> children;
+    };
+
+    struct ViewportLayout
+    {
+        int count = 1;
+        QStringList cameraIds;
     };
 
     explicit ViewportHostWidget(QWidget* parent = nullptr);
@@ -169,8 +173,8 @@ public:
     void focusSceneItem(int index);
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);
     void setCameraChangedCallback(std::function<void()> callback);
-    
-    // Performance profiling
+    void setViewportFocusChangedCallback(std::function<void(const QString& cameraId)> callback);
+
     struct PerformanceMetrics
     {
         float currentFps = 0.0f;
@@ -179,38 +183,27 @@ public:
         int viewportWidth = 0;
         int viewportHeight = 0;
     };
+
     PerformanceMetrics performanceMetrics() const;
-    
-    // Character controller setup
     void enableCharacterControl(int sceneIndex, bool enabled);
     bool isCharacterControlEnabled(int sceneIndex) const;
-    
-    // Physics body access for scene items
     motive::IPhysicsBody* getPhysicsBodyForSceneItem(int sceneIndex) const;
-    
-    // Camera mode
     void setFreeFlyCameraEnabled(bool enabled);
     bool isFreeFlyCameraEnabled() const;
-    
-    // Camera management (persistent cameras)
     QList<CameraConfig> cameraConfigs() const;
     void setCameraConfigs(const QList<CameraConfig>& configs);
-    
-    // Create a follow camera for a scene item
-    // Returns the index of the created camera in cameraConfigs()
+    ViewportLayout viewportLayout() const;
+    void setViewportLayout(const ViewportLayout& layout);
+    void setViewportCount(int count);
+    int viewportCount() const;
+    int ensureFollowCamera(int sceneIndex, float distance = 5.0f, float yaw = 0.0f, float pitch = 20.0f);
     int createFollowCamera(int sceneIndex, float distance = 5.0f, float yaw = 0.0f, float pitch = 20.0f);
-    
-    // Delete a camera by index
     void deleteCamera(int cameraIndex);
-    
-    // Get/set active camera index
     int activeCameraIndex() const;
     void setActiveCamera(int cameraIndex);
-    
-    // Update camera configuration
+    int cameraIndexForId(const QString& cameraId) const;
+    QString activeCameraId() const;
     void updateCameraConfig(int cameraIndex, const CameraConfig& config);
-    
-    // Refresh/rebuild the viewport and hierarchy
     void refresh();
 
 protected:
@@ -234,26 +227,43 @@ private:
     void notifySceneChanged();
     void notifyCameraChangedIfNeeded();
     void applySceneLightToRuntime();
-    void updateCameraFollowCharacter(float dt);  // Third-person camera follow
-    void updateFollowCameras(float dt);  // Update all active follow cameras
+    void updateViewportLayout();
+    void syncViewportSelectorChoices();
+    void layoutViewportSelectors();
+    void updateViewportBorders();
+    QRect viewportRectForIndex(int index) const;
+    int viewportIndexAt(const QPoint& position) const;
+    QString cameraIdForViewportIndex(int index) const;
+    Camera* focusedViewportCamera() const;
+    void setFocusedViewportIndex(int index);
+    void setCharacterControlState(int sceneIndex, bool enabled, bool repositionForCharacterMode);
+    void updateCameraFollowCharacter(float dt);
+    void updateFollowCameras(float dt);
 
     QTimer m_renderTimer;
     bool m_initialized = false;
     bool m_initScheduled = false;
     bool m_hasEmittedCameraState = false;
-    bool m_freeFlyCameraEnabled = true;  // Default to free fly mode
+    bool m_freeFlyCameraEnabled = true;
     QLabel* m_statusLabel = nullptr;
-    
-    // Camera orbit control (for character follow mode)
+    QWidget* m_renderSurface = nullptr;
+    QWidget* m_viewportSelectorPanel = nullptr;
+    QGridLayout* m_viewportSelectorGrid = nullptr;
     bool m_orbiting = false;
     QPoint m_lastMousePos;
-    float m_orbitYaw = 0.0f;      // Horizontal orbit angle
-    float m_orbitPitch = 0.3f;    // Vertical orbit angle (start slightly above)
-    float m_orbitDistance = 3.0f; // Distance from character
+    float m_orbitYaw = 0.0f;
+    float m_orbitPitch = 0.3f;
+    float m_orbitDistance = 3.0f;
     static constexpr float kMinOrbitDistance = 1.5f;
     static constexpr float kMaxOrbitDistance = 10.0f;
     std::function<void(const QList<SceneItem>&)> m_sceneChangedCallback;
     std::function<void()> m_cameraChangedCallback;
+    std::function<void(const QString&)> m_viewportFocusChangedCallback;
+    QList<CameraConfig> m_pendingCameraConfigs;
+    ViewportLayout m_viewportLayout;
+    QList<QComboBox*> m_viewportCameraSelectors;
+    QList<QFrame*> m_viewportBorders;
+    int m_focusedViewportIndex = 0;
     QVector3D m_lastEmittedCameraPosition;
     QVector3D m_lastEmittedCameraRotation;
     SceneLight m_sceneLight;

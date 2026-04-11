@@ -239,11 +239,7 @@ namespace {
 
 glm::vec3 followAnchorPosition(const Model& model, const FollowSettings& settings)
 {
-    if (model.character.isControllable)
-    {
-        return model.getCharacterPosition() + settings.targetOffset;
-    }
-    return model.boundsCenter + settings.targetOffset;
+    return model.getFollowAnchorPosition() + settings.targetOffset;
 }
 
 }
@@ -511,85 +507,57 @@ void Camera::setCharacterTarget(Model* model)
 
 void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
 {
-    followTargetIndex = sceneIndex;
-    followSettings = settings;
-    followInitialized = false;  // Reset interpolation on target change
-    
     if (sceneIndex >= 0) {
+        orbitRig.configure(sceneIndex, settings);
         std::cout << "[Camera] Follow target set: scene index " << sceneIndex << std::endl;
-        std::cout << "[Camera] Follow settings: distance=" << settings.distance 
+        std::cout << "[Camera] Follow settings: distance=" << settings.distance
                   << ", yaw=" << settings.relativeYaw 
                   << ", pitch=" << settings.relativePitch 
                   << ", smooth=" << settings.smoothSpeed << std::endl;
     } else {
+        orbitRig.clear();
         std::cout << "[Camera] Follow target cleared" << std::endl;
     }
 }
 
 void Camera::setFollowSettings(const FollowSettings& settings)
 {
-    followSettings = settings;
+    const int sceneIndex = orbitRig.sceneIndex();
+    if (sceneIndex >= 0 || settings.enabled)
+    {
+        orbitRig.configure(sceneIndex, settings);
+    }
 }
 
 void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models)
 {
-    if (!followSettings.enabled || followTargetIndex < 0) {
+    if (!orbitRig.isEnabled()) {
         return;
     }
-    
-    // Look up the target model by index
-    if (followTargetIndex >= static_cast<int>(models.size()) || !models[followTargetIndex]) {
-        // Target model not available yet, skip this frame
+
+    const int sceneIndex = orbitRig.sceneIndex();
+    if (sceneIndex < 0 || sceneIndex >= static_cast<int>(models.size()) || !models[sceneIndex]) {
         return;
     }
-    
-    Model* targetModel = models[followTargetIndex].get();
+
+    Model* targetModel = models[sceneIndex].get();
     if (!targetModel) {
         return;
     }
-    
-    // Get target position (bounds center + optional offset)
-    glm::vec3 targetCenter = followAnchorPosition(*targetModel, followSettings);
-    
-    // Calculate desired camera position based on spherical coordinates
-    float yaw = followSettings.relativeYaw;
-    float pitch = followSettings.relativePitch;
-    float dist = followSettings.distance;
-    
-    // Clamp pitch to prevent flipping
-    pitch = glm::clamp(pitch, -1.4f, 1.4f);
-    
-    // Calculate offset from target
-    glm::vec3 offset;
-    offset.x = sin(yaw) * cos(pitch) * dist;
-    offset.y = sin(pitch) * dist;
-    offset.z = cos(yaw) * cos(pitch) * dist;
-    
-    glm::vec3 desiredPosition = targetCenter + offset;
-    
-    // Initialize on first frame
-    if (!followInitialized) {
-        currentFollowPosition = desiredPosition;
-        cameraPos = desiredPosition;
-        followInitialized = true;
+
+    const FollowSettings& settings = orbitRig.settings();
+    const glm::vec3 targetCenter = followAnchorPosition(*targetModel, settings);
+
+    glm::vec3 targetForward(0.0f, 0.0f, 1.0f);
+    const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
+    const glm::vec3 planarForward(modelForward.x, 0.0f, modelForward.z);
+    if (glm::dot(planarForward, planarForward) > 1e-6f)
+    {
+        targetForward = glm::normalize(planarForward);
     }
-    
-    // Smoothly interpolate to desired position
-    float t = glm::min(followSettings.smoothSpeed * deltaTime, 1.0f);
-    cameraPos = glm::mix(cameraPos, desiredPosition, t);
-    
-    // Update camera rotation to look at target
-    glm::vec3 toTarget = targetCenter - cameraPos;
-    if (glm::length(toTarget) > 0.001f) {
-        glm::vec3 front = glm::normalize(toTarget);
-        float newYaw = atan2(front.x, front.z) + 3.14159f;
-        float newPitch = -asin(glm::clamp(front.y, -1.0f, 1.0f));
-        
-        // Normalize yaw
-        if (newYaw > 3.14159f) newYaw -= 2 * 3.14159f;
-        if (newYaw < -3.14159f) newYaw += 2 * 3.14159f;
-        
-        cameraRotation.x = newYaw;
-        cameraRotation.y = newPitch;
-    }
+
+    const OrbitCameraPose currentPose{cameraPos, cameraRotation};
+    const OrbitCameraPose nextPose = orbitRig.update(targetCenter, targetForward, deltaTime, currentPose);
+    cameraPos = nextPose.position;
+    cameraRotation = nextPose.rotation;
 }

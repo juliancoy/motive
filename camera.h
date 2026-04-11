@@ -8,20 +8,13 @@
 #include <string>
 #include <vector>
 
+#include "camera_follow_settings.h"
+#include "orbit_camera_rig.h"
+
 // Forward declarations
 class Engine;
 class Display;
 class Model;  // For character controller target and follow mode
-
-// Follow mode settings for camera tracking
-struct FollowSettings {
-    float relativeYaw = 0.0f;       // Horizontal angle offset from target (radians)
-    float relativePitch = 0.3f;     // Vertical angle offset from target (radians)
-    float distance = 5.0f;          // Distance from target center
-    float smoothSpeed = 5.0f;       // Interpolation speed (higher = snappier)
-    glm::vec3 targetOffset = glm::vec3(0.0f, 0.0f, 0.0f);  // Offset from target center
-    bool enabled = false;           // Whether follow mode is active
-};
 
 struct CameraTransform {
     glm::mat4 view;
@@ -98,14 +91,14 @@ public:
     // The camera stores the scene index and looks up the model each frame,
     // so it continues to work even if models are reloaded
     void setFollowTarget(int sceneIndex, const FollowSettings& settings = FollowSettings());
-    int getFollowTargetIndex() const { return followTargetIndex; }
+    int getFollowTargetIndex() const { return orbitRig.sceneIndex(); }
     void setFollowSettings(const FollowSettings& settings);
-    const FollowSettings& getFollowSettings() const { return followSettings; }
+    const FollowSettings& getFollowSettings() const { return orbitRig.settings(); }
     void updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models);  // Update camera position based on follow target
-    bool isFollowModeEnabled() const { return followSettings.enabled && followTargetIndex >= 0; }
+    bool isFollowModeEnabled() const { return orbitRig.isEnabled(); }
     
     // Get the scene index this camera is following (returns -1 if not following)
-    int getFollowSceneIndex() const { return followTargetIndex; }
+    int getFollowSceneIndex() const { return orbitRig.sceneIndex(); }
     
     // Camera identification
     void setCameraName(const std::string& name) { cameraName = name; }
@@ -136,13 +129,7 @@ private:
     
     Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
     
-    // Follow mode state - use scene index for robustness across model reloads
-    int followTargetIndex = -1;  // Scene index of the target model (-1 = none)
-    FollowSettings followSettings;
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
     std::string cameraId;
-    
-    // Smooth follow interpolation state
-    glm::vec3 currentFollowPosition;  // Current interpolated camera position
-    bool followInitialized = false;
+    OrbitCameraRig orbitRig;
 };

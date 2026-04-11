@@ -416,6 +416,17 @@ void Model::setCharacterInput(const glm::vec3& moveDir)
     character.inputDir = moveDir;
 }
 
+glm::vec3 Model::getFollowAnchorPosition() const
+{
+    // Use rendered bounds center for camera framing. Fall back to transform origin
+    // when bounds are not valid (for example during transient load states).
+    if (boundsRadius > 0.0f)
+    {
+        return boundsCenter;
+    }
+    return glm::vec3(worldTransform[3]);
+}
+
 void Model::updateCharacterPhysics(float deltaSeconds)
 {
     if (!character.isControllable)

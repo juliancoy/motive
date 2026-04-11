@@ -23,6 +23,7 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
     const int previousType = previousItem ? previousItem->data(0, Qt::UserRole + 3).toInt() : -1;
     const QString previousClipName = previousItem ? previousItem->data(0, Qt::UserRole + 4).toString() : QString();
     const int previousCameraIndex = previousItem ? previousItem->data(0, Qt::UserRole + 5).toInt() : -1;
+    const QString previousCameraId = previousItem ? previousItem->data(0, Qt::UserRole + 6).toString() : QString();
     m_hierarchyTree->clear();
 
     const QList<ViewportHostWidget::HierarchyNode> hierarchyItems =
@@ -50,7 +51,8 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
                 item->data(0, Qt::UserRole + 2).toInt() == previousPrimitiveIndex &&
                 item->data(0, Qt::UserRole + 3).toInt() == previousType &&
                 item->data(0, Qt::UserRole + 4).toString() == previousClipName &&
-                item->data(0, Qt::UserRole + 5).toInt() == previousCameraIndex)
+                item->data(0, Qt::UserRole + 5).toInt() == previousCameraIndex &&
+                item->data(0, Qt::UserRole + 6).toString() == previousCameraId)
             {
                 m_hierarchyTree->setCurrentItem(item);
                 return;
@@ -88,6 +90,7 @@ void MainWindowShell::appendHierarchyNode(QTreeWidgetItem* parent, const Viewpor
     item->setData(0, Qt::UserRole + 3, static_cast<int>(node.type));
     item->setData(0, Qt::UserRole + 4, node.clipName);
     item->setData(0, Qt::UserRole + 5, node.cameraIndex);  // Camera index for camera nodes
+    item->setData(0, Qt::UserRole + 6, node.cameraId);
     const bool selfHidden = node.sceneIndex >= 0 && node.sceneIndex < m_sceneItems.size() && !m_sceneItems[node.sceneIndex].visible;
     const bool hidden = ancestorHidden || selfHidden;
     QFont font = item->font(0);

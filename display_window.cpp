@@ -4,6 +4,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "camera.h"
@@ -138,11 +139,28 @@ void Display::handleFramebufferResize(int newWidth, int newHeight)
 
 void Display::handleMouseButton(int button, int action, int mods)
 {
+    double xpos = 0.0;
+    double ypos = 0.0;
+    if (window)
+    {
+        glfwGetCursorPos(window, &xpos, &ypos);
+    }
+
+    if (mouseButtonEventCallback)
+    {
+        mouseButtonEventCallback(button, action, mods, xpos, ypos);
+    }
+
     Camera* camera = getActiveCamera();
     if (camera)
     {
         camera->handleMouseButton(button, action, mods);
     }
+}
+
+void Display::setMouseButtonEventCallback(std::function<void(int, int, int, double, double)> callback)
+{
+    mouseButtonEventCallback = std::move(callback);
 }
 
 void Display::handleCursorPos(double xpos, double ypos)

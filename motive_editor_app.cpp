@@ -201,6 +201,16 @@ int runMotiveEditorApp(int argc, char** argv)
 
             if (command == QStringLiteral("camera"))
             {
+                auto resolveCameraIndex = [&](const QString& indexField, const QString& idField) -> int
+                {
+                    if (body.contains(idField))
+                    {
+                        const QString cameraId = body.value(idField).toString();
+                        return viewport->cameraIndexForId(cameraId);
+                    }
+                    return body.value(indexField).toInt(-1);
+                };
+
                 if (body.contains(QStringLiteral("freeFly")))
                 {
                     const bool enabled = body.value(QStringLiteral("freeFly")).toBool(true);
@@ -217,9 +227,15 @@ int runMotiveEditorApp(int argc, char** argv)
                     {
                         QJsonObject cam;
                         cam.insert(QStringLiteral("index"), i);
+                        cam.insert(QStringLiteral("id"), configs[i].id);
                         cam.insert(QStringLiteral("name"), configs[i].name);
                         cam.insert(QStringLiteral("type"), configs[i].isFollowCamera() ? QStringLiteral("follow") : QStringLiteral("free"));
                         cam.insert(QStringLiteral("followTargetIndex"), configs[i].followTargetIndex);
+                        cam.insert(QStringLiteral("followDistance"), configs[i].followDistance);
+                        cam.insert(QStringLiteral("followYaw"), configs[i].followYaw);
+                        cam.insert(QStringLiteral("followPitch"), configs[i].followPitch);
+                        cam.insert(QStringLiteral("followSmoothSpeed"), configs[i].followSmoothSpeed);
+                        cam.insert(QStringLiteral("rotation"), QJsonArray{configs[i].rotation.x(), configs[i].rotation.y(), configs[i].rotation.z()});
                         cam.insert(QStringLiteral("position"), QJsonArray{configs[i].position.x(), configs[i].position.y(), configs[i].position.z()});
                         cameras.append(cam);
                     }
@@ -241,17 +257,26 @@ int runMotiveEditorApp(int argc, char** argv)
                 }
                 
                 // Set active camera
-                if (body.contains(QStringLiteral("setActive")))
+                if (body.contains(QStringLiteral("setActive")) || body.contains(QStringLiteral("setActiveId")))
                 {
-                    const int cameraIndex = body.value(QStringLiteral("setActive")).toInt(-1);
-                    viewport->setActiveCamera(cameraIndex);
-                    result.insert(QStringLiteral("activeCamera"), cameraIndex);
+                    const int cameraIndex = resolveCameraIndex(QStringLiteral("setActive"), QStringLiteral("setActiveId"));
+                    if (cameraIndex >= 0)
+                    {
+                        viewport->setActiveCamera(cameraIndex);
+                        result.insert(QStringLiteral("activeCamera"), cameraIndex);
+                        result.insert(QStringLiteral("activeCameraId"), viewport->activeCameraId());
+                    }
+                    else
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("Camera not found"));
+                        return false;
+                    }
                 }
                 
                 // Update camera config (e.g., change follow target)
-                if (body.contains(QStringLiteral("updateCamera")))
+                if (body.contains(QStringLiteral("updateCamera")) || body.contains(QStringLiteral("updateCameraId")))
                 {
-                    const int cameraIndex = body.value(QStringLiteral("updateCamera")).toInt(-1);
+                    const int cameraIndex = resolveCameraIndex(QStringLiteral("updateCamera"), QStringLiteral("updateCameraId"));
                     if (cameraIndex >= 0)
                     {
                         auto configs = viewport->cameraConfigs();
@@ -287,7 +312,18 @@ int runMotiveEditorApp(int argc, char** argv)
                             viewport->updateCameraConfig(cameraIndex, config);
                             result.insert(QStringLiteral("updated"), true);
                             result.insert(QStringLiteral("cameraIndex"), cameraIndex);
+                            result.insert(QStringLiteral("cameraId"), configs[cameraIndex].id);
                         }
+                        else
+                        {
+                            result.insert(QStringLiteral("error"), QStringLiteral("Camera index out of range"));
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("Camera not found"));
+                        return false;
                     }
                 }
                 

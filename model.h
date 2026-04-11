@@ -191,6 +191,7 @@ public:
     void setCharacterInput(const glm::vec3& moveDir);  // Called from input handler
     void applyProceduralIdleAnimation(double deltaSeconds);  // Generate idle when no clip exists
     glm::vec3 getCharacterPosition() const { return glm::vec3(worldTransform[3]); }
+    glm::vec3 getFollowAnchorPosition() const;
     
     // Set standard human animation names for character controller
     // Use this to configure which animations play for each movement direction

@@ -119,6 +119,7 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
                 detail::kHierarchyCameraIndex - static_cast<int>(i),  // sceneIndex: unique negative index for UI
                 -1,                                                   // meshIndex
                 static_cast<int>(i),                                  // cameraIndex: actual index in Display::cameras
+                QString::fromStdString(camera->getCameraId()),        // cameraId
                 -1,                                                   // primitiveIndex
                 QString(),                                            // clipName
                 {}                                                    // children
@@ -134,6 +135,7 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
             detail::kHierarchyCameraIndex,  // sceneIndex
             -1,                             // meshIndex
             0,                              // cameraIndex: default to first camera
+            QString(),                      // cameraId
             -1,                             // primitiveIndex
             QString(),                      // clipName
             {}                              // children
@@ -148,6 +150,7 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
             -1,   // sceneIndex
             -1,   // meshIndex
             -1,   // cameraIndex
+            QString(),
             -1,   // primitiveIndex
             QString(),
             {}

@@ -8,6 +8,7 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include "video.h"
+#include "frame_sync_state.h"
 
 class Engine;
 
@@ -112,7 +113,7 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
-    size_t currentFrame = 0;
+    FrameSyncState frameSyncState;
 
     void createWindow(const char* title);
     void createSurface();

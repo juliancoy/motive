@@ -12,6 +12,19 @@
 #include <QDebug>
 
 namespace motive::ui {
+namespace {
+
+QJsonArray stringListToJsonArray(const QStringList& values)
+{
+    QJsonArray array;
+    for (const QString& value : values)
+    {
+        array.push_back(value);
+    }
+    return array;
+}
+
+}
 
 void MainWindowShell::restoreSessionState()
 {
@@ -62,6 +75,15 @@ void MainWindowShell::restoreSessionState()
 
     // Restore camera state
     if (m_viewportHost) {
+        ViewportHostWidget::ViewportLayout savedLayout = m_viewportHost->viewportLayout();
+        savedLayout.count = m_projectSession.currentViewportCount();
+        const QJsonArray savedCameraIds = m_projectSession.currentViewportCameraIds();
+        savedLayout.cameraIds.clear();
+        for (const QJsonValue& value : savedCameraIds)
+        {
+            savedLayout.cameraIds.push_back(value.toString());
+        }
+        m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
         m_viewportHost->setMeshConsolidationEnabled(m_projectSession.currentMeshConsolidationEnabled());
         m_viewportHost->setRenderPath(m_projectSession.currentRenderPath());
@@ -137,6 +159,10 @@ void MainWindowShell::createProject()
         if (!m_projectSession.currentSceneItems().isEmpty())
         {
             m_viewportHost->loadSceneFromItems(sceneItemsFromJson(m_projectSession.currentSceneItems()));
+            if (!m_projectSession.currentCameraConfigs().isEmpty())
+            {
+                m_viewportHost->setCameraConfigs(cameraConfigsFromJson(m_projectSession.currentCameraConfigs()));
+            }
         }
         else
         {
@@ -145,6 +171,15 @@ void MainWindowShell::createProject()
     }
     if (m_viewportHost)
     {
+        ViewportHostWidget::ViewportLayout savedLayout = m_viewportHost->viewportLayout();
+        savedLayout.count = m_projectSession.currentViewportCount();
+        const QJsonArray savedCameraIds = m_projectSession.currentViewportCameraIds();
+        savedLayout.cameraIds.clear();
+        for (const QJsonValue& value : savedCameraIds)
+        {
+            savedLayout.cameraIds.push_back(value.toString());
+        }
+        m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
     }
     refreshWindowTitle();
@@ -193,6 +228,10 @@ void MainWindowShell::switchProject()
         if (!m_projectSession.currentSceneItems().isEmpty())
         {
             m_viewportHost->loadSceneFromItems(sceneItemsFromJson(m_projectSession.currentSceneItems()));
+            if (!m_projectSession.currentCameraConfigs().isEmpty())
+            {
+                m_viewportHost->setCameraConfigs(cameraConfigsFromJson(m_projectSession.currentCameraConfigs()));
+            }
         }
         else
         {
@@ -201,6 +240,15 @@ void MainWindowShell::switchProject()
     }
     if (m_viewportHost)
     {
+        ViewportHostWidget::ViewportLayout savedLayout = m_viewportHost->viewportLayout();
+        savedLayout.count = m_projectSession.currentViewportCount();
+        const QJsonArray savedCameraIds = m_projectSession.currentViewportCameraIds();
+        savedLayout.cameraIds.clear();
+        for (const QJsonValue& value : savedCameraIds)
+        {
+            savedLayout.cameraIds.push_back(value.toString());
+        }
+        m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
     }
     refreshWindowTitle();
@@ -240,6 +288,17 @@ void MainWindowShell::saveProjectState()
     m_projectSession.setCurrentSceneLight(m_viewportHost ? MainWindowShell::sceneLightToJson(m_viewportHost->sceneLight()) : QJsonObject{});
     m_projectSession.setCurrentRenderPath(m_viewportHost ? m_viewportHost->renderPath() : QStringLiteral("forward3d"));
     m_projectSession.setCurrentMeshConsolidationEnabled(m_viewportHost ? m_viewportHost->meshConsolidationEnabled() : true);
+    if (m_viewportHost)
+    {
+        const auto layout = m_viewportHost->viewportLayout();
+        m_projectSession.setCurrentViewportCount(layout.count);
+        m_projectSession.setCurrentViewportCameraIds(stringListToJsonArray(layout.cameraIds));
+    }
+    else
+    {
+        m_projectSession.setCurrentViewportCount(1);
+        m_projectSession.setCurrentViewportCameraIds(QJsonArray{});
+    }
     qDebug() << "[MainWindowShell] Saving project state"
              << "projectId=" << m_projectSession.currentProjectId()
              << "root=" << (m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath())

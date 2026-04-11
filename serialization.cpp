@@ -8,6 +8,7 @@ namespace motive::ui {
 QJsonObject cameraConfigToJson(const ViewportHostWidget::CameraConfig& config)
 {
     QJsonObject obj;
+    obj[QStringLiteral("id")] = config.id;
     obj[QStringLiteral("name")] = config.name;
     obj[QStringLiteral("type")] = config.type == ViewportHostWidget::CameraConfig::Type::Free ? QStringLiteral("free") : QStringLiteral("follow");
     obj[QStringLiteral("position")] = QJsonArray{config.position.x(), config.position.y(), config.position.z()};
@@ -38,6 +39,7 @@ ViewportHostWidget::CameraConfig cameraConfigFromJson(const QJsonObject& obj)
     };
     
     config.name = obj.value(QStringLiteral("name")).toString(QStringLiteral("Camera"));
+    config.id = obj.value(QStringLiteral("id")).toString();
     QString typeStr = obj.value(QStringLiteral("type")).toString(QStringLiteral("free"));
     config.type = (typeStr == QStringLiteral("follow")) 
         ? ViewportHostWidget::CameraConfig::Type::Follow 
@@ -179,6 +181,7 @@ QJsonArray MainWindowShell::cameraConfigsToJson(const QList<ViewportHostWidget::
     for (const auto& config : configs)
     {
         QJsonObject obj;
+        obj[QStringLiteral("id")] = config.id;
         obj[QStringLiteral("name")] = config.name;
         obj[QStringLiteral("type")] = config.type == ViewportHostWidget::CameraConfig::Type::Free 
             ? QStringLiteral("free") 
@@ -221,6 +224,7 @@ QList<ViewportHostWidget::CameraConfig> MainWindowShell::cameraConfigsFromJson(c
         ViewportHostWidget::CameraConfig config;
         
         config.name = obj.value(QStringLiteral("name")).toString(QStringLiteral("Camera"));
+        config.id = obj.value(QStringLiteral("id")).toString();
         QString typeStr = obj.value(QStringLiteral("type")).toString(QStringLiteral("free"));
         config.type = (typeStr == QStringLiteral("follow")) 
             ? ViewportHostWidget::CameraConfig::Type::Follow 

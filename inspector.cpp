@@ -223,6 +223,25 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                                            Qt::SmoothTransformation));
         m_inspectorTexturePreview->setText(QString());
     };
+    const auto resolveCameraIndex = [this](QTreeWidgetItem* item) -> int
+    {
+        if (!item || !m_viewportHost)
+        {
+            return -1;
+        }
+
+        const QString cameraId = item->data(0, Qt::UserRole + 6).toString();
+        if (!cameraId.isEmpty())
+        {
+            const int indexById = m_viewportHost->cameraIndexForId(cameraId);
+            if (indexById >= 0)
+            {
+                return indexById;
+            }
+        }
+
+        return item->data(0, Qt::UserRole + 5).toInt();
+    };
 
     if (!valid)
     {
@@ -230,7 +249,11 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         if (row <= MainWindowShell::kHierarchyCameraIndex && m_viewportHost)
         {
             QTreeWidgetItem* currentItem = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
-            int cameraIndex = currentItem ? currentItem->data(0, Qt::UserRole + 5).toInt() : 0;
+            int cameraIndex = resolveCameraIndex(currentItem);
+            if (cameraIndex < 0)
+            {
+                cameraIndex = 0;
+            }
             
             // Get camera config to determine type
             auto configs = m_viewportHost->cameraConfigs();

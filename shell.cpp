@@ -16,6 +16,7 @@
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QFont>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -26,6 +27,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTimer>
@@ -34,11 +36,43 @@
 #include <QVBoxLayout>
 
 namespace motive::ui {
+namespace {
+
+QString editorDarkStyleSheet()
+{
+    return QStringLiteral(
+        "QMainWindow, QWidget { background: #10161d; color: #edf2f7; }"
+        "QLabel { color: #edf2f7; }"
+        "QMenuBar { background: #10161d; color: #edf2f7; border-bottom: 1px solid #202934; }"
+        "QMenuBar::item { background: transparent; padding: 4px 10px; }"
+        "QMenuBar::item:selected { background: #233142; }"
+        "QMenu { background: #10161d; color: #edf2f7; border: 1px solid #202934; }"
+        "QMenu::item:selected { background: #233142; }"
+        "QTabWidget::pane { background: #10161d; border: 1px solid #202934; border-radius: 10px; }"
+        "QTabBar::tab { background: #1b2430; color: #edf2f7; padding: 8px 16px; margin-right: 2px; border: 1px solid #2e3b4a; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; }"
+        "QTabBar::tab:selected { background: #233142; border-color: #3a4a5f; }"
+        "QTabBar::tab:hover { background: #2a3749; }"
+        "QTreeWidget, QTreeView, QListWidget { background: #0c1015; color: #edf2f7; border: 1px solid #202934; border-radius: 10px; }"
+        "QTreeWidget::item, QTreeView::item { padding: 4px 8px; }"
+        "QTreeWidget::item:selected, QTreeView::item:selected, QListWidget::item:selected { background: #233142; }"
+        "QTreeWidget::item:hover, QTreeView::item:hover, QListWidget::item:hover { background: #1b2430; }"
+        "QComboBox, QDoubleSpinBox, QCheckBox, QPushButton, QToolButton, QLineEdit { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 7px; padding: 4px 8px; }"
+        "QComboBox:hover, QDoubleSpinBox:hover, QPushButton:hover, QToolButton:hover, QLineEdit:hover { background: #233142; }"
+        "QComboBox::drop-down { border-left: 1px solid #2e3b4a; }"
+        "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"
+        "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { background: #2e3b4a; border: 1px solid #3a4a5f; }"
+        "QDockWidget { color: #edf2f7; }"
+        "QDockWidget::title { background: #10161d; padding: 6px 8px; border-bottom: 1px solid #202934; }"
+        "QToolTip { background: #05080c; color: #edf2f7; border: 1px solid #24303c; }");
+}
+
+}  // namespace
 
 MainWindowShell::MainWindowShell(QWidget* parent)
     : QMainWindow(parent)
 {
     resize(1600, 900);
+    setStyleSheet(editorDarkStyleSheet());
 
     m_splitter = new QSplitter(this);
     m_leftPane = new QWidget(m_splitter);
@@ -60,7 +94,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     hierarchyLayout->setSpacing(8);
     
     auto* hierarchyLabel = new QLabel(QStringLiteral("Hierarchy"), hierarchyContainer);
-    hierarchyLabel->setStyleSheet(QStringLiteral("QLabel { color: #edf2f7; font-weight: bold; padding: 4px 0px; }"));
+    QFont hierarchyLabelFont = hierarchyLabel->font();
+    hierarchyLabelFont.setBold(true);
+    hierarchyLabel->setFont(hierarchyLabelFont);
+    hierarchyLabel->setContentsMargins(0, 4, 0, 4);
     hierarchyLayout->addWidget(hierarchyLabel);
     
     m_hierarchyTree = new QTreeWidget(hierarchyContainer);
@@ -68,13 +105,6 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_hierarchyTree->setHeaderHidden(true);
     m_hierarchyTree->setSelectionMode(QAbstractItemView::SingleSelection);
     m_hierarchyTree->setContextMenuPolicy(Qt::CustomContextMenu);
-    // Apply dark theme styling to match asset browser
-    m_hierarchyTree->setStyleSheet(
-        QStringLiteral(
-            "QTreeWidget { background: #0c1015; color: #edf2f7; border: 1px solid #202934; border-radius: 10px; }"
-            "QTreeWidget::item { padding: 4px 8px; }"
-            "QTreeWidget::item:selected { background: #233142; }"
-            "QTreeWidget::item:hover { background: #1b2430; }"));
     connect(m_hierarchyTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos)
     {
         QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
@@ -295,6 +325,45 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
         }
     });
+    m_viewportHost->setViewportFocusChangedCallback([this](const QString& cameraId)
+    {
+        if (!m_hierarchyTree || cameraId.isEmpty())
+        {
+            return;
+        }
+
+        QList<QTreeWidgetItem*> items = m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        QTreeWidgetItem* targetItem = nullptr;
+        for (QTreeWidgetItem* item : items)
+        {
+            if (!item)
+            {
+                continue;
+            }
+            const int type = item->data(0, Qt::UserRole + 3).toInt();
+            if (type != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
+            {
+                continue;
+            }
+            if (item->data(0, Qt::UserRole + 6).toString() == cameraId)
+            {
+                targetItem = item;
+                break;
+            }
+        }
+
+        if (!targetItem)
+        {
+            return;
+        }
+
+        if (m_hierarchyTree->currentItem() != targetItem)
+        {
+            QSignalBlocker blocker(m_hierarchyTree);
+            m_hierarchyTree->setCurrentItem(targetItem);
+        }
+        updateInspectorForSelection(targetItem);
+    });
     m_assetBrowser->setRootPathChangedCallback([this](const QString& rootPath)
     {
         m_projectSession.setCurrentProjectRoot(rootPath);
@@ -311,25 +380,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     auto* inspectorDock = new QDockWidget(QStringLiteral("Inspector"), this);
     inspectorDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    inspectorDock->setFeatures(QDockWidget::DockWidgetMovable);
     m_rightTabs = new QTabWidget(inspectorDock);
-    // Apply dark theme styling to match asset browser
-    m_rightTabs->setStyleSheet(
-        QStringLiteral(
-            "QTabWidget::pane { background: #10161d; border: 1px solid #202934; border-radius: 10px; }"
-            "QTabBar::tab { background: #1b2430; color: #edf2f7; padding: 8px 16px; margin-right: 2px; border: 1px solid #2e3b4a; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; }"
-            "QTabBar::tab:selected { background: #233142; border-color: #3a4a5f; }"
-            "QTabBar::tab:hover { background: #2a3749; }"));
     auto* inspectorPanel = new QWidget(m_rightTabs);
-    // Apply dark theme to inspector panel
-    inspectorPanel->setStyleSheet(
-        QStringLiteral(
-            "QWidget { background: #10161d; color: #edf2f7; }"
-            "QLabel { color: #edf2f7; }"
-            "QComboBox, QDoubleSpinBox, QCheckBox, QPushButton { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; border-radius: 7px; padding: 4px 8px; }"
-            "QComboBox:hover, QDoubleSpinBox:hover, QPushButton:hover { background: #233142; }"
-            "QComboBox::drop-down { border-left: 1px solid #2e3b4a; }"
-            "QComboBox QAbstractItemView { background: #1b2430; color: #edf2f7; border: 1px solid #2e3b4a; selection-background-color: #233142; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { background: #2e3b4a; border: 1px solid #3a4a5f; }"));
     auto* inspectorLayout = new QFormLayout(inspectorPanel);
     m_inspectorNameValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
@@ -515,7 +568,27 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     setupCameraSettingsPanel();
 
-    connect(m_hierarchyTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current)
+    auto resolveCameraIndexFromTreeItem = [this](QTreeWidgetItem* item) -> int
+    {
+        if (!item || !m_viewportHost)
+        {
+            return -1;
+        }
+
+        const QString cameraId = item->data(0, Qt::UserRole + 6).toString();
+        if (!cameraId.isEmpty())
+        {
+            const int idIndex = m_viewportHost->cameraIndexForId(cameraId);
+            if (idIndex >= 0)
+            {
+                return idIndex;
+            }
+        }
+
+        return item->data(0, Qt::UserRole + 5).toInt();
+    };
+
+    connect(m_hierarchyTree, &QTreeWidget::currentItemChanged, this, [this, resolveCameraIndexFromTreeItem](QTreeWidgetItem* current)
     {
         // Check if a camera node was selected and switch to it
         if (current && m_viewportHost)
@@ -523,8 +596,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             const int type = current->data(0, Qt::UserRole + 3).toInt();
             if (type == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
             {
-                const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
-                m_viewportHost->setActiveCamera(cameraIndex);
+                const int cameraIndex = resolveCameraIndexFromTreeItem(current);
+                if (cameraIndex >= 0)
+                {
+                    m_viewportHost->setActiveCamera(cameraIndex);
+                }
             }
         }
         updateInspectorForSelection(current);
@@ -704,7 +780,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
 
     // Connect follow target combo to update camera's follow target
-    connect(m_followTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+    connect(m_followTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, resolveCameraIndexFromTreeItem](int) {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_followTargetCombo) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
@@ -715,7 +791,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         
-        const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
+        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
         const int targetIndex = m_followTargetCombo->currentData().toInt();
         
         // Get current camera config
@@ -744,7 +820,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
 
     // Connect follow parameter spin boxes to update camera config
-    auto applyFollowParams = [this]() {
+    auto applyFollowParams = [this, resolveCameraIndexFromTreeItem]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
@@ -754,7 +830,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         
-        const int cameraIndex = current->data(0, Qt::UserRole + 5).toInt();
+        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;

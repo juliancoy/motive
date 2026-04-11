@@ -345,6 +345,7 @@ void Display2D::cleanupSwapchain()
     imageAvailableSemaphores.clear();
     renderFinishedSemaphores.clear();
     inFlightFences.clear();
+    frameSyncState.reset();
 
     if (swapchain != VK_NULL_HANDLE)
     {
@@ -567,6 +568,7 @@ void Display2D::recreateSwapchain()
     createSwapchain();
     createCommandResources();
     createComputeResources();
+    frameSyncState.reset();
 }
 
 bool Display2D::shouldClose() const
@@ -617,13 +619,16 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
         }
     }
 
-    vkWaitForFences(engine->logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    const uint32_t frameIndex = static_cast<uint32_t>(frameSyncState.currentFrame());
+    frameSyncState.waitForCurrentFrameFence(engine->logicalDevice, [this](size_t index) {
+        return inFlightFences[index];
+    });
 
     uint32_t imageIndex = 0;
     VkResult acquire = vkAcquireNextImageKHR(engine->logicalDevice,
                                              swapchain,
                                              UINT64_MAX,
-                                             imageAvailableSemaphores[currentFrame],
+                                             imageAvailableSemaphores[frameIndex],
                                              VK_NULL_HANDLE,
                                              &imageIndex);
     if (acquire == VK_ERROR_OUT_OF_DATE_KHR)
@@ -632,7 +637,9 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
         return;
     }
 
-    vkResetFences(engine->logicalDevice, 1, &inFlightFences[currentFrame]);
+    frameSyncState.waitForReusableCommandBuffer(engine->logicalDevice, [this](size_t index) {
+        return inFlightFences[index];
+    });
     vkResetCommandBuffer(commandBuffer, 0);
 
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -905,21 +912,30 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &imageAvailableSemaphores[currentFrame];
+    submitInfo.pWaitSemaphores = &imageAvailableSemaphores[frameIndex];
     submitInfo.pWaitDstStageMask = &waitStage;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[frameIndex];
 
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+    VkFence submitFence = inFlightFences[frameIndex];
+    if (submitFence != VK_NULL_HANDLE)
+    {
+        if (vkResetFences(engine->logicalDevice, 1, &submitFence) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to reset in-flight fence before Display2D submit");
+        }
+    }
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[frameIndex]) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to submit compute work for Display2D");
     }
+    frameSyncState.markSubmitted();
 
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame];
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[frameIndex];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &imageIndex;
@@ -930,5 +946,5 @@ void Display2D::renderFrame(const VideoImageSet& videoImages,
         recreateSwapchain();
     }
 
-    currentFrame = (currentFrame + 1) % kMaxFramesInFlight;
+    frameSyncState.advance(kMaxFramesInFlight);
 }

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -20,6 +21,7 @@
 
 #include "text_rendering.h"
 #include "swapchain_manager.h"
+#include "frame_sync_state.h"
 
 // Forward declarations
 class Engine;
@@ -28,6 +30,15 @@ class Camera;
 class Display
 {
 public:
+    struct ViewportSlot
+    {
+        Camera* camera = nullptr;
+        float centerX = 0.0f;
+        float centerY = 0.0f;
+        float width = 1.0f;
+        float height = 1.0f;
+    };
+
     Display(Engine* engine,
             int width = 800,
             int height = 600,
@@ -49,6 +60,8 @@ public:
     void handleFramebufferResize(int newWidth, int newHeight);
     void updateCameraViewports();
     void setBackgroundColor(float r, float g, float b);
+    void setViewportSlots(const std::vector<ViewportSlot>& viewportSlotsIn);
+    void setMouseButtonEventCallback(std::function<void(int, int, int, double, double)> callback);
     void shutdown();
 
     // Input handling (forwarded to camera)
@@ -92,7 +105,6 @@ public:
     std::array<VkPipeline, 3> transparentSkinnedGraphicsPipelines{};
 
     bool firstFrame = true;
-    size_t currentFrame = 0;
     std::string vertShaderPath;
     std::string fragShaderPath;
 
@@ -121,7 +133,8 @@ public:
                          const glm::vec3& initialPos = glm::vec3(0.0f, 0.0f, -3.0f),
                          const glm::vec2& initialRot = glm::vec2(glm::radians(-180.0f), 0.0f));
     void removeCamera(Camera* camera);
-    Camera* getActiveCamera() const { return cameras.empty() ? nullptr : cameras[0]; }
+    void setActiveCamera(Camera* camera);
+    Camera* getActiveCamera() const;
 
     // Access to swapchain manager
     SwapchainManager& getSwapchainManager() { return swapchainManager; }
@@ -145,6 +158,7 @@ private:
     Engine* engine = nullptr;
     std::mutex renderMutex;
     bool shuttingDown = false;
+    FrameSyncState frameSyncState;
 
     SwapchainManager swapchainManager;
 
@@ -157,4 +171,8 @@ private:
     uint32_t fpsFrameCounter = 0;
     std::chrono::steady_clock::time_point fpsLastSampleTime = std::chrono::steady_clock::now();
     OverlayResources overlayResources;
+    std::vector<ViewportSlot> viewportSlots;
+    bool useExplicitViewportSlots = false;
+    std::function<void(int, int, int, double, double)> mouseButtonEventCallback;
+    Camera* activeCamera = nullptr;
 };
