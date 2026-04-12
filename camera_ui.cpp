@@ -124,7 +124,7 @@ void MainWindowShell::setupCameraSettingsPanel()
         saveProjectState();
     });
 
-    m_rightTabs->addTab(cameraPanel, QStringLiteral("Global"));
+    m_rightTabs->addTab(wrapTabInScrollArea(cameraPanel), QStringLiteral("Global"));
     
     // Store reference to parallel load checkbox for persistence (optional)
     // Note: This would need a member variable to be added to shell.h if we want to persist the setting

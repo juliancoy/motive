@@ -27,6 +27,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QTabWidget>
@@ -64,6 +65,70 @@ QString editorDarkStyleSheet()
         "QDockWidget { color: #edf2f7; }"
         "QDockWidget::title { background: #10161d; padding: 6px 8px; border-bottom: 1px solid #202934; }"
         "QToolTip { background: #05080c; color: #edf2f7; border: 1px solid #24303c; }");
+}
+
+QJsonObject widgetMetrics(const QWidget* widget)
+{
+    QJsonObject object;
+    if (!widget)
+    {
+        object.insert(QStringLiteral("exists"), false);
+        return object;
+    }
+
+    const QSize sizeHint = widget->sizeHint();
+    const QSize minimumSizeHint = widget->minimumSizeHint();
+    const QSize minimumSize = widget->minimumSize();
+    const QSize maximumSize = widget->maximumSize();
+    const QSizePolicy sizePolicy = widget->sizePolicy();
+
+    object.insert(QStringLiteral("exists"), true);
+    object.insert(QStringLiteral("className"), QString::fromUtf8(widget->metaObject()->className()));
+    object.insert(QStringLiteral("objectName"), widget->objectName());
+    object.insert(QStringLiteral("visible"), widget->isVisible());
+    object.insert(QStringLiteral("enabled"), widget->isEnabled());
+    object.insert(QStringLiteral("x"), widget->x());
+    object.insert(QStringLiteral("y"), widget->y());
+    object.insert(QStringLiteral("width"), widget->width());
+    object.insert(QStringLiteral("height"), widget->height());
+    object.insert(QStringLiteral("minimumWidth"), minimumSize.width());
+    object.insert(QStringLiteral("minimumHeight"), minimumSize.height());
+    object.insert(QStringLiteral("maximumWidth"), maximumSize.width());
+    object.insert(QStringLiteral("maximumHeight"), maximumSize.height());
+    object.insert(QStringLiteral("sizeHintWidth"), sizeHint.width());
+    object.insert(QStringLiteral("sizeHintHeight"), sizeHint.height());
+    object.insert(QStringLiteral("minimumSizeHintWidth"), minimumSizeHint.width());
+    object.insert(QStringLiteral("minimumSizeHintHeight"), minimumSizeHint.height());
+    object.insert(QStringLiteral("sizePolicyHorizontal"), static_cast<int>(sizePolicy.horizontalPolicy()));
+    object.insert(QStringLiteral("sizePolicyVertical"), static_cast<int>(sizePolicy.verticalPolicy()));
+    object.insert(QStringLiteral("sizePolicyHorizontalStretch"), sizePolicy.horizontalStretch());
+    object.insert(QStringLiteral("sizePolicyVerticalStretch"), sizePolicy.verticalStretch());
+    return object;
+}
+
+QJsonObject splitterMetrics(const QSplitter* splitter)
+{
+    QJsonObject object = widgetMetrics(splitter);
+    if (!splitter)
+    {
+        return object;
+    }
+
+    QJsonArray sizes;
+    const QList<int> sizeValues = splitter->sizes();
+    for (const int value : sizeValues)
+    {
+        sizes.append(value);
+    }
+
+    object.insert(QStringLiteral("orientation"),
+                  splitter->orientation() == Qt::Horizontal ? QStringLiteral("horizontal")
+                                                            : QStringLiteral("vertical"));
+    object.insert(QStringLiteral("handleWidth"), splitter->handleWidth());
+    object.insert(QStringLiteral("childrenCollapsible"), splitter->childrenCollapsible());
+    object.insert(QStringLiteral("opaqueResize"), splitter->opaqueResize());
+    object.insert(QStringLiteral("sizes"), sizes);
+    return object;
 }
 
 }  // namespace
@@ -389,7 +454,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorPathValue->setWordWrap(true);
     m_animationModeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorTexturePreview = new QLabel(QStringLiteral("No texture"), inspectorPanel);
-    m_inspectorTexturePreview->setMinimumSize(160, 160);
+    m_inspectorTexturePreview->setMinimumSize(96, 96);
     m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
     m_inspectorTexturePreview->setFrameShape(QFrame::StyledPanel);
     m_primitiveCullModeCombo = new QComboBox(inspectorPanel);
@@ -578,7 +643,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Scale"), scaleWidget);
     inspectorLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
     inspectorLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
-    m_rightTabs->addTab(inspectorPanel, QStringLiteral("Element"));
+    m_rightTabs->addTab(wrapTabInScrollArea(inspectorPanel), QStringLiteral("Element"));
     inspectorDock->setWidget(m_rightTabs);
     addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
 
@@ -982,6 +1047,47 @@ ViewportHostWidget* MainWindowShell::viewportHost() const
 QJsonArray MainWindowShell::hierarchyJson() const
 {
     return m_viewportHost ? m_viewportHost->hierarchyJson() : QJsonArray{};
+}
+
+QWidget* MainWindowShell::wrapTabInScrollArea(QWidget* content) const
+{
+    auto* scroll = new QScrollArea(m_rightTabs);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(content);
+    return scroll;
+}
+
+QJsonObject MainWindowShell::uiDebugJson() const
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("window"), widgetMetrics(this));
+    payload.insert(QStringLiteral("centralWidget"), widgetMetrics(centralWidget()));
+    payload.insert(QStringLiteral("mainSplitter"), splitterMetrics(m_splitter));
+    payload.insert(QStringLiteral("leftPane"), widgetMetrics(m_leftPane));
+    payload.insert(QStringLiteral("viewportHost"), widgetMetrics(m_viewportHost));
+
+    QJsonArray splitterArray;
+    for (QSplitter* splitter : findChildren<QSplitter*>())
+    {
+        splitterArray.append(splitterMetrics(splitter));
+    }
+    payload.insert(QStringLiteral("splitters"), splitterArray);
+
+    QJsonArray dockArray;
+    const QList<QDockWidget*> docks = findChildren<QDockWidget*>();
+    for (QDockWidget* dock : docks)
+    {
+        QJsonObject dockObject = widgetMetrics(dock);
+        dockObject.insert(QStringLiteral("features"), static_cast<int>(dock->features()));
+        dockObject.insert(QStringLiteral("allowedAreas"), static_cast<int>(dock->allowedAreas()));
+        dockObject.insert(QStringLiteral("area"), static_cast<int>(dockWidgetArea(dock)));
+        dockArray.append(dockObject);
+    }
+    payload.insert(QStringLiteral("dockWidgets"), dockArray);
+    return payload;
 }
 
 void MainWindowShell::closeEvent(QCloseEvent* event)

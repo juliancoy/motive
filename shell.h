@@ -31,6 +31,7 @@ public:
     AssetBrowserWidget* assetBrowser() const;
     ViewportHostWidget* viewportHost() const;
     QJsonArray hierarchyJson() const;
+    QJsonObject uiDebugJson() const;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -62,6 +63,7 @@ private:
     QList<ViewportHostWidget::CameraConfig> cameraConfigsFromJson(const QJsonArray& configs) const;
     QString vectorText(const QVector3D& value) const;
     QDoubleSpinBox* createSpinBox(QWidget* parent, double min, double max, double step);
+    QWidget* wrapTabInScrollArea(QWidget* content) const;
 
     AssetBrowserWidget* m_assetBrowser = nullptr;
     ViewportHostWidget* m_viewportHost = nullptr;

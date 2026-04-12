@@ -431,6 +431,19 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/window")
+        {
+            QJsonObject result;
+            if (!m_commandHandler || !m_commandHandler(QStringLiteral("window"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("window control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
 
         return jsonResponse(404, compactJson(QJsonObject{
             {QStringLiteral("ok"), false},
@@ -502,6 +515,25 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
         payload.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
         payload.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/window")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("window"), data.uiDebug.value(QStringLiteral("window")).toObject());
+        payload.insert(QStringLiteral("splitters"), data.uiDebug.value(QStringLiteral("splitters")).toArray());
+        payload.insert(QStringLiteral("dockWidgets"), data.uiDebug.value(QStringLiteral("dockWidgets")).toArray());
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/ui")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.uiDebug;
+        payload.insert(QStringLiteral("ok"), true);
         return jsonResponse(200, compactJson(payload));
     }
 

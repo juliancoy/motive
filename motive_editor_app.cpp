@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QImageReader>
+#include <QMetaObject>
 
 #include <limits>
 
@@ -71,6 +72,7 @@ int runMotiveEditorApp(int argc, char** argv)
         [&window]() -> EngineUiControlServer::ProfileData
         {
             EngineUiControlServer::ProfileData data;
+            data.uiDebug = window.uiDebugJson();
             if (auto* browser = window.assetBrowser())
             {
                 data.rootPath = browser->rootPath();
@@ -98,6 +100,35 @@ int runMotiveEditorApp(int argc, char** argv)
         },
         [&window](const QString& command, const QJsonObject& body, QJsonObject& result) -> bool
         {
+            if (command == QStringLiteral("window"))
+            {
+                const int width = body.value(QStringLiteral("width")).toInt(-1);
+                const int height = body.value(QStringLiteral("height")).toInt(-1);
+                const bool requestResize = width > 0 || height > 0;
+
+                const bool invoked = QMetaObject::invokeMethod(
+                    qApp,
+                    [&window, width, height, requestResize, &result]()
+                    {
+                        if (requestResize)
+                        {
+                            const int targetWidth = width > 0 ? width : window.width();
+                            const int targetHeight = height > 0 ? height : window.height();
+                            window.resize(targetWidth, targetHeight);
+                        }
+                        result = window.uiDebugJson();
+                    },
+                    Qt::BlockingQueuedConnection);
+
+                if (!invoked)
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("failed to query window state"));
+                    return false;
+                }
+                result.insert(QStringLiteral("requestedResize"), requestResize);
+                return true;
+            }
+
             auto* viewport = window.viewportHost();
             if (!viewport)
             {

@@ -105,6 +105,32 @@ glm::vec3 followAnchorPosition(const Model& model, const glm::vec3& targetOffset
     return model.getFollowAnchorPosition() + targetOffset;
 }
 
+Model* modelForSceneIndex(Engine* engine, int sceneIndex)
+{
+    if (!engine || sceneIndex < 0 || sceneIndex >= static_cast<int>(engine->models.size()))
+    {
+        return nullptr;
+    }
+    auto& model = engine->models[static_cast<size_t>(sceneIndex)];
+    return model ? model.get() : nullptr;
+}
+
+Model* firstControllableModel(Engine* engine)
+{
+    if (!engine)
+    {
+        return nullptr;
+    }
+    for (auto& model : engine->models)
+    {
+        if (model && model->character.isControllable)
+        {
+            return model.get();
+        }
+    }
+    return nullptr;
+}
+
 void reconfigurePhysicsBodyForMode(Model& model, motive::IPhysicsWorld& physicsWorld)
 {
     if (!couplingRequiresPhysics(model))
@@ -1101,9 +1127,19 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
 
     if (newActiveCamera)
     {
-        // Camera selection should not mutate scene character-control state.
-        // Keep input routing detached from follow targeting.
-        newActiveCamera->setCharacterTarget(nullptr);
+        Model* targetModel = nullptr;
+        if (m_runtime->engine())
+        {
+            if (newActiveCamera->isFollowModeEnabled())
+            {
+                targetModel = modelForSceneIndex(m_runtime->engine(), newActiveCamera->getFollowSceneIndex());
+            }
+            if (!targetModel && !newActiveCamera->isFreeFlyCamera())
+            {
+                targetModel = firstControllableModel(m_runtime->engine());
+            }
+        }
+        newActiveCamera->setCharacterTarget(targetModel);
 
         if (newActiveCamera->isFollowModeEnabled() && m_runtime->engine())
         {
@@ -1138,6 +1174,12 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
     camera->setCameraName(config.name.toStdString());
     
     if (config.type == CameraConfig::Type::Follow && config.followTargetIndex >= 0) {
+        if (config.followTargetIndex >= 0)
+        {
+            // Follow-target cameras should accept WASD for the followed character.
+            setCharacterControlState(config.followTargetIndex, true, false);
+        }
+
         // Set up follow settings
         FollowSettings fs;
         fs.relativeYaw = glm::radians(config.followYaw);
@@ -1151,6 +1193,10 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         camera->setFollowTarget(config.followTargetIndex, fs);
         camera->setControlsEnabled(false);  // Follow cameras don't have direct controls
         camera->setFreeFlyCamera(false);
+        if (m_runtime->engine())
+        {
+            camera->setCharacterTarget(modelForSceneIndex(m_runtime->engine(), config.followTargetIndex));
+        }
     } else if (config.type == CameraConfig::Type::Free) {
         // Update position for free camera
         camera->cameraPos = glm::vec3(config.position.x(), config.position.y(), config.position.z());
