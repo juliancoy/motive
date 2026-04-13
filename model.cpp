@@ -670,4 +670,62 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
     
     // Sync transform from physics to model
     physicsBody->syncTransformFromPhysics();
+
+    auto normalizeAngle = [](float angle) -> float {
+        constexpr float kPi = 3.14159265358979323846f;
+        constexpr float kTwoPi = 2.0f * kPi;
+        while (angle > kPi) angle -= kTwoPi;
+        while (angle < -kPi) angle += kTwoPi;
+        return angle;
+    };
+
+    // Third-person facing: rotate character toward move direction with damping.
+    glm::vec3 facingDirection(0.0f);
+    const glm::vec2 inputPlanar(character.inputDir.x, character.inputDir.z);
+    if (glm::length(inputPlanar) > 0.01f)
+    {
+        facingDirection = glm::normalize(glm::vec3(character.inputDir.x, 0.0f, character.inputDir.z));
+    }
+    else
+    {
+        const glm::vec3 bodyVelocity = physicsBody->getLinearVelocity();
+        const glm::vec2 velocityPlanar(bodyVelocity.x, bodyVelocity.z);
+        if (glm::length(velocityPlanar) > 0.05f)
+        {
+            facingDirection = glm::normalize(glm::vec3(bodyVelocity.x, 0.0f, bodyVelocity.z));
+        }
+    }
+
+    if (glm::length(facingDirection) > 0.001f)
+    {
+        glm::vec3 currentForward(worldTransform[2].x, 0.0f, worldTransform[2].z);
+        if (glm::length(currentForward) < 0.001f)
+        {
+            currentForward = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        else
+        {
+            currentForward = glm::normalize(currentForward);
+        }
+
+        const float currentYaw = std::atan2(currentForward.x, currentForward.z);
+        const float desiredYaw = std::atan2(facingDirection.x, facingDirection.z);
+        const float yawDelta = normalizeAngle(desiredYaw - currentYaw);
+        const float yawT = std::clamp(1.0f - std::exp(-character.turnResponsiveness * deltaTime), 0.0f, 1.0f);
+        const float newYaw = normalizeAngle(currentYaw + yawDelta * yawT);
+
+        const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        const glm::vec3 forward(std::sin(newYaw), 0.0f, std::cos(newYaw));
+        const glm::vec3 right = glm::normalize(glm::cross(worldUp, forward));
+        const glm::vec3 up = glm::normalize(glm::cross(forward, right));
+
+        const float scaleX = std::max(glm::length(glm::vec3(worldTransform[0])), 0.0001f);
+        const float scaleY = std::max(glm::length(glm::vec3(worldTransform[1])), 0.0001f);
+        const float scaleZ = std::max(glm::length(glm::vec3(worldTransform[2])), 0.0001f);
+
+        worldTransform[0] = glm::vec4(right * scaleX, 0.0f);
+        worldTransform[1] = glm::vec4(up * scaleY, 0.0f);
+        worldTransform[2] = glm::vec4(forward * scaleZ, 0.0f);
+        syncWorldTransformToPrimitives();
+    }
 }

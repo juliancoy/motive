@@ -122,7 +122,8 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("visible"), item.visible},
             {QStringLiteral("animationPhysicsCoupling"), item.animationPhysicsCoupling},
             {QStringLiteral("useGravity"), item.useGravity},
-            {QStringLiteral("customGravity"), QJsonArray{item.customGravity.x(), item.customGravity.y(), item.customGravity.z()}}
+            {QStringLiteral("customGravity"), QJsonArray{item.customGravity.x(), item.customGravity.y(), item.customGravity.z()}},
+            {QStringLiteral("characterTurnResponsiveness"), item.characterTurnResponsiveness}
         });
     }
     return array;
@@ -167,7 +168,8 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             object.value(QStringLiteral("visible")).toBool(true),
             object.value(QStringLiteral("animationPhysicsCoupling")).toString(QStringLiteral("AnimationOnly")),
             object.value(QStringLiteral("useGravity")).toBool(true),
-            readVector(object.value(QStringLiteral("customGravity")), QVector3D(0.0f, 0.0f, 0.0f))
+            readVector(object.value(QStringLiteral("customGravity")), QVector3D(0.0f, 0.0f, 0.0f)),
+            static_cast<float>(object.value(QStringLiteral("characterTurnResponsiveness")).toDouble(10.0))
         });
     }
     return result;
@@ -186,66 +188,17 @@ QJsonArray MainWindowShell::cameraConfigsToJson(const QList<ViewportHostWidget::
     QJsonArray array;
     for (const auto& config : configs)
     {
-        QJsonObject obj;
-        obj[QStringLiteral("id")] = config.id;
-        obj[QStringLiteral("name")] = config.name;
-        obj[QStringLiteral("type")] = config.type == ViewportHostWidget::CameraConfig::Type::Free 
-            ? QStringLiteral("free") 
-            : QStringLiteral("follow");
-        obj[QStringLiteral("position")] = QJsonArray{config.position.x(), config.position.y(), config.position.z()};
-        obj[QStringLiteral("rotation")] = QJsonArray{config.rotation.x(), config.rotation.y(), config.rotation.z()};
-        obj[QStringLiteral("followTargetIndex")] = config.followTargetIndex;
-        obj[QStringLiteral("followDistance")] = config.followDistance;
-        obj[QStringLiteral("followYaw")] = config.followYaw;
-        obj[QStringLiteral("followPitch")] = config.followPitch;
-        obj[QStringLiteral("followSmoothSpeed")] = config.followSmoothSpeed;
-        obj[QStringLiteral("followTargetOffset")] = QJsonArray{
-            config.followTargetOffset.x(), 
-            config.followTargetOffset.y(), 
-            config.followTargetOffset.z()
-        };
-        array.push_back(obj);
+        array.push_back(cameraConfigToJson(config));
     }
     return array;
 }
 
 QList<ViewportHostWidget::CameraConfig> MainWindowShell::cameraConfigsFromJson(const QJsonArray& configs) const
 {
-    auto readVector3D = [](const QJsonValue& value, const QVector3D& fallback)
-    {
-        const QJsonArray array = value.toArray();
-        if (array.size() != 3)
-            return fallback;
-        return QVector3D(
-            static_cast<float>(array.at(0).toDouble(fallback.x())),
-            static_cast<float>(array.at(1).toDouble(fallback.y())),
-            static_cast<float>(array.at(2).toDouble(fallback.z()))
-        );
-    };
-
     QList<ViewportHostWidget::CameraConfig> result;
     for (const QJsonValue& value : configs)
     {
-        const QJsonObject obj = value.toObject();
-        ViewportHostWidget::CameraConfig config;
-        
-        config.name = obj.value(QStringLiteral("name")).toString(QStringLiteral("Camera"));
-        config.id = obj.value(QStringLiteral("id")).toString();
-        QString typeStr = obj.value(QStringLiteral("type")).toString(QStringLiteral("free"));
-        config.type = (typeStr == QStringLiteral("follow")) 
-            ? ViewportHostWidget::CameraConfig::Type::Follow 
-            : ViewportHostWidget::CameraConfig::Type::Free;
-        
-        config.position = readVector3D(obj.value(QStringLiteral("position")), QVector3D(0.0f, 0.0f, 3.0f));
-        config.rotation = readVector3D(obj.value(QStringLiteral("rotation")), QVector3D(0.0f, 0.0f, 0.0f));
-        config.followTargetIndex = obj.value(QStringLiteral("followTargetIndex")).toInt(-1);
-        config.followDistance = static_cast<float>(obj.value(QStringLiteral("followDistance")).toDouble(5.0));
-        config.followYaw = static_cast<float>(obj.value(QStringLiteral("followYaw")).toDouble(0.0));
-        config.followPitch = static_cast<float>(obj.value(QStringLiteral("followPitch")).toDouble(20.0));
-        config.followSmoothSpeed = static_cast<float>(obj.value(QStringLiteral("followSmoothSpeed")).toDouble(5.0));
-        config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
-        
-        result.push_back(config);
+        result.push_back(cameraConfigFromJson(value.toObject()));
     }
     return result;
 }

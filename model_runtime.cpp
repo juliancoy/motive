@@ -5,6 +5,7 @@
 #include "model.h"
 #include "engine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -369,6 +370,8 @@ void Model::recomputeBounds()
     {
         boundsCenter = glm::vec3(0.0f);
         boundsRadius = 0.0f;
+        boundsMinWorld = glm::vec3(0.0f);
+        boundsMaxWorld = glm::vec3(0.0f);
         return;
     }
     glm::vec3 localCenter = (localMin + localMax) * 0.5f;
@@ -381,6 +384,28 @@ void Model::recomputeBounds()
     scale.y = glm::length(glm::vec3(worldTransform[1]));
     scale.z = glm::length(glm::vec3(worldTransform[2]));
     boundsRadius = localRadius * glm::max(scale.x, glm::max(scale.y, scale.z));
+
+    // Compute world-space AABB from transformed local AABB corners.
+    const glm::vec3 corners[8] = {
+        {localMin.x, localMin.y, localMin.z},
+        {localMax.x, localMin.y, localMin.z},
+        {localMin.x, localMax.y, localMin.z},
+        {localMax.x, localMax.y, localMin.z},
+        {localMin.x, localMin.y, localMax.z},
+        {localMax.x, localMin.y, localMax.z},
+        {localMin.x, localMax.y, localMax.z},
+        {localMax.x, localMax.y, localMax.z}
+    };
+    glm::vec3 worldMin(std::numeric_limits<float>::max());
+    glm::vec3 worldMax(std::numeric_limits<float>::lowest());
+    for (const glm::vec3& corner : corners)
+    {
+        const glm::vec3 worldCorner = glm::vec3(worldTransform * glm::vec4(corner, 1.0f));
+        worldMin = glm::min(worldMin, worldCorner);
+        worldMax = glm::max(worldMax, worldCorner);
+    }
+    boundsMinWorld = worldMin;
+    boundsMaxWorld = worldMax;
 }
 
 bool Model::computeProceduralBounds(glm::vec3 &minBounds, glm::vec3 &maxBounds) const
@@ -486,27 +511,78 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     {
         character.isGrounded = false;
     }
+
+    auto normalizeAngle = [](float angle) -> float {
+        constexpr float kPi = 3.14159265358979323846f;
+        constexpr float kTwoPi = 2.0f * kPi;
+        while (angle > kPi) angle -= kTwoPi;
+        while (angle < -kPi) angle += kTwoPi;
+        return angle;
+    };
+
+    // Third-person facing: rotate character toward move direction with damping.
+    // Only rotate when actually moving with meaningful velocity
+    glm::vec3 facingDirection(0.0f);
+    const glm::vec2 velocityPlanar(character.velocity.x, character.velocity.z);
+    const float horizontalSpeed = glm::length(velocityPlanar);
+    
+    // Only face toward movement direction when actually moving
+    if (horizontalSpeed > 0.1f)
+    {
+        facingDirection = glm::normalize(glm::vec3(character.velocity.x, 0.0f, character.velocity.z));
+    }
+
+    if (glm::length(facingDirection) > 0.001f)
+    {
+        glm::vec3 currentForward(worldTransform[2].x, 0.0f, worldTransform[2].z);
+        if (glm::length(currentForward) < 0.001f)
+        {
+            currentForward = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        else
+        {
+            currentForward = glm::normalize(currentForward);
+        }
+
+        const float currentYaw = std::atan2(currentForward.x, currentForward.z);
+        const float desiredYaw = std::atan2(facingDirection.x, facingDirection.z);
+        const float yawDelta = normalizeAngle(desiredYaw - currentYaw);
+        const float yawT = std::clamp(1.0f - std::exp(-character.turnResponsiveness * dt), 0.0f, 1.0f);
+        const float newYaw = normalizeAngle(currentYaw + yawDelta * yawT);
+
+        const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        const glm::vec3 forward(std::sin(newYaw), 0.0f, std::cos(newYaw));
+        const glm::vec3 right = glm::normalize(glm::cross(worldUp, forward));
+        const glm::vec3 up = glm::normalize(glm::cross(forward, right));
+
+        const float scaleX = glm::max(glm::length(glm::vec3(worldTransform[0])), 0.0001f);
+        const float scaleY = glm::max(glm::length(glm::vec3(worldTransform[1])), 0.0001f);
+        const float scaleZ = glm::max(glm::length(glm::vec3(worldTransform[2])), 0.0001f);
+
+        worldTransform[0] = glm::vec4(right * scaleX, 0.0f);
+        worldTransform[1] = glm::vec4(up * scaleY, 0.0f);
+        worldTransform[2] = glm::vec4(forward * scaleZ, 0.0f);
+    }
     
     // Apply position to world transform
     worldTransform[3] = glm::vec4(currentPos, 1.0f);
     syncWorldTransformToPrimitives();
     
     // Update animation state based on directional keys and speed
-    const float horizontalSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
-    
     // Determine target animation state with directional awareness
     CharacterController::AnimState targetState;
+    const float horizontalSpeedForAnim = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
     
     // Jump animation takes priority when not grounded
     if (!character.isGrounded)
     {
         targetState = CharacterController::AnimState::Jump;
     }
-    else if (horizontalSpeed < character.walkSpeedThreshold)
+    else if (horizontalSpeedForAnim < character.walkSpeedThreshold)
     {
         targetState = CharacterController::AnimState::Idle;
     }
-    else if (horizontalSpeed < character.runSpeedThreshold)
+    else if (horizontalSpeedForAnim < character.runSpeedThreshold)
     {
         // Select directional walk animation based on which keys are pressed
         if (character.keyW && !character.keyS)

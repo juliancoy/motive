@@ -74,6 +74,7 @@ private:
     QLabel* m_inspectorNameValue = nullptr;
     QLabel* m_inspectorPathValue = nullptr;
     QLabel* m_animationModeValue = nullptr;
+    QLabel* m_boundsSizeValue = nullptr;
     QLabel* m_inspectorTexturePreview = nullptr;
     QComboBox* m_primitiveCullModeCombo = nullptr;
     QPushButton* m_primitiveForceAlphaButton = nullptr;
@@ -95,6 +96,7 @@ private:
     QDoubleSpinBox* m_elementGravityY = nullptr;
     QDoubleSpinBox* m_elementGravityZ = nullptr;
     QWidget* m_elementGravityWidget = nullptr;
+    QDoubleSpinBox* m_characterTurnResponsivenessSpin = nullptr;
     
     QWidget* m_lightTypeWidget = nullptr;
     QComboBox* m_lightTypeCombo = nullptr;
@@ -109,6 +111,7 @@ private:
     QDoubleSpinBox* m_inspectorScaleX = nullptr;
     QDoubleSpinBox* m_inspectorScaleY = nullptr;
     QDoubleSpinBox* m_inspectorScaleZ = nullptr;
+    QCheckBox* m_lockScaleXYZCheck = nullptr;
 
     // Camera follow target selector
     QComboBox* m_followTargetCombo = nullptr;

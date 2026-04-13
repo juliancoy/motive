@@ -58,6 +58,9 @@ public:
     glm::vec2 lastMousePos = glm::vec2(0.0f);
     bool keysPressed[6] = {false}; // W,A,S,D,Q,E
 
+    // Display reference for accessing InputRouter
+    void setDisplay(Display* disp) { display = disp; }
+
     // Vulkan resources
     VkBuffer cameraTransformUBO;
     VkDeviceMemory cameraTransformDeviceUBO;
@@ -138,8 +141,14 @@ private:
     
     Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
     
+    void addYawOffset(float deltaYaw);
+    void addPitchOffset(float deltaPitch);
+    void updateFollowOffsetFromCameraRotation();
+    
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
     std::string cameraId;
     bool freeFlyCamera = true;  // Free fly mode: WASD moves camera (vs character follow mode)
     FollowOrbit followOrbit;
+    bool followWarningActive = false;
+    float followWarningCooldownSeconds = 0.0f;
 };

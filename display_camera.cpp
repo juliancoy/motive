@@ -79,6 +79,7 @@ Camera* Display::createCamera(const std::string& name, const glm::vec3& initialP
 
     cameraPtr->setWindow(window);
     cameraPtr->setFullscreenViewportEnabled(true);
+    cameraPtr->setDisplay(this);
     cameras.push_back(cameraPtr);
     if (!activeCamera)
     {

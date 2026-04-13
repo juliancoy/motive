@@ -380,6 +380,10 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             const auto& model = m_runtime.engine()->models[static_cast<size_t>(sceneIndex)];
             sceneItem.insert(QStringLiteral("boundsCenter"), QJsonArray{model->boundsCenter.x, model->boundsCenter.y, model->boundsCenter.z});
             sceneItem.insert(QStringLiteral("boundsRadius"), model->boundsRadius);
+            sceneItem.insert(QStringLiteral("boundsMin"), QJsonArray{model->boundsMinWorld.x, model->boundsMinWorld.y, model->boundsMinWorld.z});
+            sceneItem.insert(QStringLiteral("boundsMax"), QJsonArray{model->boundsMaxWorld.x, model->boundsMaxWorld.y, model->boundsMaxWorld.z});
+            const glm::vec3 boundsSize = glm::max(model->boundsMaxWorld - model->boundsMinWorld, glm::vec3(0.0f));
+            sceneItem.insert(QStringLiteral("boundsSize"), QJsonArray{boundsSize.x, boundsSize.y, boundsSize.z});
 
             for (int meshIndex = 0; meshIndex < static_cast<int>(model->meshes.size()); ++meshIndex)
             {

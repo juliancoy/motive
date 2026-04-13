@@ -335,6 +335,24 @@ void ViewportSceneController::updateSceneItemPhysicsGravity(int index, bool useG
     }
 }
 
+void ViewportSceneController::updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    const float clamped = (responsiveness > 0.01f) ? responsiveness : 0.01f;
+    m_sceneEntries[index].characterTurnResponsiveness = clamped;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        m_runtime.engine()->models[static_cast<size_t>(index)]->character.turnResponsiveness = clamped;
+    }
+}
+
 void ViewportSceneController::renameSceneItem(int index, const QString& name)
 {
     if (index < 0 || index >= m_sceneEntries.size())

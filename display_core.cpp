@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
+#include "input_router.h"
 #include "primitive.h"
 
 void Display::createCommandPool()
@@ -41,6 +42,8 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     fpsLastSampleTime = std::chrono::steady_clock::now();
     currentFps = 0.0f;
     fpsFrameCounter = 0;
+
+    inputRouter = std::make_unique<InputRouter>();
 
     graphicsQueue = engine->graphicsQueue;
     graphicsPipelines.fill(VK_NULL_HANDLE);

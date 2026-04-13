@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QStringList>
+#include <QTimer>
 
 #include <cerrno>
 #include <cstring>
@@ -90,6 +91,28 @@ EngineUiControlServer::ProfileData invokeProfileDataProvider(const std::function
     return data;
 }
 
+bool invokeCommandHandler(const std::function<bool(const QString&, const QJsonObject&, QJsonObject&)>& handler,
+                          const QString& command,
+                          const QJsonObject& body,
+                          QJsonObject& result)
+{
+    if (!handler)
+    {
+        return false;
+    }
+
+    bool handled = false;
+    const bool invoked = QMetaObject::invokeMethod(
+        qApp,
+        [&handled, &handler, &command, &body, &result]()
+        {
+            handled = handler(command, body, result);
+        },
+        Qt::BlockingQueuedConnection);
+
+    return invoked && handled;
+}
+
 QJsonObject buildDirectoryListing(const QString& rootPath)
 {
     const QDir rootDir(rootPath.isEmpty() ? QDir::currentPath() : rootPath);
@@ -123,17 +146,24 @@ QJsonObject buildDirectoryListing(const QString& rootPath)
 EngineUiControlServer::EngineUiControlServer(std::function<QString()> rootPathProvider,
                                              std::function<ProfileData()> profileDataProvider,
                                              std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> commandHandler,
+                                             std::function<void()> restartCallback,
                                              QObject* parent)
     : QObject(parent),
       m_rootPathProvider(std::move(rootPathProvider)),
       m_profileDataProvider(std::move(profileDataProvider)),
-      m_commandHandler(std::move(commandHandler))
+      m_commandHandler(std::move(commandHandler)),
+      m_restartCallback(std::move(restartCallback))
 {
 }
 
 EngineUiControlServer::~EngineUiControlServer()
 {
     stop();
+}
+
+void EngineUiControlServer::setRestartCallback(std::function<void()> callback)
+{
+    m_restartCallback = std::move(callback);
 }
 
 bool EngineUiControlServer::start(quint16 port)
@@ -330,7 +360,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/primitive")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("primitive"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("primitive"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -343,7 +373,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/scene-item")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("scene_item"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("scene_item"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -356,7 +386,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/character")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("character"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("character"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -369,7 +399,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/camera")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("camera"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("camera"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -382,7 +412,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/rebuild")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("rebuild"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("rebuild"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -395,7 +425,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/reset")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("reset"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("reset"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -408,7 +438,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/physics_coupling")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("physics_coupling"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("physics_coupling"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -421,7 +451,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         if (path == "/controls/physics_gravity")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("physics_gravity"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("physics_gravity"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -431,10 +461,29 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/build_restart")
+        {
+            QJsonObject result;
+            if (m_restartCallback)
+            {
+                std::thread([callback = m_restartCallback]() {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    callback();
+                }).detach();
+                result.insert(QStringLiteral("ok"), true);
+                result.insert(QStringLiteral("message"), QStringLiteral("Build and restart initiated"));
+            }
+            else
+            {
+                result.insert(QStringLiteral("ok"), false);
+                result.insert(QStringLiteral("error"), QStringLiteral("No restart callback configured"));
+            }
+            return jsonResponse(200, compactJson(result));
+        }
         if (path == "/controls/window")
         {
             QJsonObject result;
-            if (!m_commandHandler || !m_commandHandler(QStringLiteral("window"), body, result))
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("window"), body, result))
             {
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
@@ -501,6 +550,12 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             sceneItemsArray.append(sceneItem);
         }
 
+        QJsonArray viewportCameraIdsArray;
+        for (const QString& cameraId : data.viewportCameraIds)
+        {
+            viewportCameraIdsArray.append(cameraId);
+        }
+
         QJsonObject payload;
         payload.insert(QStringLiteral("ok"), true);
         payload.insert(QStringLiteral("rootPath"), data.rootPath);
@@ -515,6 +570,10 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
         payload.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
         payload.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
+        payload.insert(QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex);
+        payload.insert(QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId);
+        payload.insert(QStringLiteral("viewportCameraIds"), viewportCameraIdsArray);
+        payload.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
         return jsonResponse(200, compactJson(payload));
     }
 
@@ -564,7 +623,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
     if (path == "/controls/camera")
     {
         QJsonObject result;
-        if (!m_commandHandler || !m_commandHandler(QStringLiteral("camera"), QJsonObject{}, result))
+        if (!invokeCommandHandler(m_commandHandler, QStringLiteral("camera"), QJsonObject{}, result))
         {
             return jsonResponse(500, compactJson(QJsonObject{
                 {QStringLiteral("ok"), false},
@@ -578,7 +637,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
     if (path == "/controls/character")
     {
         QJsonObject result;
-        if (!m_commandHandler || !m_commandHandler(QStringLiteral("character"), QJsonObject{}, result))
+        if (!invokeCommandHandler(m_commandHandler, QStringLiteral("character"), QJsonObject{}, result))
         {
             return jsonResponse(500, compactJson(QJsonObject{
                 {QStringLiteral("ok"), false},

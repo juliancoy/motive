@@ -98,9 +98,10 @@ void ViewportCameraController::getPerspectiveNearFar(float& near, float& far) co
     }
 }
 
-void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index)
+void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index, Camera* referenceCamera)
 {
-    if (index < 0 || index >= m_sceneController.loadedEntries().size() || !m_runtime.camera() || !m_runtime.engine())
+    Camera* camera = referenceCamera ? referenceCamera : m_runtime.camera();
+    if (index < 0 || index >= m_sceneController.loadedEntries().size() || !camera || !m_runtime.engine())
     {
         return;
     }
@@ -110,9 +111,9 @@ void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index)
     }
 
     const auto& model = m_runtime.engine()->models[static_cast<size_t>(index)];
-    const glm::vec3 front = detail::cameraForwardVector(m_runtime.camera()->cameraRotation);
-    const float distance = detail::framingDistanceForModel(*model);
-    const glm::vec3 desiredCenter = m_runtime.camera()->cameraPos + front * distance;
+    const glm::vec3 front = detail::cameraForwardVector(camera->cameraRotation);
+    const float distance = 5.0f;
+    const glm::vec3 desiredCenter = camera->cameraPos + front * distance;
     const glm::vec3 currentCenter = model->boundsCenter;
     const glm::vec3 delta = desiredCenter - currentCenter;
     auto& entry = m_sceneController.loadedEntries()[index];

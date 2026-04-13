@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QJsonArray>
 #include <QString>
+#include <QStringList>
 #include <QVector3D>
 #include <QJsonObject>
 #include <QList>
@@ -32,6 +33,10 @@ public:
         bool renderTimerActive = false;
         int viewportWidth = 0;
         int viewportHeight = 0;
+        int focusedViewportIndex = 0;
+        QString focusedViewportCameraId;
+        QStringList viewportCameraIds;
+        QJsonObject cameraTracking;
     };
     
     struct PerformanceMetrics
@@ -47,11 +52,13 @@ public:
     explicit EngineUiControlServer(std::function<QString()> rootPathProvider,
                                    std::function<ProfileData()> profileDataProvider,
                                    std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> commandHandler = {},
+                                   std::function<void()> restartCallback = {},
                                    QObject* parent = nullptr);
     ~EngineUiControlServer() override;
 
     bool start(quint16 port);
     void stop();
+    void setRestartCallback(std::function<void()> callback);
 
 private:
     void run();
@@ -62,6 +69,7 @@ private:
     std::function<QString()> m_rootPathProvider;
     std::function<ProfileData()> m_profileDataProvider;
     std::function<bool(const QString&, const QJsonObject&, QJsonObject&)> m_commandHandler;
+    std::function<void()> m_restartCallback;
     std::atomic<bool> m_running{false};
     int m_serverFd = -1;
     quint16 m_port = 0;

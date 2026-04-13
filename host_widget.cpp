@@ -4,6 +4,7 @@
 #include "asset_loader.h"
 #include "camera_controller.h"
 #include "hierarchy_builder.h"
+#include "input_router.h"
 #include "orbit_follow_rig.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
@@ -163,6 +164,28 @@ QString makeCameraId()
     return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
 
+float sanitizedFollowDistance(float distance)
+{
+    return std::max(followcam::kMinDistance, distance);
+}
+
+FollowSettings makeFollowSettings(float yawRadians,
+                                  float pitchRadians,
+                                  float distance,
+                                  float smoothSpeed,
+                                  const glm::vec3& targetOffset = glm::vec3(0.0f),
+                                  bool enabled = true)
+{
+    FollowSettings settings;
+    settings.relativeYaw = yawRadians;
+    settings.relativePitch = pitchRadians;
+    settings.distance = distance;
+    settings.smoothSpeed = smoothSpeed;
+    settings.targetOffset = targetOffset;
+    settings.enabled = enabled;
+    return followcam::sanitizeSettings(settings);
+}
+
 ViewportHostWidget::ViewportLayout normalizedViewportLayout(const ViewportHostWidget::ViewportLayout& layout)
 {
     ViewportHostWidget::ViewportLayout normalized;
@@ -298,6 +321,174 @@ QJsonArray ViewportHostWidget::sceneProfileJson() const
     return m_hierarchyBuilder->sceneProfileJson();
 }
 
+QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
+{
+    QJsonObject debug;
+
+    Display* display = m_runtime ? m_runtime->display() : nullptr;
+    Engine* engine = m_runtime ? m_runtime->engine() : nullptr;
+    Camera* camera = display ? display->getActiveCamera() : nullptr;
+    if (!camera)
+    {
+        debug.insert(QStringLiteral("ok"), false);
+        debug.insert(QStringLiteral("error"), QStringLiteral("no active camera"));
+        return debug;
+    }
+
+    const glm::vec2 rot = camera->cameraRotation;
+    glm::vec3 front;
+    front.x = std::cos(rot.y) * std::sin(rot.x);
+    front.y = std::sin(rot.y);
+    front.z = -std::cos(rot.y) * std::cos(rot.x);
+    if (glm::length(front) > 1e-6f)
+    {
+        front = glm::normalize(front);
+    }
+
+    debug.insert(QStringLiteral("ok"), true);
+    debug.insert(QStringLiteral("cameraId"), QString::fromStdString(camera->getCameraId()));
+    debug.insert(QStringLiteral("cameraName"), QString::fromStdString(camera->getCameraName()));
+    debug.insert(QStringLiteral("freeFly"), camera->isFreeFlyCamera());
+    debug.insert(QStringLiteral("followMode"), camera->isFollowModeEnabled());
+    debug.insert(QStringLiteral("followSceneIndex"), camera->getFollowSceneIndex());
+    debug.insert(QStringLiteral("cameraPos"), QJsonArray{camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z});
+    debug.insert(QStringLiteral("cameraRot"), QJsonArray{camera->cameraRotation.x, camera->cameraRotation.y});
+    debug.insert(QStringLiteral("cameraFront"), QJsonArray{front.x, front.y, front.z});
+    debug.insert(QStringLiteral("focusedViewportIndex"), focusedViewportIndex());
+    debug.insert(QStringLiteral("focusedViewportCameraId"), focusedViewportCameraId());
+
+    QJsonArray warnings;
+
+    Model* target = camera->getCharacterTarget();
+    int targetSceneIndex = -1;
+    if (engine)
+    {
+        const auto& models = engine->models;
+        if (!target && camera->isFollowModeEnabled())
+        {
+            const int followSceneIndex = camera->getFollowSceneIndex();
+            if (followSceneIndex >= 0 && followSceneIndex < static_cast<int>(models.size()))
+            {
+                target = models[static_cast<size_t>(followSceneIndex)].get();
+                targetSceneIndex = followSceneIndex;
+            }
+        }
+
+        if (target)
+        {
+            for (int i = 0; i < static_cast<int>(models.size()); ++i)
+            {
+                if (models[static_cast<size_t>(i)].get() == target)
+                {
+                    targetSceneIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!target)
+    {
+        debug.insert(QStringLiteral("hasTarget"), false);
+        warnings.append(QStringLiteral("NO_TARGET_BOUND_TO_CAMERA"));
+        debug.insert(QStringLiteral("warnings"), warnings);
+        return debug;
+    }
+
+    const glm::vec3 targetPos = target->getFollowAnchorPosition();
+    const glm::vec3 toTarget = targetPos - camera->cameraPos;
+    const float distance = glm::length(toTarget);
+    glm::vec3 toTargetDir(0.0f, 0.0f, -1.0f);
+    if (distance > 1e-6f)
+    {
+        toTargetDir = toTarget / distance;
+    }
+    const float frontDotToTarget = glm::dot(front, toTargetDir);
+
+    const glm::vec4 clip = camera->getProjectionMatrix() * camera->getViewMatrix() * glm::vec4(targetPos, 1.0f);
+    float ndcX = 0.0f;
+    float ndcY = 0.0f;
+    float ndcZ = 0.0f;
+    bool clipValid = std::fabs(clip.w) > 1e-6f;
+    if (clipValid)
+    {
+        ndcX = clip.x / clip.w;
+        ndcY = clip.y / clip.w;
+        ndcZ = clip.z / clip.w;
+    }
+
+    const bool behind = frontDotToTarget < 0.0f;
+    const bool offscreen = !clipValid ||
+                           std::fabs(ndcX) > 1.0f ||
+                           std::fabs(ndcY) > 1.0f ||
+                           ndcZ < 0.0f ||
+                           ndcZ > 1.0f;
+
+    if (behind)
+    {
+        warnings.append(QStringLiteral("TARGET_BEHIND_CAMERA"));
+    }
+    if (offscreen)
+    {
+        warnings.append(QStringLiteral("TARGET_OFFSCREEN_OR_CLIPPED"));
+    }
+    if (distance < 0.5f)
+    {
+        warnings.append(QStringLiteral("TARGET_TOO_CLOSE_TO_CAMERA"));
+    }
+
+    debug.insert(QStringLiteral("hasTarget"), true);
+    debug.insert(QStringLiteral("targetSceneIndex"), targetSceneIndex);
+    debug.insert(QStringLiteral("targetPos"), QJsonArray{targetPos.x, targetPos.y, targetPos.z});
+    debug.insert(QStringLiteral("targetVelocity"), QJsonArray{target->character.velocity.x, target->character.velocity.y, target->character.velocity.z});
+    debug.insert(QStringLiteral("targetControllable"), target->character.isControllable);
+    debug.insert(QStringLiteral("distanceToTarget"), distance);
+    debug.insert(QStringLiteral("frontDotToTarget"), frontDotToTarget);
+    debug.insert(QStringLiteral("targetNdc"), QJsonArray{ndcX, ndcY, ndcZ});
+    debug.insert(QStringLiteral("targetClipW"), clip.w);
+    debug.insert(QStringLiteral("targetBehindCamera"), behind);
+    debug.insert(QStringLiteral("targetOffscreen"), offscreen);
+    debug.insert(QStringLiteral("warnings"), warnings);
+    if (!warnings.isEmpty())
+    {
+        static QString s_lastWarningKey;
+        static auto s_lastWarningLog = std::chrono::steady_clock::time_point{};
+
+        QStringList warningValues;
+        warningValues.reserve(warnings.size());
+        for (const auto& warning : warnings)
+        {
+            warningValues.append(warning.toString());
+        }
+        const QString warningKey = QStringLiteral("%1|%2|%3")
+            .arg(QString::fromStdString(camera->getCameraId()))
+            .arg(targetSceneIndex)
+            .arg(warningValues.join(QStringLiteral(",")));
+
+        const auto now = std::chrono::steady_clock::now();
+        const bool warningChanged = (warningKey != s_lastWarningKey);
+        const bool cooldownElapsed = (s_lastWarningLog.time_since_epoch().count() == 0) ||
+            (std::chrono::duration_cast<std::chrono::milliseconds>(now - s_lastWarningLog).count() >= 1000);
+        if (warningChanged || cooldownElapsed)
+        {
+            qWarning().nospace()
+                << "[CameraTracking] camera=\"" << QString::fromStdString(camera->getCameraName())
+                << "\" id=" << QString::fromStdString(camera->getCameraId())
+                << " followSceneIndex=" << camera->getFollowSceneIndex()
+                << " targetSceneIndex=" << targetSceneIndex
+                << " dist=" << distance
+                << " frontDot=" << frontDotToTarget
+                << " ndc=(" << ndcX << "," << ndcY << "," << ndcZ << ")"
+                << " behind=" << (behind ? "true" : "false")
+                << " offscreen=" << (offscreen ? "true" : "false")
+                << " warnings=" << warnings;
+            s_lastWarningKey = warningKey;
+            s_lastWarningLog = now;
+        }
+    }
+    return debug;
+}
+
 QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
     if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
@@ -322,6 +513,23 @@ QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex
     }
 
     return mesh.primitives[static_cast<size_t>(primitiveIndex)]->texturePreviewImage;
+}
+
+QVector3D ViewportHostWidget::sceneItemBoundsSize(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    if (!model)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    const glm::vec3 size = glm::max(model->boundsMaxWorld - model->boundsMinWorld, glm::vec3(0.0f));
+    return QVector3D(size.x, size.y, size.z);
 }
 
 QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex, int primitiveIndex) const
@@ -596,7 +804,10 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
     {
         if (enabled)
         {
-            m_runtime->camera()->setCharacterTarget(model.get());
+            if (!m_runtime->camera()->isFreeFlyCamera() || m_runtime->camera()->isFollowModeEnabled())
+            {
+                m_runtime->camera()->setCharacterTarget(model.get());
+            }
         }
         else if (m_runtime->camera()->getCharacterTarget() == model.get())
         {
@@ -644,40 +855,57 @@ void ViewportHostWidget::setFreeFlyCameraEnabled(bool enabled)
     m_freeFlyCameraEnabled = enabled;
     qDebug() << "[ViewportHost] Free fly camera" << (enabled ? "enabled" : "disabled");
     
-    // Update camera behavior based on mode
-    if (m_runtime->camera())
+    if (!m_runtime->camera())
     {
-        if (enabled)
+        return;
+    }
+    
+    Camera* cam = m_runtime->camera();
+    
+    if (enabled)
+    {
+        // Free fly mode: disable follow mode so camera can be controlled
+        cam->setFollowSettings(FollowSettings{});  // Disable follow
+        cam->setFreeFlyCamera(true);
+        cam->setControlsEnabled(true);  // Enable keyboard/mouse controls
+        cam->setCharacterTarget(nullptr);
+    }
+    else
+    {
+        // Character follow mode: enable follow mode
+        cam->setFreeFlyCamera(false);
+        cam->setControlsEnabled(false);  // Disable direct controls, follow handles everything
+        
+        // Find controllable character and set up follow
+        for (auto& model : m_runtime->engine()->models)
         {
-            // Free fly mode: clear character target so WASD moves camera
-            m_runtime->camera()->setCharacterTarget(nullptr);
-        }
-        else
-        {
-            // Character follow mode: restore character target and position camera
-            for (auto& model : m_runtime->engine()->models)
+            if (model && model->character.isControllable)
             {
-                if (model && model->character.isControllable)
-                {
-                    m_runtime->camera()->setCharacterTarget(model.get());
-                    
-                    // Immediately position camera behind character
-                    glm::vec3 charPos = model->getCharacterPosition();
-                    const float followDist = 3.0f;
-                    const float heightOff = 0.8f;
-                    glm::vec3 camPos = charPos;
-                    camPos.z += followDist;
-                    camPos.y += heightOff;
-                    m_runtime->camera()->cameraPos = camPos;
-                    
-                    const glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
-                    const glm::vec3 front = glm::normalize(lookTarget - camPos);
-                    m_runtime->camera()->cameraRotation = detail::cameraRotationForDirection(front);
-                    m_runtime->camera()->update(0);
-                    
-                    qDebug() << "[ViewportHost] Camera positioned behind character at:" << camPos.x << camPos.y << camPos.z;
-                    break;
-                }
+                cam->setCharacterTarget(model.get());
+                
+                // Set up follow mode with proper settings
+                FollowSettings settings = makeFollowSettings(
+                    0.0f,
+                    0.35f,  // Slightly up (~20 degrees)
+                    3.0f,
+                    5.0f);
+                cam->setFollowSettings(settings);
+                
+                // Position camera at initial offset
+                glm::vec3 charPos = model->getCharacterPosition();
+                glm::vec3 camPos = charPos;
+                camPos.z += settings.distance;
+                camPos.y += sin(settings.relativePitch) * settings.distance;
+                cam->cameraPos = camPos;
+                
+                // Set initial rotation to look at character
+                glm::vec3 lookTarget = charPos + glm::vec3(0.0f, 0.8f, 0.0f);
+                glm::vec3 front = glm::normalize(lookTarget - camPos);
+                cam->cameraRotation = detail::cameraRotationForDirection(front);
+                cam->update(0);
+                
+                qDebug() << "[ViewportHost] Camera positioned behind character at:" << camPos.x << camPos.y << camPos.z;
+                break;
             }
         }
     }
@@ -733,7 +961,7 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
                 glm::degrees(camera->cameraRotation.x),  // pitch
                 0.0f
             );
-            config.freeFly = m_freeFlyCameraEnabled;
+            config.freeFly = camera->isFreeFlyCamera();
         }
         config.nearClip = camera->getPerspectiveNear();
         config.farClip = camera->getPerspectiveFar();
@@ -742,6 +970,83 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
     }
     
     return configs;
+}
+
+bool ViewportHostWidget::normalizeSceneScaleForMeters(float targetCharacterRadius)
+{
+    if (!m_runtime->engine() || !m_runtime->display())
+    {
+        return false;
+    }
+
+    if (targetCharacterRadius <= 0.0f || !std::isfinite(targetCharacterRadius))
+    {
+        return false;
+    }
+
+    Model* referenceModel = firstControllableModel(m_runtime->engine());
+    if (!referenceModel)
+    {
+        for (auto& model : m_runtime->engine()->models)
+        {
+            if (model)
+            {
+                referenceModel = model.get();
+                break;
+            }
+        }
+    }
+    if (!referenceModel || !std::isfinite(referenceModel->boundsRadius) || referenceModel->boundsRadius <= 1e-5f)
+    {
+        return false;
+    }
+
+    const float currentRadius = referenceModel->boundsRadius;
+    float scaleFactor = targetCharacterRadius / currentRadius;
+    if (!std::isfinite(scaleFactor))
+    {
+        return false;
+    }
+
+    scaleFactor = std::clamp(scaleFactor, 0.1f, 100.0f);
+    if (scaleFactor > 0.8f && scaleFactor < 1.25f)
+    {
+        return false;
+    }
+
+    auto entries = m_sceneController->loadedEntries();
+    if (entries.isEmpty())
+    {
+        return false;
+    }
+
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        entries[i].translation *= scaleFactor;
+        entries[i].scale *= scaleFactor;
+        m_sceneController->updateSceneItemTransform(i, entries[i].translation, entries[i].rotation, entries[i].scale);
+    }
+
+    QList<CameraConfig> configs = cameraConfigs();
+    for (auto& config : configs)
+    {
+        config.position *= scaleFactor;
+        if (config.isFollowCamera())
+        {
+            config.followDistance = std::max(followcam::kMinDistance, config.followDistance * scaleFactor);
+        }
+        config.nearClip = std::max(0.001f, config.nearClip * scaleFactor);
+        config.farClip = std::max(config.nearClip + 0.001f, config.farClip * scaleFactor);
+    }
+    setCameraConfigs(configs);
+
+    m_orbitDistance = std::max(followcam::kMinDistance, m_orbitDistance * scaleFactor);
+
+    qDebug() << "[ViewportHost] Scene scale normalized for meter-like units."
+             << "factor" << scaleFactor
+             << "referenceRadiusBefore" << currentRadius
+             << "targetRadius" << targetCharacterRadius;
+    return true;
 }
 
 ViewportHostWidget::ViewportLayout ViewportHostWidget::viewportLayout() const
@@ -784,6 +1089,21 @@ int ViewportHostWidget::viewportCount() const
     return normalizedViewportLayout(m_viewportLayout).count;
 }
 
+int ViewportHostWidget::focusedViewportIndex() const
+{
+    return std::clamp(m_focusedViewportIndex, 0, std::max(0, viewportCount() - 1));
+}
+
+QString ViewportHostWidget::focusedViewportCameraId() const
+{
+    return cameraIdForViewportIndex(focusedViewportIndex());
+}
+
+QStringList ViewportHostWidget::viewportCameraIds() const
+{
+    return normalizedViewportLayout(m_viewportLayout).cameraIds;
+}
+
 // Helper function for creating follow cameras with full settings
 static Camera* createFollowCameraInternal(Display* display, Engine* engine, int sceneIndex, 
                                            float distance, float yaw, float pitch, 
@@ -808,6 +1128,8 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
         ? engine->models[static_cast<size_t>(sceneIndex)].get()
         : nullptr;
     
+    distance = sanitizedFollowDistance(distance);
+
     float yawRad = glm::radians(yaw);
     float pitchRad = glm::radians(pitch);
 
@@ -820,13 +1142,12 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
         glm::vec3 targetCenter = followAnchorPosition(
             *targetModel,
             glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z()));
-        FollowSettings initialFollowSettings;
-        initialFollowSettings.relativeYaw = yawRad;
-        initialFollowSettings.relativePitch = pitchRad;
-        initialFollowSettings.distance = distance;
-        initialFollowSettings.smoothSpeed = smoothSpeed;
-        initialFollowSettings.targetOffset = glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z());
-        initialFollowSettings.enabled = true;
+        const FollowSettings initialFollowSettings = makeFollowSettings(
+            yawRad,
+            pitchRad,
+            distance,
+            smoothSpeed,
+            glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z()));
 
         const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
         const float targetYaw = FollowOrbit::computeTargetYaw(modelForward);
@@ -849,16 +1170,17 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
     }
     
     // Configure follow settings with all parameters
-    FollowSettings followSettings;
-    followSettings.relativeYaw = yawRad;
-    followSettings.relativePitch = pitchRad;
-    followSettings.distance = distance;
-    followSettings.smoothSpeed = smoothSpeed;
-    followSettings.targetOffset = glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z());
-    followSettings.enabled = true;
+    const FollowSettings followSettings = makeFollowSettings(
+        yawRad,
+        pitchRad,
+        distance,
+        smoothSpeed,
+        glm::vec3(targetOffset.x(), targetOffset.y(), targetOffset.z()));
     
     followCam->setFollowTarget(sceneIndex, followSettings);
     followCam->setControlsEnabled(false);  // Follow cameras don't have direct controls
+    followCam->setFreeFlyCamera(false);
+    followCam->setCharacterTarget(targetModel);
     followCam->setCameraId(makeCameraId().toStdString());
     
     qDebug() << "[ViewportHost] Created follow camera (internal) for scene" << sceneIndex 
@@ -897,9 +1219,11 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
                 config.followTargetOffset
             );
             if (followCam) {
+                setCharacterControlState(config.followTargetIndex, true, false);
                 followCam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
                 followCam->setCameraName(config.name.toStdString());
                 followCam->setFreeFlyCamera(false);
+                followCam->setCharacterTarget(modelForSceneIndex(m_runtime->engine(), config.followTargetIndex));
                 followCam->setPerspectiveNearFar(config.nearClip, config.farClip);
             }
         } else {
@@ -942,6 +1266,8 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
         return -1;
     }
     
+    distance = sanitizedFollowDistance(distance);
+
     // Build a unique name for this follow camera
     QString cameraName = QStringLiteral("Follow Cam (Scene %1)").arg(sceneIndex);
     std::string cameraNameStd = cameraName.toStdString();
@@ -967,13 +1293,11 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
     glm::vec3 targetCenter = followAnchorPosition(*targetModel);
     float yawRad = glm::radians(yaw);
     float pitchRad = glm::radians(pitch);
-    FollowSettings followSettings;
-    followSettings.relativeYaw = yawRad;
-    followSettings.relativePitch = pitchRad;
-    followSettings.distance = distance;
-    followSettings.smoothSpeed = 5.0f;
-    followSettings.targetOffset = glm::vec3(0.0f);
-    followSettings.enabled = true;
+    const FollowSettings followSettings = makeFollowSettings(
+        yawRad,
+        pitchRad,
+        distance,
+        5.0f);
 
     const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
     const float targetYaw = FollowOrbit::computeTargetYaw(modelForward);
@@ -996,6 +1320,9 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
     
     followCam->setFollowTarget(sceneIndex, followSettings);
     followCam->setControlsEnabled(false);  // Follow cameras don't have direct controls
+    followCam->setFreeFlyCamera(false);
+    setCharacterControlState(sceneIndex, true, false);
+    followCam->setCharacterTarget(targetModel);
     
     qDebug() << "[ViewportHost] Created follow camera for scene" << sceneIndex 
              << "distance" << distance << "yaw" << yaw << "pitch" << pitch;
@@ -1102,6 +1429,17 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
 
     // Get the camera that will become active (before rotation)
     Camera* newActiveCamera = cameras[cameraIndex];
+    if (!newActiveCamera)
+    {
+        return;
+    }
+    if (newActiveCamera->getCameraId().empty())
+    {
+        newActiveCamera->setCameraId(makeCameraId().toStdString());
+    }
+    const QString newActiveCameraId = newActiveCamera
+        ? QString::fromStdString(newActiveCamera->getCameraId())
+        : QString();
 
     if (newActiveCamera && viewportCount() == 1)
     {
@@ -1112,6 +1450,29 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
     
     m_runtime->display()->setActiveCamera(newActiveCamera);
     updateViewportLayout();
+
+    // Keep green viewport focus in sync when camera is selected from hierarchy.
+    // Only retarget when this camera is actually assigned to a visible viewport slot.
+    if (!newActiveCameraId.isEmpty())
+    {
+        const ViewportLayout layout = normalizedViewportLayout(m_viewportLayout);
+        for (int i = 0; i < layout.count; ++i)
+        {
+            const QString slotCameraId = layout.cameraIds.value(i);
+            if (slotCameraId == newActiveCameraId)
+            {
+                m_focusedViewportIndex = i;
+                break;
+            }
+            const int slotCameraIndex = cameraIndexForId(slotCameraId);
+            if (slotCameraIndex == cameraIndex)
+            {
+                m_focusedViewportIndex = i;
+                break;
+            }
+        }
+    }
+    updateViewportBorders();
 
     if (newActiveCamera)
     {
@@ -1132,7 +1493,12 @@ void ViewportHostWidget::setActiveCamera(int cameraIndex)
         {
             if (newActiveCamera->isFollowModeEnabled())
             {
-                targetModel = modelForSceneIndex(m_runtime->engine(), newActiveCamera->getFollowSceneIndex());
+                const int followSceneIndex = newActiveCamera->getFollowSceneIndex();
+                if (followSceneIndex >= 0)
+                {
+                    setCharacterControlState(followSceneIndex, true, false);
+                }
+                targetModel = modelForSceneIndex(m_runtime->engine(), followSceneIndex);
             }
             if (!targetModel && !newActiveCamera->isFreeFlyCamera())
             {
@@ -1181,13 +1547,12 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         }
 
         // Set up follow settings
-        FollowSettings fs;
-        fs.relativeYaw = glm::radians(config.followYaw);
-        fs.relativePitch = glm::radians(config.followPitch);
-        fs.distance = config.followDistance;
-        fs.smoothSpeed = config.followSmoothSpeed;
-        fs.targetOffset = glm::vec3(config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z());
-        fs.enabled = true;
+        const FollowSettings fs = makeFollowSettings(
+            glm::radians(config.followYaw),
+            glm::radians(config.followPitch),
+            config.followDistance,
+            config.followSmoothSpeed,
+            glm::vec3(config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z()));
         
         // Update follow target and settings
         camera->setFollowTarget(config.followTargetIndex, fs);
@@ -1773,6 +2138,12 @@ void ViewportHostWidget::updateSceneItemPhysicsGravity(int index, bool useGravit
     notifySceneChanged();
 }
 
+void ViewportHostWidget::updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness)
+{
+    m_sceneController->updateSceneItemCharacterTurnResponsiveness(index, responsiveness);
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::renameSceneItem(int index, const QString& name)
 {
     m_sceneController->renameSceneItem(index, name);
@@ -1880,7 +2251,12 @@ void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex
 
 void ViewportHostWidget::relocateSceneItemInFrontOfCamera(int index)
 {
-    m_cameraController->relocateSceneItemInFrontOfCamera(index);
+    Camera* selectedCamera = focusedViewportCamera();
+    if (!selectedCamera)
+    {
+        selectedCamera = m_runtime->camera();
+    }
+    m_cameraController->relocateSceneItemInFrontOfCamera(index, selectedCamera);
     notifySceneChanged();
 }
 

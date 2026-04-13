@@ -26,6 +26,7 @@
 // Forward declarations
 class Engine;
 class Camera;
+class InputRouter;
 
 class Display
 {
@@ -140,6 +141,10 @@ public:
     SwapchainManager& getSwapchainManager() { return swapchainManager; }
     const SwapchainManager& getSwapchainManager() const { return swapchainManager; }
 
+    // Input routing
+    InputRouter* getInputRouter() { return inputRouter.get(); }
+    const InputRouter* getInputRouter() const { return inputRouter.get(); }
+
 private:
     std::vector<std::unique_ptr<Camera>> ownedCameras;
 
@@ -175,4 +180,5 @@ private:
     bool useExplicitViewportSlots = false;
     std::function<void(int, int, int, double, double)> mouseButtonEventCallback;
     Camera* activeCamera = nullptr;
+    std::unique_ptr<InputRouter> inputRouter;
 };

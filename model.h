@@ -109,6 +109,7 @@ public:
         AnimState currentAnimState = AnimState::Idle;
         float walkSpeedThreshold = 0.1f;
         float runSpeedThreshold = 4.0f;
+        float turnResponsiveness = 3.0f; // Lower = wider turning radius, more gradual
         
         // Standard Human Animation Set
         // These are common animation names used in humanoid characters
@@ -218,6 +219,8 @@ public:
     glm::mat4 worldTransform = glm::mat4(1.0f);
     glm::vec3 boundsCenter = glm::vec3(0.0f);
     float boundsRadius = 0.0f;
+    glm::vec3 boundsMinWorld = glm::vec3(0.0f);
+    glm::vec3 boundsMaxWorld = glm::vec3(0.0f);
     bool meshConsolidationEnabled = true;
     std::vector<AnimationClipInfo> animationClips;
     std::unique_ptr<motive::animation::FbxRuntime> fbxAnimationRuntime;

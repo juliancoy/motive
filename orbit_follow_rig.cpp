@@ -5,14 +5,16 @@
 
 namespace
 {
-constexpr float kMinFollowDistance = 0.001f;
-constexpr float kMaxPitchRadians = 1.4f;
+FollowSettings sanitizedSettings(const FollowSettings& settings)
+{
+    return followcam::sanitizeSettings(settings);
+}
 }
 
 void FollowOrbit::configure(int sceneIndex, const FollowSettings& settings)
 {
     sceneIndex_ = sceneIndex;
-    settings_ = settings;
+    settings_ = sanitizedSettings(settings);
     initialized_ = false;
     headingInitialized_ = false;
 }
@@ -90,7 +92,7 @@ FollowOrbitPose FollowOrbit::update(const glm::vec3& targetCenter,
     }
 
     const FollowOrbitPose desiredPose = computePose(targetCenter, targetYaw_, settings_);
-    const float dist = std::max(kMinFollowDistance, settings_.distance);
+    const float dist = std::max(followcam::kMinDistance, settings_.distance);
     glm::vec3 desiredDirection = desiredPose.position - targetCenter;
     if (glm::length(desiredDirection) < 0.0001f)
     {
@@ -107,7 +109,8 @@ FollowOrbitPose FollowOrbit::update(const glm::vec3& targetCenter,
         initialized_ = true;
     }
 
-    const float t = std::min(settings_.smoothSpeed * deltaTime, 1.0f);
+    const float smoothSpeed = std::max(settings_.smoothSpeed, 0.0f);
+    const float t = std::clamp(1.0f - std::exp(-smoothSpeed * std::max(deltaTime, 0.0f)), 0.0f, 1.0f);
     glm::vec3 currentDirection = pose.position - targetCenter;
     if (glm::length(currentDirection) < 0.0001f)
     {
@@ -129,7 +132,11 @@ FollowOrbitPose FollowOrbit::update(const glm::vec3& targetCenter,
     }
 
     pose.position = targetCenter + (blendedDirection * dist);
-    pose.rotation = desiredPose.rotation;
+
+    // Damped camera rotation to avoid snap/jitter when the target heading changes.
+    const float yawDelta = normalizeAngle(desiredPose.rotation.x - pose.rotation.x);
+    pose.rotation.x = normalizeAngle(pose.rotation.x + yawDelta * t);
+    pose.rotation.y = glm::mix(pose.rotation.y, desiredPose.rotation.y, t);
 
     return pose;
 }
@@ -138,9 +145,12 @@ FollowOrbitPose FollowOrbit::computePose(const glm::vec3& targetCenter,
                                             float targetYaw,
                                             const FollowSettings& settings)
 {
-    const float pitch = std::clamp(settings.relativePitch, -kMaxPitchRadians, kMaxPitchRadians);
-    const float worldYaw = normalizeAngle(targetYaw + settings.relativeYaw);
-    const float dist = std::max(kMinFollowDistance, settings.distance);
+    constexpr float kPi = 3.14159265358979323846f;
+    const FollowSettings sanitized = sanitizedSettings(settings);
+    const float pitch = sanitized.relativePitch;
+    // Follow-camera convention: relativeYaw=0 means "behind target".
+    const float worldYaw = normalizeAngle(targetYaw + sanitized.relativeYaw + kPi);
+    const float dist = sanitized.distance;
     const glm::vec3 desiredDirection = computeOrbitDirection(worldYaw, pitch);
 
     FollowOrbitPose pose;
@@ -150,7 +160,7 @@ FollowOrbitPose FollowOrbit::computePose(const glm::vec3& targetCenter,
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
-        float yaw = std::atan2(front.x, front.z) + 3.14159f;
+        float yaw = std::atan2(front.x, -front.z);
         float pitchRadians = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
         pose.rotation = glm::vec2(normalizeAngle(yaw), pitchRadians);
     }

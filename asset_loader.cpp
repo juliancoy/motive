@@ -56,19 +56,20 @@ bool ViewportAssetLoader::loadModelIntoEngine(ViewportRuntime& runtime, const Vi
         auto end = std::chrono::steady_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         
-        if (result.success && result.model) {
-            std::cout << "[ViewportAssetLoader] Model loaded in " << ms << "ms (parallel)" << std::endl;
-            
-            // Apply paint override if needed
-            if (item.paintOverrideEnabled) {
+            if (result.success && result.model) {
+                std::cout << "[ViewportAssetLoader] Model loaded in " << ms << "ms (parallel)" << std::endl;
+                
+                // Apply paint override if needed
+                if (item.paintOverrideEnabled) {
                 result.model->setPaintOverride(true, glm::vec3(
                     item.paintOverrideColor.x(), 
                     item.paintOverrideColor.y(), 
                     item.paintOverrideColor.z()));
-            }
+                }
+                result.model->character.turnResponsiveness = item.characterTurnResponsiveness;
             
-            runtime.engine()->addModel(std::move(result.model));
-            return true;
+                runtime.engine()->addModel(std::move(result.model));
+                return true;
         } else {
             std::cerr << "[ViewportAssetLoader] Parallel load failed: " << result.error << std::endl;
             // Fall through to synchronous loading
@@ -84,6 +85,7 @@ bool ViewportAssetLoader::loadModelIntoEngine(ViewportRuntime& runtime, const Vi
     model->setPaintOverride(item.paintOverrideEnabled,
                             glm::vec3(item.paintOverrideColor.x(), item.paintOverrideColor.y(), item.paintOverrideColor.z()));
     model->visible = item.visible;
+    model->character.turnResponsiveness = item.characterTurnResponsiveness;
     runtime.engine()->addModel(std::move(model));
     return true;
 }
@@ -153,6 +155,7 @@ bool ViewportAssetLoader::loadModelIntoEngineSlot(ViewportRuntime& runtime, int 
                     item.paintOverrideColor.y(), 
                     item.paintOverrideColor.z()));
             }
+            result.model->character.turnResponsiveness = item.characterTurnResponsiveness;
             
             ensureModelSlot(runtime, sceneIndex);
             runtime.engine()->models[static_cast<size_t>(sceneIndex)] = std::move(result.model);
@@ -172,6 +175,7 @@ bool ViewportAssetLoader::loadModelIntoEngineSlot(ViewportRuntime& runtime, int 
     model->setPaintOverride(item.paintOverrideEnabled,
                             glm::vec3(item.paintOverrideColor.x(), item.paintOverrideColor.y(), item.paintOverrideColor.z()));
     model->visible = item.visible;
+    model->character.turnResponsiveness = item.characterTurnResponsiveness;
 
     ensureModelSlot(runtime, sceneIndex);
     runtime.engine()->models[static_cast<size_t>(sceneIndex)] = std::move(model);
@@ -293,6 +297,7 @@ bool ViewportAssetLoader::loadModelsIntoEngineBatch(
                             item.paintOverrideColor.y(),
                             item.paintOverrideColor.z()));
                     }
+                    result.model->character.turnResponsiveness = item.characterTurnResponsiveness;
                     break;
                 }
             }

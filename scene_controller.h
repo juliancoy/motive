@@ -30,6 +30,7 @@ public:
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
+    void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);

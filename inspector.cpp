@@ -205,6 +205,20 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             }
         }
     };
+    const auto setCharacterMotionInspector = [this](bool visible, float turnResponsiveness = 10.0f)
+    {
+        if (!m_characterTurnResponsivenessSpin)
+        {
+            return;
+        }
+        m_characterTurnResponsivenessSpin->setVisible(visible);
+        if (visible)
+        {
+            m_characterTurnResponsivenessSpin->blockSignals(true);
+            m_characterTurnResponsivenessSpin->setValue(turnResponsiveness);
+            m_characterTurnResponsivenessSpin->blockSignals(false);
+        }
+    };
     const auto setTexturePreview = [this](const QImage& image)
     {
         if (!m_inspectorTexturePreview)
@@ -288,6 +302,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorNameValue, cameraName);
             setValue(m_inspectorPathValue, cameraPath);
             setValue(m_animationModeValue, QStringLiteral("Static"));
+            setValue(m_boundsSizeValue, QStringLiteral("-"));
             
             // Show free fly checkbox for all cameras
             if (m_freeFlyCameraCheck) {
@@ -335,6 +350,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
                 if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
                 if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
+                if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
             } else {
                 // Free camera: hide follow params, enable transform
                 setFollowParamsVisible(false);
@@ -348,6 +364,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(true);
                 if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(true);
                 if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(true);
+                if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
                 
                 QVector3D pos = m_viewportHost->cameraPosition();
                 QVector3D rot = m_viewportHost->cameraRotation();
@@ -369,6 +386,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setLightInspectorVisible(false);
             setAnimationInspector(false);
             setGravityInspector(false);
+            setCharacterMotionInspector(false);
             setTexturePreview(QImage());
             
             // Show follow target selector for all cameras
@@ -382,6 +400,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorNameValue, QStringLiteral("Directional Light"));
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
             setValue(m_animationModeValue, QStringLiteral("Static"));
+            setValue(m_boundsSizeValue, QStringLiteral("-"));
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
             if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -399,6 +418,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setFollowTargetInspectorVisible(false);
             setAnimationInspector(false);
             setGravityInspector(false);
+            setCharacterMotionInspector(false);
+            if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
             if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
             if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
             if (m_farClipSpin) m_farClipSpin->setVisible(false);
@@ -428,6 +449,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
+        setValue(m_boundsSizeValue, QStringLiteral("-"));
         if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
         if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
         if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -443,6 +465,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setPrimitiveInspectorVisible(false);
         setLightInspectorVisible(false);
         setAnimationInspector(false);
+        setCharacterMotionInspector(false);
+        if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
         setTexturePreview(QImage());
         m_updatingInspector = false;
         return;
@@ -454,6 +478,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     setValue(m_animationModeValue,
              m_viewportHost ? m_viewportHost->animationExecutionMode(row, meshIndex, primitiveIndex)
                             : QStringLiteral("-"));
+    if (m_boundsSizeValue && m_viewportHost)
+    {
+        const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
+        setValue(m_boundsSizeValue, QStringLiteral("%1 x %2 x %3")
+                 .arg(QString::number(bounds.x(), 'f', 3))
+                 .arg(QString::number(bounds.y(), 'f', 3))
+                 .arg(QString::number(bounds.z(), 'f', 3)));
+    }
     if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(item.translation.x());
     if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(item.translation.y());
     if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(item.translation.z());
@@ -463,6 +495,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     if (m_inspectorScaleX) m_inspectorScaleX->setValue(item.scale.x());
     if (m_inspectorScaleY) m_inspectorScaleY->setValue(item.scale.y());
     if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(item.scale.z());
+    if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(true);
     if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(item.paintOverrideEnabled);
     if (m_paintColorWidget)
     {
@@ -503,6 +536,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                           item.animationSpeed,
                           item.animationPhysicsCoupling);
     setGravityInspector(true, item.useGravity, item.customGravity);
+    setCharacterMotionInspector(true, item.characterTurnResponsiveness);
     if (m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0)
     {
         setTexturePreview(m_viewportHost->primitiveTexturePreview(row, meshIndex, primitiveIndex));

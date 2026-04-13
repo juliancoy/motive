@@ -1,6 +1,7 @@
 #include "shell.h"
 #include "asset_browser_widget.h"
 #include "host_widget.h"
+#include "camera_follow_settings.h"
 #include "transform_undo_command.h"
 #include "physics_interface.h"
 
@@ -201,7 +202,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         QMenu menu(this);
         QAction* renameAction = menu.addAction(QStringLiteral("Rename"));
         QAction* focusAction = menu.addAction(QStringLiteral("Focus"));
-        QAction* relocateAction = menu.addAction(QStringLiteral("Relocate in front of camera"));
+        QAction* relocateAction = menu.addAction(QStringLiteral("Relocate 5m in front of camera"));
         
         // Add Follow submenu
         QMenu* followMenu = menu.addMenu(QStringLiteral("Follow"));
@@ -277,7 +278,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             auto* formLayout = new QFormLayout();
             
             auto* distSpin = new QDoubleSpinBox(&dialog);
-            distSpin->setRange(0.5, 100.0);
+            distSpin->setRange(followcam::kMinDistance, 100.0);
             distSpin->setValue(configs[followCamIndex].followDistance);
             distSpin->setSingleStep(0.5);
             distSpin->setDecimals(2);
@@ -453,6 +454,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue->setWordWrap(true);
     m_animationModeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_boundsSizeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorTexturePreview = new QLabel(QStringLiteral("No texture"), inspectorPanel);
     m_inspectorTexturePreview->setMinimumSize(96, 96);
     m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
@@ -549,7 +551,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     
     // Create follow camera parameter controls
     m_followParamsLabel = new QLabel(QStringLiteral("Follow Parameters"), inspectorPanel);
-    m_followDistanceSpin = createSpinBox(inspectorPanel, 0.1, 100.0, 0.1);
+    m_followDistanceSpin = createSpinBox(inspectorPanel, followcam::kMinDistance, 100.0, 0.1);
     m_followDistanceSpin->setValue(5.0);
     m_followYawSpin = createSpinBox(inspectorPanel, -360.0, 360.0, 1.0);
     m_followYawSpin->setValue(0.0);
@@ -557,6 +559,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_followPitchSpin->setValue(20.0);
     m_followSmoothSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
     m_followSmoothSpin->setValue(5.0);
+    m_followSmoothSpin->setToolTip(QStringLiteral("Follow-camera damping strength. Higher values track target motion more tightly."));
 
     // Create translation spin boxes
     auto* translationWidget = new QWidget(inspectorPanel);
@@ -592,12 +595,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorScaleX = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
     m_inspectorScaleY = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
     m_inspectorScaleZ = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
+    m_lockScaleXYZCheck = new QCheckBox(QStringLiteral("Lock XYZ"), scaleWidget);
+    m_lockScaleXYZCheck->setChecked(true);
+    m_lockScaleXYZCheck->setToolTip(QStringLiteral("When enabled, editing any scale axis applies the same value to X/Y/Z."));
     scaleLayout->addWidget(new QLabel("X:", scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleX);
     scaleLayout->addWidget(new QLabel("Y:", scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleY);
     scaleLayout->addWidget(new QLabel("Z:", scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleZ);
+    scaleLayout->addWidget(m_lockScaleXYZCheck);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
     
     // Per-object Gravity controls
@@ -615,10 +622,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     elementGravityLayout->addWidget(new QLabel("Z:", m_elementGravityWidget));
     elementGravityLayout->addWidget(m_elementGravityZ);
     elementGravityLayout->setContentsMargins(0, 0, 0, 0);
+    m_characterTurnResponsivenessSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
+    m_characterTurnResponsivenessSpin->setValue(10.0);
+    m_characterTurnResponsivenessSpin->setToolTip(QStringLiteral("How quickly this target rotates to face movement direction."));
 
     inspectorLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
     inspectorLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
     inspectorLayout->addRow(QStringLiteral("Animation Path"), m_animationModeValue);
+    inspectorLayout->addRow(QStringLiteral("Bounds Size"), m_boundsSizeValue);
     inspectorLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
     inspectorLayout->addRow(QStringLiteral("Load"), m_loadMeshConsolidationCheck);
     inspectorLayout->addRow(QStringLiteral("Cull Mode"), m_primitiveCullModeCombo);
@@ -634,7 +645,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
     inspectorLayout->addRow(QStringLiteral("Yaw"), m_followYawSpin);
     inspectorLayout->addRow(QStringLiteral("Pitch"), m_followPitchSpin);
-    inspectorLayout->addRow(QStringLiteral("Smooth Speed"), m_followSmoothSpin);
+    inspectorLayout->addRow(QStringLiteral("Follow Damping"), m_followSmoothSpin);
     inspectorLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
     inspectorLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
     inspectorLayout->addRow(QStringLiteral("Color"), lightColorContainer);
@@ -643,6 +654,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addRow(QStringLiteral("Scale"), scaleWidget);
     inspectorLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
     inspectorLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
+    inspectorLayout->addRow(QStringLiteral("Turn Responsiveness"), m_characterTurnResponsivenessSpin);
     m_rightTabs->addTab(wrapTabInScrollArea(inspectorPanel), QStringLiteral("Element"));
     inspectorDock->setWidget(m_rightTabs);
     addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
@@ -739,6 +751,19 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_elementGravityX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
     connect(m_elementGravityY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
     connect(m_elementGravityZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
+
+    auto applyCharacterMotionInspector = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_characterTurnResponsivenessSpin) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size()) return;
+
+        const float responsiveness = static_cast<float>(m_characterTurnResponsivenessSpin->value());
+        m_sceneItems[row].characterTurnResponsiveness = responsiveness;
+        m_viewportHost->updateSceneItemCharacterTurnResponsiveness(row, responsiveness);
+        saveProjectState();
+    };
+    connect(m_characterTurnResponsivenessSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyCharacterMotionInspector](double) { applyCharacterMotionInspector(); });
 
     connect(m_primitiveCullModeCombo, &QComboBox::currentIndexChanged, this, [this]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_primitiveCullModeCombo)
@@ -887,7 +912,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             config.type = ViewportHostWidget::CameraConfig::Type::Follow;
             config.followTargetIndex = targetIndex;
             // Set default follow parameters if not already set
-            if (config.followDistance <= 0) config.followDistance = 5.0f;
+            if (config.followDistance < followcam::kMinDistance) config.followDistance = 5.0f;
         } else {
             // Convert to free camera
             config.type = ViewportHostWidget::CameraConfig::Type::Free;
@@ -987,6 +1012,24 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_inspectorScaleY->value(),
             m_inspectorScaleZ->value()
         );
+
+        QObject* source = sender();
+        if (m_lockScaleXYZCheck && m_lockScaleXYZCheck->isChecked())
+        {
+            if (source == m_inspectorScaleX || source == m_inspectorScaleY || source == m_inspectorScaleZ)
+            {
+                const float uniform = static_cast<float>(source == m_inspectorScaleX ? m_inspectorScaleX->value()
+                                                  : source == m_inspectorScaleY ? m_inspectorScaleY->value()
+                                                                                : m_inspectorScaleZ->value());
+                const QSignalBlocker bx(m_inspectorScaleX);
+                const QSignalBlocker by(m_inspectorScaleY);
+                const QSignalBlocker bz(m_inspectorScaleZ);
+                m_inspectorScaleX->setValue(uniform);
+                m_inspectorScaleY->setValue(uniform);
+                m_inspectorScaleZ->setValue(uniform);
+                scale = QVector3D(uniform, uniform, uniform);
+            }
+        }
         // Handle Camera and Follow Camera entries (any row <= kHierarchyCameraIndex)
         if (row <= MainWindowShell::kHierarchyCameraIndex && m_viewportHost) {
             m_viewportHost->setCameraPosition(translation);
@@ -1000,6 +1043,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_sceneItems[row].translation = translation;
             m_sceneItems[row].rotation = rotation;
             m_sceneItems[row].scale = scale;
+            if (m_boundsSizeValue && m_viewportHost)
+            {
+                const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
+                m_boundsSizeValue->setText(QStringLiteral("%1 x %2 x %3")
+                    .arg(QString::number(bounds.x(), 'f', 3))
+                    .arg(QString::number(bounds.y(), 'f', 3))
+                    .arg(QString::number(bounds.z(), 'f', 3)));
+            }
             saveProjectState();
         }
     };
@@ -1013,6 +1064,27 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_inspectorScaleX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateTransform);
     connect(m_inspectorScaleY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateTransform);
     connect(m_inspectorScaleZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateTransform);
+
+    auto* boundsRefreshTimer = new QTimer(this);
+    boundsRefreshTimer->setInterval(150);
+    connect(boundsRefreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_boundsSizeValue || !m_viewportHost || !m_hierarchyTree)
+        {
+            return;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size())
+        {
+            return;
+        }
+        const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
+        m_boundsSizeValue->setText(QStringLiteral("%1 x %2 x %3")
+            .arg(QString::number(bounds.x(), 'f', 3))
+            .arg(QString::number(bounds.y(), 'f', 3))
+            .arg(QString::number(bounds.z(), 'f', 3)));
+    });
+    boundsRefreshTimer->start();
 
     setupProjectMenu();
     

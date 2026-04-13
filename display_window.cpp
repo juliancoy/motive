@@ -10,6 +10,7 @@
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
+#include "input_router.h"
 
 void Display::createWindow(const char* title)
 {
@@ -181,10 +182,20 @@ void Display::handleKey(int key, int scancode, int action, int mods)
     }
 
     Camera* camera = getActiveCamera();
-    if (camera)
+    if (!camera)
     {
-        camera->handleKey(key, scancode, action, mods);
+        return;
     }
+
+    if (inputRouter)
+    {
+        const bool isFollowMode = camera->isFollowModeEnabled();
+        const bool hasCharacterTarget = (camera->getCharacterTarget() != nullptr);
+        
+        inputRouter->handleKey(key, action);
+    }
+
+    camera->handleKey(key, scancode, action, mods);
 }
 
 void Display::handleWindowFocusChanged(int focused)
@@ -192,6 +203,11 @@ void Display::handleWindowFocusChanged(int focused)
     if (focused)
     {
         return;
+    }
+
+    if (inputRouter)
+    {
+        inputRouter->clearInput();
     }
 
     Camera* camera = getActiveCamera();

@@ -582,10 +582,14 @@ void SwapchainManager::cleanupSwapchainResources()
     }
 
     VkDevice device = engine_->logicalDevice;
-    VkQueue graphicsQueue = engine_->getGraphicsQueue();
 
-    vkQueueWaitIdle(graphicsQueue);
     vkDeviceWaitIdle(device);
+
+    // Reset command pool before destroying framebuffers
+    if (cmdPool_ != VK_NULL_HANDLE)
+    {
+        vkResetCommandPool(device, cmdPool_, 0);
+    }
 
     // Destroy framebuffers
     for (auto framebuffer : framebuffers_)

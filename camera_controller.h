@@ -2,6 +2,8 @@
 
 #include <QVector3D>
 
+class Camera;
+
 namespace motive::ui {
 
 class ViewportRuntime;
@@ -23,7 +25,7 @@ public:
     void getPerspectiveNearFar(float& near, float& far) const;
     void resetCamera();
 
-    void relocateSceneItemInFrontOfCamera(int index);
+    void relocateSceneItemInFrontOfCamera(int index, ::Camera* referenceCamera = nullptr);
     void focusSceneItem(int index);
 
 private:

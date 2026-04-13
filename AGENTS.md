@@ -60,6 +60,10 @@ The engine is designed for interactive 3D applications, video processing pipelin
 
 The project supports two build systems:
 
+### Codex Agent Build Preference
+For Codex work in this repository, use `./build.sh` for verification builds by default.
+Use `./build.sh --full` only when full runtime executables are required.
+
 ### Python Build (Primary)
 ```bash
 # Install dependencies (one-time)

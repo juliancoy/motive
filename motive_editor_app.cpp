@@ -10,6 +10,8 @@
 #include <QDebug>
 #include <QImageReader>
 #include <QMetaObject>
+#include <QProcess>
+#include <QTimer>
 
 #include <limits>
 
@@ -35,7 +37,7 @@ int runMotiveEditorApp(int argc, char** argv)
     parser.process(app);
 
     bool portOk = false;
-    quint16 controlPort = 40130;
+    quint16 controlPort = 40132;
     const QString optionValue = parser.value(controlPortOption);
     if (!optionValue.isEmpty())
     {
@@ -95,6 +97,10 @@ int runMotiveEditorApp(int argc, char** argv)
                 data.renderTimerActive = perf.renderTimerActive;
                 data.viewportWidth = perf.viewportWidth;
                 data.viewportHeight = perf.viewportHeight;
+                data.focusedViewportIndex = viewport->focusedViewportIndex();
+                data.focusedViewportCameraId = viewport->focusedViewportCameraId();
+                data.viewportCameraIds = viewport->viewportCameraIds();
+                data.cameraTracking = viewport->cameraTrackingDebugJson();
             }
             return data;
         },
@@ -537,17 +543,39 @@ int runMotiveEditorApp(int argc, char** argv)
             result.insert(QStringLiteral("error"), QStringLiteral("unknown command"));
             return false;
         },
+        [&app]() -> bool
+        {
+            qDebug() << "[RESTART] Build and restart initiated via REST API";
+            
+            // Run build in background
+            int buildResult = system("cd /mnt/Cancer/PanelVid2TikTok/motive3d && python build.py --rebuild > /tmp/motive_build.log 2>&1");
+            
+            if (buildResult != 0)
+            {
+                qWarning() << "[RESTART] Build failed with code" << buildResult;
+                return false;
+            }
+            
+            qDebug() << "[RESTART] Build successful, restarting application...";
+            
+            // Schedule app restart via Qt
+            QTimer::singleShot(500, qApp, []() {
+                QProcess::startDetached(qApp->arguments()[0], qApp->arguments());
+                qApp->quit();
+            });
+            
+            return true;
+        },
         &window);
 
     const bool controlServerStarted = controlServer.start(controlPort);
-    if (controlServerStarted)
+    if (!controlServerStarted)
     {
-        qInfo() << "[STARTUP] Control server initialized on port" << controlPort;
+        qCritical() << "[STARTUP] Control server failed to initialize on port" << controlPort
+                    << "- exiting";
+        return 1;
     }
-    else
-    {
-        qWarning() << "[STARTUP] Control server failed to initialize on port" << controlPort;
-    }
+    qInfo() << "[STARTUP] Control server initialized on port" << controlPort;
 
     window.show();
 

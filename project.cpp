@@ -90,6 +90,7 @@ void MainWindowShell::restoreSessionState()
         m_viewportHost->setCameraSpeed(m_projectSession.currentCameraSpeed());
         m_viewportHost->setCameraPosition(m_projectSession.currentCameraPosition());
         m_viewportHost->setCameraRotation(m_projectSession.currentCameraRotation());
+        m_viewportHost->normalizeSceneScaleForMeters();
         updateCameraSettingsPanel();
     }
 
@@ -181,6 +182,7 @@ void MainWindowShell::createProject()
         }
         m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
+        m_viewportHost->normalizeSceneScaleForMeters();
     }
     refreshWindowTitle();
 }
@@ -250,6 +252,7 @@ void MainWindowShell::switchProject()
         }
         m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
+        m_viewportHost->normalizeSceneScaleForMeters();
     }
     refreshWindowTitle();
 }
@@ -285,6 +288,7 @@ void MainWindowShell::saveProjectState()
     m_projectSession.setCurrentCameraPosition(m_viewportHost ? m_viewportHost->cameraPosition() : QVector3D(0.0f, 0.0f, 3.0f));
     m_projectSession.setCurrentCameraRotation(m_viewportHost ? m_viewportHost->cameraRotation() : QVector3D(0.0f, 0.0f, 0.0f));
     m_projectSession.setCurrentCameraSpeed(m_viewportHost ? m_viewportHost->cameraSpeed() : 0.01f);
+    m_projectSession.setCurrentFreeFlyCameraEnabled(m_viewportHost ? m_viewportHost->isFreeFlyCameraEnabled() : true);
     m_projectSession.setCurrentSceneLight(m_viewportHost ? MainWindowShell::sceneLightToJson(m_viewportHost->sceneLight()) : QJsonObject{});
     m_projectSession.setCurrentRenderPath(m_viewportHost ? m_viewportHost->renderPath() : QStringLiteral("forward3d"));
     m_projectSession.setCurrentMeshConsolidationEnabled(m_viewportHost ? m_viewportHost->meshConsolidationEnabled() : true);

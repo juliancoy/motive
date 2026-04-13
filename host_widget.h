@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QRect>
 #include <QTimer>
 #include <QVector3D>
@@ -83,6 +84,7 @@ public:
         QString animationPhysicsCoupling = QStringLiteral("AnimationOnly");
         bool useGravity = true;
         QVector3D customGravity = QVector3D(0.0f, 0.0f, 0.0f);
+        float characterTurnResponsiveness = 10.0f;
         QJsonArray primitiveOverrides;
     };
 
@@ -141,6 +143,8 @@ public:
     QList<HierarchyNode> hierarchyItems() const;
     QJsonArray hierarchyJson() const;
     QJsonArray sceneProfileJson() const;
+    QJsonObject cameraTrackingDebugJson() const;
+    QVector3D sceneItemBoundsSize(int sceneIndex) const;
     QImage primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const;
     QString animationExecutionMode(int sceneIndex, int meshIndex = -1, int primitiveIndex = -1) const;
     QString primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const;
@@ -170,6 +174,7 @@ public:
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
+    void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
@@ -202,6 +207,9 @@ public:
     void setViewportLayout(const ViewportLayout& layout);
     void setViewportCount(int count);
     int viewportCount() const;
+    int focusedViewportIndex() const;
+    QString focusedViewportCameraId() const;
+    QStringList viewportCameraIds() const;
     int ensureFollowCamera(int sceneIndex, float distance = 5.0f, float yaw = 0.0f, float pitch = 20.0f);
     int createFollowCamera(int sceneIndex, float distance = 5.0f, float yaw = 0.0f, float pitch = 20.0f);
     void deleteCamera(int cameraIndex);
@@ -210,6 +218,7 @@ public:
     int cameraIndexForId(const QString& cameraId) const;
     QString activeCameraId() const;
     void updateCameraConfig(int cameraIndex, const CameraConfig& config);
+    bool normalizeSceneScaleForMeters(float targetCharacterRadius = 0.45f);
     void refresh();
 
 protected:
