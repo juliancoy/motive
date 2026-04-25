@@ -38,6 +38,9 @@ public:
         QStringList viewportCameraIds;
         QJsonObject cameraTracking;
         QJsonObject inspector;
+        QJsonObject motionDebugFrame;
+        QJsonObject motionDebugSummary;
+        QJsonObject motionDebugOverlay;
     };
     
     struct PerformanceMetrics

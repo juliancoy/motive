@@ -8,6 +8,8 @@
 #include "engine.h"
 #include "model.h"
 
+#include <cmath>
+
 namespace motive::ui {
 
 ViewportCameraController::ViewportCameraController(ViewportRuntime& runtime, ViewportSceneController& sceneController)
@@ -30,7 +32,7 @@ QVector3D ViewportCameraController::cameraRotation() const
     if (m_runtime.camera())
     {
         const glm::vec2 rotation = m_runtime.camera()->getEulerRotation();
-        return QVector3D(rotation.y, rotation.x, 0.0f);
+        return QVector3D(rotation.x, rotation.y, 0.0f);
     }
     return QVector3D(0.0f, 0.0f, 0.0f);
 }
@@ -56,7 +58,7 @@ void ViewportCameraController::setCameraRotation(const QVector3D& rotation)
     {
         return;
     }
-    m_runtime.camera()->setEulerRotation(glm::vec2(rotation.y(), rotation.x()));
+    m_runtime.camera()->setEulerRotation(glm::vec2(rotation.x(), rotation.y()));
     m_runtime.camera()->update(0);
 }
 
@@ -134,14 +136,52 @@ void ViewportCameraController::focusSceneItem(int index)
     }
 
     const auto& model = m_runtime.engine()->models[static_cast<size_t>(index)];
-    const glm::vec3 worldCenter = model->boundsCenter;
-    const float distance = detail::framingDistanceForModel(*model);
-    const glm::vec3 toTarget = worldCenter - m_runtime.camera()->cameraPos;
-    const glm::vec3 front = glm::length(toTarget) > 1e-6f
+    const auto& entry = m_sceneController.loadedEntries()[index];
+    const glm::vec3 focusOffset(entry.focusPointOffset.x(), entry.focusPointOffset.y(), entry.focusPointOffset.z());
+    glm::vec3 worldCenter = model->getFollowAnchorPosition() + focusOffset;
+    if (!std::isfinite(worldCenter.x) || !std::isfinite(worldCenter.y) || !std::isfinite(worldCenter.z))
+    {
+        worldCenter = model->boundsCenter;
+    }
+    const float autoDistance = detail::framingDistanceForModel(*model);
+    const float distance = entry.focusDistance > 0.0f ? entry.focusDistance : autoDistance;
+
+    glm::vec3 cameraPosition = m_runtime.camera()->cameraPos;
+    if (entry.focusCameraOffsetValid)
+    {
+        const glm::vec3 storedOffset(entry.focusCameraOffset.x(), entry.focusCameraOffset.y(), entry.focusCameraOffset.z());
+        if (std::isfinite(storedOffset.x) && std::isfinite(storedOffset.y) && std::isfinite(storedOffset.z) &&
+            glm::length(storedOffset) > 1e-6f)
+        {
+            cameraPosition = worldCenter + storedOffset;
+        }
+    }
+
+    glm::vec3 toTarget = worldCenter - cameraPosition;
+    glm::vec3 front = glm::length(toTarget) > 1e-6f
         ? glm::normalize(toTarget)
         : m_runtime.camera()->getForwardVector();
+    if (glm::length(front) <= 1e-6f)
+    {
+        front = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    if (!entry.focusCameraOffsetValid)
+    {
+        cameraPosition = worldCenter - front * glm::max(distance, 0.05f);
+    }
+    else
+    {
+        const float desiredDistance = glm::max(distance, 0.05f);
+        const float actualDistance = glm::length(worldCenter - cameraPosition);
+        if (!std::isfinite(actualDistance) || actualDistance < 0.05f)
+        {
+            cameraPosition = worldCenter - front * desiredDistance;
+        }
+    }
+
     m_runtime.camera()->setEulerRotation(detail::cameraRotationForDirection(front));
-    m_runtime.camera()->cameraPos = worldCenter - front * distance;
+    m_runtime.camera()->cameraPos = cameraPosition;
     m_runtime.camera()->update(0.0f);
 }
 

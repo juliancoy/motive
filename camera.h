@@ -42,6 +42,9 @@ public:
     void handleCursorPos(double xpos, double ypos);
     void handleKey(int key, int scancode, int action, int mods);
     void clearInputState();
+    void setExternalMouseInput(bool enabled) { externalMouseInput = enabled; }
+    void setInvertHorizontalDrag(bool enabled) { invertHorizontalDrag = enabled; }
+    bool isHorizontalDragInverted() const { return invertHorizontalDrag; }
     void setWindow(GLFWwindow* window);
     void setViewport(float centerX, float centerY, float viewportWidth, float viewportHeight);
     void setFullscreenViewportEnabled(bool enabled, float xPercent = 1.0f, float yPercent = 1.0f);
@@ -62,6 +65,9 @@ public:
 
     // Input tracking
     bool rightMouseDown = false;
+    bool dragAnchorValid = false;
+    bool externalMouseInput = false;
+    bool invertHorizontalDrag = false;
     bool temporaryOrbitDrag = false;
     glm::vec2 lastMousePos = glm::vec2(0.0f);
     bool keysPressed[6] = {false}; // W,A,S,D,Q,E
@@ -97,9 +103,11 @@ public:
     float getPerspectiveFar() const { return perspFar; }
     void setControlsEnabled(bool enabled);
     
-    // Follow mode - camera tracks a target model by scene index
+    // Follow mode - camera tracks a target model by scene index.
+    // Explicit contract: setFollowTarget only mutates follow target/settings and
+    // does not implicitly change Camera::mode for assign or clear.
     // The camera stores the scene index and looks up the model each frame,
-    // so it continues to work even if models are reloaded
+    // so it continues to work even if models are reloaded.
     void setFollowTarget(int sceneIndex, const FollowSettings& settings = FollowSettings());
     int getFollowTargetIndex() const { return followOrbit.sceneIndex(); }
     void setFollowSettings(const FollowSettings& settings);

@@ -31,6 +31,8 @@ public:
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
+    void updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance);
+    void updateSceneItemFocusCameraOffset(int index, const QVector3D& focusCameraOffset, bool valid);
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);

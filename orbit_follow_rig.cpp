@@ -19,7 +19,7 @@ glm::vec2 rotationFromLookAt(const glm::vec3& cameraPosition, const glm::vec3& t
     }
 
     const glm::vec3 front = glm::normalize(toTarget);
-    const float yaw = std::atan2(front.x, -front.z);
+    const float yaw = std::atan2(-front.x, -front.z);
     const float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
     return glm::vec2(yaw, pitch);
 }
@@ -124,7 +124,7 @@ FollowOrbitPose CharacterFollowRig::computePose(const glm::vec3& targetCenter,
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
-        float yaw = std::atan2(front.x, -front.z);
+        float yaw = std::atan2(-front.x, -front.z);
         float pitchRadians = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
         pose.rotation = glm::vec2(normalizeAngle(yaw), pitchRadians);
     }
@@ -149,7 +149,7 @@ float CharacterFollowRig::computeTargetYaw(const glm::vec3& targetForward)
 glm::vec3 CharacterFollowRig::computeOrbitDirection(float worldYaw, float pitch)
 {
     glm::vec3 desiredDirection;
-    desiredDirection.x = std::sin(worldYaw) * std::cos(pitch);
+    desiredDirection.x = -std::sin(worldYaw) * std::cos(pitch);
     desiredDirection.y = std::sin(pitch);
     desiredDirection.z = std::cos(worldYaw) * std::cos(pitch);
     if (glm::length(desiredDirection) < 0.0001f)
@@ -243,7 +243,7 @@ FollowOrbitPose OrbitRig::computePose(const glm::vec3& targetCenter,
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
-        float yaw = std::atan2(front.x, -front.z);
+        float yaw = std::atan2(-front.x, -front.z);
         float pitchRadians = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
         pose.rotation = glm::vec2(normalizeAngle(yaw), pitchRadians);
     }
@@ -254,7 +254,7 @@ FollowOrbitPose OrbitRig::computePose(const glm::vec3& targetCenter,
 glm::vec3 OrbitRig::computeOrbitDirection(float worldYaw, float pitch)
 {
     glm::vec3 desiredDirection;
-    desiredDirection.x = std::sin(worldYaw) * std::cos(pitch);
+    desiredDirection.x = -std::sin(worldYaw) * std::cos(pitch);
     desiredDirection.y = std::sin(pitch);
     desiredDirection.z = std::cos(worldYaw) * std::cos(pitch);
     if (glm::length(desiredDirection) < 0.0001f)

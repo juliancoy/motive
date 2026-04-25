@@ -40,7 +40,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
+#include <vector>
 #include <vulkan/vulkan.h>
 
 namespace motive::ui {
@@ -155,6 +158,177 @@ int findFollowCameraIndexForScene(Display* display, int sceneIndex)
     return -1;
 }
 
+QVector3D vector3FromJson(const QJsonValue& value)
+{
+    if (!value.isArray())
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+    const QJsonArray array = value.toArray();
+    if (array.size() < 3)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+    return QVector3D(static_cast<float>(array.at(0).toDouble()),
+                     static_cast<float>(array.at(1).toDouble()),
+                     static_cast<float>(array.at(2).toDouble()));
+}
+
+void appendWarningUnique(QJsonArray& warnings, const QString& warning)
+{
+    if (warning.isEmpty())
+    {
+        return;
+    }
+    for (const QJsonValue& existing : warnings)
+    {
+        if (existing.toString() == warning)
+        {
+            return;
+        }
+    }
+    warnings.append(warning);
+}
+
+inline std::uint8_t channelFromColor(std::uint32_t color, int shift)
+{
+    return static_cast<std::uint8_t>((color >> shift) & 0xFFu);
+}
+
+void blendPixel(std::vector<std::uint8_t>& pixels,
+                int width,
+                int height,
+                int x,
+                int y,
+                std::uint32_t color)
+{
+    if (x < 0 || y < 0 || x >= width || y >= height)
+    {
+        return;
+    }
+
+    const std::uint8_t srcB = channelFromColor(color, 0);
+    const std::uint8_t srcG = channelFromColor(color, 8);
+    const std::uint8_t srcR = channelFromColor(color, 16);
+    const std::uint8_t srcA = channelFromColor(color, 24);
+    const size_t idx = static_cast<size_t>(y * width + x) * 4u;
+    const std::uint8_t dstA = pixels[idx + 3];
+    const std::uint8_t outA = static_cast<std::uint8_t>(
+        std::min(255, static_cast<int>(srcA) + static_cast<int>(dstA) * (255 - srcA) / 255));
+    if (outA == 0)
+    {
+        return;
+    }
+
+    pixels[idx + 0] = static_cast<std::uint8_t>(
+        (srcB * srcA + pixels[idx + 0] * (255 - srcA) / 255) * 255 / outA);
+    pixels[idx + 1] = static_cast<std::uint8_t>(
+        (srcG * srcA + pixels[idx + 1] * (255 - srcA) / 255) * 255 / outA);
+    pixels[idx + 2] = static_cast<std::uint8_t>(
+        (srcR * srcA + pixels[idx + 2] * (255 - srcA) / 255) * 255 / outA);
+    pixels[idx + 3] = outA;
+}
+
+void drawLine(std::vector<std::uint8_t>& pixels,
+              int width,
+              int height,
+              int x0,
+              int y0,
+              int x1,
+              int y1,
+              std::uint32_t color)
+{
+    int dx = std::abs(x1 - x0);
+    int sx = (x0 < x1) ? 1 : -1;
+    int dy = -std::abs(y1 - y0);
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx + dy;
+
+    while (true)
+    {
+        blendPixel(pixels, width, height, x0, y0, color);
+        if (x0 == x1 && y0 == y1)
+        {
+            break;
+        }
+        const int e2 = 2 * err;
+        if (e2 >= dy)
+        {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx)
+        {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+void drawCircle(std::vector<std::uint8_t>& pixels,
+                int width,
+                int height,
+                int cx,
+                int cy,
+                int radius,
+                std::uint32_t color)
+{
+    if (radius <= 0)
+    {
+        blendPixel(pixels, width, height, cx, cy, color);
+        return;
+    }
+    for (int y = -radius; y <= radius; ++y)
+    {
+        for (int x = -radius; x <= radius; ++x)
+        {
+            if (x * x + y * y <= radius * radius)
+            {
+                blendPixel(pixels, width, height, cx + x, cy + y, color);
+            }
+        }
+    }
+}
+
+bool worldToScreen(const glm::mat4& view,
+                   const glm::mat4& proj,
+                   int width,
+                   int height,
+                   const QVector3D& world,
+                   int& outX,
+                   int& outY)
+{
+    const glm::vec4 clip = proj * view * glm::vec4(world.x(), world.y(), world.z(), 1.0f);
+    if (std::fabs(clip.w) <= 1e-6f || clip.w <= 0.0f)
+    {
+        return false;
+    }
+    const float ndcX = clip.x / clip.w;
+    const float ndcY = clip.y / clip.w;
+    const float ndcZ = clip.z / clip.w;
+    if (ndcX < -1.2f || ndcX > 1.2f || ndcY < -1.2f || ndcY > 1.2f || ndcZ < -0.2f || ndcZ > 1.2f)
+    {
+        return false;
+    }
+
+    const float sx = (ndcX * 0.5f + 0.5f) * static_cast<float>(width);
+    const float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * static_cast<float>(height);
+    outX = static_cast<int>(std::round(sx));
+    outY = static_cast<int>(std::round(sy));
+    return true;
+}
+
+std::array<bool, 4> decodeMovePattern(QString move)
+{
+    move = move.toUpper();
+    return std::array<bool, 4>{
+        move.contains(QStringLiteral("W")),
+        move.contains(QStringLiteral("A")),
+        move.contains(QStringLiteral("S")),
+        move.contains(QStringLiteral("D"))
+    };
+}
+
 void reconfigurePhysicsBodyForMode(Model& model, motive::IPhysicsWorld& physicsWorld)
 {
     if (!couplingRequiresPhysics(model))
@@ -223,6 +397,18 @@ ViewportHostWidget::ViewportLayout normalizedViewportLayout(const ViewportHostWi
         normalized.cameraIds.removeLast();
     }
     return normalized;
+}
+
+bool hasFreeCameraConfig(const QList<ViewportHostWidget::CameraConfig>& configs)
+{
+    for (const auto& config : configs)
+    {
+        if (config.type == ViewportHostWidget::CameraConfig::Type::Free || !config.isFollowCamera())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString cameraModeToString(CameraMode mode)
@@ -340,7 +526,6 @@ void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
 {
     qDebug() << "[ViewportHost] loadSceneFromItems count=" << items.size();
     m_sceneController->loadSceneFromItems(items);
-    ensureFollowCamerasForAllSceneItems();
     notifySceneChanged();
 }
 
@@ -390,14 +575,7 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     }
 
     const glm::vec2 rot = camera->getEulerRotation();
-    glm::vec3 front;
-    front.x = std::cos(rot.y) * std::sin(rot.x);
-    front.y = std::sin(rot.y);
-    front.z = -std::cos(rot.y) * std::cos(rot.x);
-    if (glm::length(front) > 1e-6f)
-    {
-        front = glm::normalize(front);
-    }
+    const glm::vec3 front = camera->getForwardVector();
 
     debug.insert(QStringLiteral("ok"), true);
     debug.insert(QStringLiteral("cameraId"), QString::fromStdString(camera->getCameraId()));
@@ -601,6 +779,372 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
         }
     }
     return debug;
+}
+
+QJsonObject ViewportHostWidget::motionDebugSampleToJson(const MotionDebugSample& sample) const
+{
+    return QJsonObject{
+        {QStringLiteral("frame"), static_cast<qint64>(sample.frame)},
+        {QStringLiteral("elapsedSeconds"), sample.elapsedSeconds},
+        {QStringLiteral("deltaSeconds"), sample.deltaSeconds},
+        {QStringLiteral("cameraId"), sample.cameraId},
+        {QStringLiteral("cameraName"), sample.cameraName},
+        {QStringLiteral("cameraMode"), sample.cameraMode},
+        {QStringLiteral("targetSceneIndex"), sample.targetSceneIndex},
+        {QStringLiteral("cameraPos"), QJsonArray{sample.cameraPos.x(), sample.cameraPos.y(), sample.cameraPos.z()}},
+        {QStringLiteral("targetPos"), QJsonArray{sample.targetPos.x(), sample.targetPos.y(), sample.targetPos.z()}},
+        {QStringLiteral("targetPosRaw"), QJsonArray{sample.targetPosRaw.x(), sample.targetPosRaw.y(), sample.targetPosRaw.z()}},
+        {QStringLiteral("targetPosMotion"), QJsonArray{sample.targetPosMotion.x(), sample.targetPosMotion.y(), sample.targetPosMotion.z()}},
+        {QStringLiteral("targetVelocity"), QJsonArray{sample.targetVelocity.x(), sample.targetVelocity.y(), sample.targetVelocity.z()}},
+        {QStringLiteral("distanceToTarget"), sample.distanceToTarget},
+        {QStringLiteral("frontDotToTarget"), sample.frontDotToTarget},
+        {QStringLiteral("followDistance"), sample.followDistance},
+        {QStringLiteral("followSmoothSpeed"), sample.followSmoothSpeed},
+        {QStringLiteral("targetJitterMagnitude"), sample.targetJitterMagnitude},
+        {QStringLiteral("cameraStepMagnitude"), sample.cameraStepMagnitude},
+        {QStringLiteral("distanceDelta"), sample.distanceDelta},
+        {QStringLiteral("distanceDeltaFlipCount"), sample.distanceDeltaFlipCount},
+        {QStringLiteral("oscillationSuspected"), sample.oscillationSuspected},
+        {QStringLiteral("warnings"), sample.warnings}
+    };
+}
+
+QJsonObject ViewportHostWidget::motionDebugFrameJson() const
+{
+    std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+    if (m_motionDebugHistory.empty())
+    {
+        return QJsonObject{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("no motion samples captured")}
+        };
+    }
+
+    QJsonObject payload = motionDebugSampleToJson(m_motionDebugHistory.back());
+    payload.insert(QStringLiteral("ok"), true);
+    payload.insert(QStringLiteral("historySize"), static_cast<int>(m_motionDebugHistory.size()));
+    return payload;
+}
+
+QJsonArray ViewportHostWidget::motionDebugHistoryJson(int maxFrames, int sceneIndex) const
+{
+    const int clampedMaxFrames = std::clamp(maxFrames, 1, kMotionDebugHistoryCapacity);
+    QJsonArray history;
+
+    std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+    int emitted = 0;
+    for (auto it = m_motionDebugHistory.rbegin();
+         it != m_motionDebugHistory.rend() && emitted < clampedMaxFrames;
+         ++it)
+    {
+        if (sceneIndex >= 0 && it->targetSceneIndex != sceneIndex)
+        {
+            continue;
+        }
+        history.prepend(motionDebugSampleToJson(*it));
+        ++emitted;
+    }
+    return history;
+}
+
+QJsonObject ViewportHostWidget::motionDebugSummaryJson() const
+{
+    std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+    QJsonObject summary;
+    summary.insert(QStringLiteral("ok"), true);
+    summary.insert(QStringLiteral("historySize"), static_cast<int>(m_motionDebugHistory.size()));
+    if (m_motionDebugHistory.empty())
+    {
+        summary.insert(QStringLiteral("sampleCount"), 0);
+        summary.insert(QStringLiteral("oscillationDetected"), false);
+        return summary;
+    }
+
+    const int sampleCount = std::min<int>(kMotionDebugSummaryWindow, static_cast<int>(m_motionDebugHistory.size()));
+    float maxJitter = 0.0f;
+    float maxCameraStep = 0.0f;
+    float meanJitter = 0.0f;
+    int oscillationFrames = 0;
+    int warningsCount = 0;
+    for (int i = static_cast<int>(m_motionDebugHistory.size()) - sampleCount;
+         i < static_cast<int>(m_motionDebugHistory.size());
+         ++i)
+    {
+        const MotionDebugSample& sample = m_motionDebugHistory[static_cast<size_t>(i)];
+        maxJitter = std::max(maxJitter, sample.targetJitterMagnitude);
+        maxCameraStep = std::max(maxCameraStep, sample.cameraStepMagnitude);
+        meanJitter += sample.targetJitterMagnitude;
+        if (sample.oscillationSuspected)
+        {
+            ++oscillationFrames;
+        }
+        warningsCount += sample.warnings.size();
+    }
+
+    meanJitter /= static_cast<float>(std::max(1, sampleCount));
+    summary.insert(QStringLiteral("sampleCount"), sampleCount);
+    summary.insert(QStringLiteral("windowFrames"), kMotionDebugSummaryWindow);
+    summary.insert(QStringLiteral("maxTargetJitter"), maxJitter);
+    summary.insert(QStringLiteral("meanTargetJitter"), meanJitter);
+    summary.insert(QStringLiteral("maxCameraStep"), maxCameraStep);
+    summary.insert(QStringLiteral("oscillationFrames"), oscillationFrames);
+    summary.insert(QStringLiteral("oscillationDetected"), oscillationFrames > 0);
+    summary.insert(QStringLiteral("warningsObserved"), warningsCount);
+    return summary;
+}
+
+void ViewportHostWidget::resetMotionDebug()
+{
+    std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+    m_motionDebugHistory.clear();
+    m_motionDebugFrameCounter = 0;
+    m_motionDebugElapsedSeconds = 0.0;
+    m_motionDebugHasLast = false;
+    m_motionDebugLastCameraPos = QVector3D(0.0f, 0.0f, 0.0f);
+    m_motionDebugLastDistance = 0.0f;
+    m_motionDebugLastDistanceDelta = 0.0f;
+    m_motionDebugDistanceFlipCount = 0;
+}
+
+void ViewportHostWidget::captureMotionDebugFrame(float dt)
+{
+    std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+    MotionDebugSample sample;
+    sample.deltaSeconds = dt;
+    sample.elapsedSeconds = m_motionDebugElapsedSeconds;
+    sample.frame = ++m_motionDebugFrameCounter;
+    m_motionDebugElapsedSeconds += static_cast<double>(std::max(dt, 0.0f));
+
+    const QJsonObject tracking = cameraTrackingDebugJson();
+    sample.cameraId = tracking.value(QStringLiteral("cameraId")).toString();
+    sample.cameraName = tracking.value(QStringLiteral("cameraName")).toString();
+    sample.cameraMode = tracking.value(QStringLiteral("cameraMode")).toString();
+    sample.targetSceneIndex = tracking.value(QStringLiteral("targetSceneIndex")).toInt(-1);
+    sample.cameraPos = vector3FromJson(tracking.value(QStringLiteral("cameraPos")));
+    sample.targetPos = vector3FromJson(tracking.value(QStringLiteral("targetPos")));
+    sample.targetPosRaw = vector3FromJson(tracking.value(QStringLiteral("targetPosRaw")));
+    sample.targetPosMotion = vector3FromJson(tracking.value(QStringLiteral("targetPosMotion")));
+    sample.targetVelocity = vector3FromJson(tracking.value(QStringLiteral("targetVelocity")));
+    sample.distanceToTarget = static_cast<float>(tracking.value(QStringLiteral("distanceToTarget")).toDouble(0.0));
+    sample.frontDotToTarget = static_cast<float>(tracking.value(QStringLiteral("frontDotToTarget")).toDouble(0.0));
+    sample.warnings = tracking.value(QStringLiteral("warnings")).toArray();
+
+    if (m_runtime && m_runtime->display())
+    {
+        if (Camera* activeCamera = m_runtime->display()->getActiveCamera())
+        {
+            if (activeCamera->isFollowModeEnabled())
+            {
+                const FollowSettings& settings = activeCamera->getFollowSettings();
+                sample.followDistance = settings.distance;
+                sample.followSmoothSpeed = settings.smoothSpeed;
+            }
+        }
+    }
+
+    const QVector3D jitterVec = sample.targetPos - sample.targetPosRaw;
+    sample.targetJitterMagnitude = jitterVec.length();
+    if (m_motionDebugHasLast)
+    {
+        sample.cameraStepMagnitude = (sample.cameraPos - m_motionDebugLastCameraPos).length();
+        sample.distanceDelta = sample.distanceToTarget - m_motionDebugLastDistance;
+        const bool significantCurrent = std::fabs(sample.distanceDelta) > 1e-4f;
+        const bool significantLast = std::fabs(m_motionDebugLastDistanceDelta) > 1e-4f;
+        const bool signFlip = significantCurrent &&
+                              significantLast &&
+                              ((sample.distanceDelta > 0.0f && m_motionDebugLastDistanceDelta < 0.0f) ||
+                               (sample.distanceDelta < 0.0f && m_motionDebugLastDistanceDelta > 0.0f));
+        if (signFlip)
+        {
+            m_motionDebugDistanceFlipCount = std::min(m_motionDebugDistanceFlipCount + 1, 1000);
+        }
+        else
+        {
+            m_motionDebugDistanceFlipCount = std::max(0, m_motionDebugDistanceFlipCount - 1);
+        }
+    }
+    sample.distanceDeltaFlipCount = m_motionDebugDistanceFlipCount;
+    sample.oscillationSuspected = sample.distanceDeltaFlipCount >= 4;
+
+    // This metric represents tracker lag (raw vs damped center), not floating-point
+    // noise. Use a practical world-space threshold to avoid warning spam.
+    const float adaptiveJitterEpsilon = std::max(
+        0.30f,
+        std::max(0.12f, sample.followDistance * 0.02f));
+    if (sample.targetJitterMagnitude > adaptiveJitterEpsilon)
+    {
+        appendWarningUnique(sample.warnings, QStringLiteral("TARGET_JITTER_ABOVE_EPSILON"));
+    }
+    if (sample.oscillationSuspected)
+    {
+        appendWarningUnique(sample.warnings, QStringLiteral("DISTANCE_OSCILLATION_SUSPECTED"));
+    }
+
+    m_motionDebugHasLast = true;
+    m_motionDebugLastCameraPos = sample.cameraPos;
+    m_motionDebugLastDistance = sample.distanceToTarget;
+    m_motionDebugLastDistanceDelta = sample.distanceDelta;
+
+    m_motionDebugHistory.push_back(std::move(sample));
+    while (static_cast<int>(m_motionDebugHistory.size()) > kMotionDebugHistoryCapacity)
+    {
+        m_motionDebugHistory.pop_front();
+    }
+}
+
+void ViewportHostWidget::updateMotionDebugOverlay()
+{
+    if (!m_runtime || !m_runtime->display())
+    {
+        return;
+    }
+
+    Display* display = m_runtime->display();
+    if (!m_motionDebugOverlayOptions.enabled)
+    {
+        display->clearCustomOverlayBitmap();
+        return;
+    }
+
+    const int overlayWidth = std::max(1, m_renderSurface ? m_renderSurface->width() : width());
+    const int overlayHeight = std::max(1, m_renderSurface ? m_renderSurface->height() : height());
+
+    MotionDebugSample sample;
+    std::vector<MotionDebugSample> trailSamples;
+    {
+        std::lock_guard<std::mutex> lock(m_motionDebugMutex);
+        if (m_motionDebugHistory.empty())
+        {
+            display->clearCustomOverlayBitmap();
+            return;
+        }
+        sample = m_motionDebugHistory.back();
+        const int desiredTrailFrames = std::clamp(m_motionDebugOverlayOptions.trailFrames, 2, 240);
+        trailSamples.reserve(static_cast<size_t>(desiredTrailFrames));
+        for (auto it = m_motionDebugHistory.rbegin();
+             it != m_motionDebugHistory.rend() &&
+             static_cast<int>(trailSamples.size()) < desiredTrailFrames;
+             ++it)
+        {
+            if (it->targetSceneIndex != sample.targetSceneIndex)
+            {
+                continue;
+            }
+            trailSamples.push_back(*it);
+        }
+        std::reverse(trailSamples.begin(), trailSamples.end());
+    }
+
+    Camera* activeCamera = display->getActiveCamera();
+    if (!activeCamera)
+    {
+        display->clearCustomOverlayBitmap();
+        return;
+    }
+
+    glyph::OverlayBitmap bitmap;
+    bitmap.width = static_cast<uint32_t>(overlayWidth);
+    bitmap.height = static_cast<uint32_t>(overlayHeight);
+    bitmap.offsetX = 0;
+    bitmap.offsetY = 0;
+    bitmap.pixels.assign(static_cast<size_t>(overlayWidth) * static_cast<size_t>(overlayHeight) * 4u, 0u);
+
+    const glm::mat4 view = activeCamera->getViewMatrix();
+    const glm::mat4 proj = activeCamera->getProjectionMatrix();
+
+    int targetX = 0, targetY = 0;
+    const bool haveTarget = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPos, targetX, targetY);
+    const int screenCenterX = overlayWidth / 2;
+    const int screenCenterY = overlayHeight / 2;
+
+    if (m_motionDebugOverlayOptions.showCameraToTargetLine && haveTarget)
+    {
+        // In camera view-space, the eye is screen center; drawing from projected
+        // camera world position is undefined.
+        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, targetX, targetY, 0xAA00CCFFu);
+        drawCircle(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, 3, 0xCC00CCFFu);
+    }
+
+    if (!trailSamples.empty() && (m_motionDebugOverlayOptions.showMotionTrail || m_motionDebugOverlayOptions.showRawTrail))
+    {
+        auto drawTrail = [&](bool rawSpace, std::uint32_t baseColor)
+        {
+            int prevX = 0;
+            int prevY = 0;
+            bool havePrev = false;
+            const int count = static_cast<int>(trailSamples.size());
+            for (int i = 0; i < count; ++i)
+            {
+                const MotionDebugSample& frame = trailSamples[static_cast<size_t>(i)];
+                const QVector3D worldPos = rawSpace ? frame.targetPosRaw : frame.targetPosMotion;
+                int px = 0;
+                int py = 0;
+                if (!worldToScreen(view, proj, overlayWidth, overlayHeight, worldPos, px, py))
+                {
+                    havePrev = false;
+                    continue;
+                }
+
+                const float t = count > 1 ? static_cast<float>(i) / static_cast<float>(count - 1) : 1.0f;
+                const std::uint8_t alpha = static_cast<std::uint8_t>(std::clamp(32.0f + t * 223.0f, 32.0f, 255.0f));
+                const std::uint32_t color = (baseColor & 0x00FFFFFFu) | (static_cast<std::uint32_t>(alpha) << 24);
+                drawCircle(bitmap.pixels, overlayWidth, overlayHeight, px, py, 1, color);
+                if (havePrev)
+                {
+                    drawLine(bitmap.pixels, overlayWidth, overlayHeight, prevX, prevY, px, py, color);
+                }
+                prevX = px;
+                prevY = py;
+                havePrev = true;
+            }
+        };
+
+        if (m_motionDebugOverlayOptions.showMotionTrail)
+        {
+            drawTrail(false, 0x00A5FFFFu);
+        }
+        if (m_motionDebugOverlayOptions.showRawTrail)
+        {
+            drawTrail(true, 0x00FF66FFu);
+        }
+    }
+
+    if (m_motionDebugOverlayOptions.showTargetMarkers && haveTarget)
+    {
+        int rawX = 0, rawY = 0, motionX = 0, motionY = 0;
+        const bool haveRaw = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosRaw, rawX, rawY);
+        const bool haveMotion = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosMotion, motionX, motionY);
+        drawCircle(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, 4, 0xFF20D0FFu);
+        if (haveRaw)
+        {
+            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, rawX, rawY, 3, 0xFF00FF00u);
+        }
+        if (haveMotion)
+        {
+            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, motionX, motionY, 3, 0xFF00A5FFu);
+        }
+    }
+
+    if (m_motionDebugOverlayOptions.showVelocityVector)
+    {
+        const QVector3D velocityEnd = sample.targetPos +
+            (sample.targetVelocity * m_motionDebugOverlayOptions.velocityScale);
+        int velEndX = 0, velEndY = 0;
+        if (haveTarget &&
+            worldToScreen(view, proj, overlayWidth, overlayHeight, velocityEnd, velEndX, velEndY))
+        {
+            drawLine(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, velEndX, velEndY, 0xFF40FFFFu);
+            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, velEndX, velEndY, 2, 0xFF40FFFFu);
+        }
+    }
+
+    if (m_motionDebugOverlayOptions.showScreenCenterCrosshair)
+    {
+        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX - 8, screenCenterY, screenCenterX + 8, screenCenterY, 0xCCFFFFFFu);
+        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY - 8, screenCenterX, screenCenterY + 8, 0xCCFFFFFFu);
+    }
+
+    display->setCustomOverlayBitmap(bitmap, true);
 }
 
 QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const
@@ -835,6 +1379,41 @@ ViewportHostWidget::PerformanceMetrics ViewportHostWidget::performanceMetrics() 
     return metrics;
 }
 
+QJsonObject ViewportHostWidget::motionDebugOverlayOptionsJson() const
+{
+    const MotionDebugOverlayOptions options = m_motionDebugOverlayOptions;
+    return QJsonObject{
+        {QStringLiteral("enabled"), options.enabled},
+        {QStringLiteral("showTargetMarkers"), options.showTargetMarkers},
+        {QStringLiteral("showVelocityVector"), options.showVelocityVector},
+        {QStringLiteral("showCameraToTargetLine"), options.showCameraToTargetLine},
+        {QStringLiteral("showScreenCenterCrosshair"), options.showScreenCenterCrosshair},
+        {QStringLiteral("showMotionTrail"), options.showMotionTrail},
+        {QStringLiteral("showRawTrail"), options.showRawTrail},
+        {QStringLiteral("trailFrames"), options.trailFrames},
+        {QStringLiteral("velocityScale"), options.velocityScale}
+    };
+}
+
+void ViewportHostWidget::setMotionDebugOverlayOptions(const MotionDebugOverlayOptions& options)
+{
+    m_motionDebugOverlayOptions.enabled = options.enabled;
+    m_motionDebugOverlayOptions.showTargetMarkers = options.showTargetMarkers;
+    m_motionDebugOverlayOptions.showVelocityVector = options.showVelocityVector;
+    m_motionDebugOverlayOptions.showCameraToTargetLine = options.showCameraToTargetLine;
+    m_motionDebugOverlayOptions.showScreenCenterCrosshair = options.showScreenCenterCrosshair;
+    m_motionDebugOverlayOptions.showMotionTrail = options.showMotionTrail;
+    m_motionDebugOverlayOptions.showRawTrail = options.showRawTrail;
+    m_motionDebugOverlayOptions.trailFrames = std::clamp(options.trailFrames, 2, 240);
+    m_motionDebugOverlayOptions.velocityScale = std::clamp(options.velocityScale, 0.01f, 10.0f);
+
+    if (!m_runtime || !m_runtime->display() || m_motionDebugOverlayOptions.enabled)
+    {
+        return;
+    }
+    m_runtime->display()->clearCustomOverlayBitmap();
+}
+
 void ViewportHostWidget::enableCharacterControl(int sceneIndex, bool enabled)
 {
     setCharacterControlState(sceneIndex, enabled, true);
@@ -1034,6 +1613,66 @@ bool ViewportHostWidget::injectCharacterInput(int sceneIndex,
     return true;
 }
 
+bool ViewportHostWidget::playCharacterInputPattern(int sceneIndex,
+                                                   const QString& pattern,
+                                                   int stepDurationMs,
+                                                   int steps,
+                                                   bool includeJump)
+{
+    static const QStringList kCirclePattern = {
+        QStringLiteral("W"), QStringLiteral("WD"), QStringLiteral("D"), QStringLiteral("SD"),
+        QStringLiteral("S"), QStringLiteral("SA"), QStringLiteral("A"), QStringLiteral("WA")
+    };
+    static const QStringList kFigure8Pattern = {
+        QStringLiteral("W"), QStringLiteral("WD"), QStringLiteral("D"), QStringLiteral("SD"),
+        QStringLiteral("S"), QStringLiteral("SA"), QStringLiteral("A"), QStringLiteral("WA"),
+        QStringLiteral("W"), QStringLiteral("WA"), QStringLiteral("A"), QStringLiteral("SA"),
+        QStringLiteral("S"), QStringLiteral("SD"), QStringLiteral("D"), QStringLiteral("WD")
+    };
+    static const QStringList kStrafePattern = {
+        QStringLiteral("A"), QStringLiteral("A"), QStringLiteral("D"), QStringLiteral("D")
+    };
+
+    const QString normalizedPattern = pattern.trimmed().toLower();
+    const QStringList* moves = nullptr;
+    if (normalizedPattern == QStringLiteral("circle"))
+    {
+        moves = &kCirclePattern;
+    }
+    else if (normalizedPattern == QStringLiteral("figure8") || normalizedPattern == QStringLiteral("figure_8"))
+    {
+        moves = &kFigure8Pattern;
+    }
+    else if (normalizedPattern == QStringLiteral("strafe"))
+    {
+        moves = &kStrafePattern;
+    }
+    else
+    {
+        return false;
+    }
+
+    const int clampedSteps = std::clamp(steps, 1, 512);
+    const int clampedStepMs = std::clamp(stepDurationMs, 16, 1000);
+    for (int i = 0; i < clampedSteps; ++i)
+    {
+        const QString move = moves->at(i % moves->size());
+        const auto moveFlags = decodeMovePattern(move);
+        const bool jumpNow = includeJump && (i == clampedSteps / 2);
+        QTimer::singleShot(i * clampedStepMs, this, [this, sceneIndex, moveFlags, jumpNow, clampedStepMs]()
+        {
+            injectCharacterInput(sceneIndex,
+                                 moveFlags[0],
+                                 moveFlags[1],
+                                 moveFlags[2],
+                                 moveFlags[3],
+                                 jumpNow,
+                                 clampedStepMs);
+        });
+    }
+    return true;
+}
+
 motive::IPhysicsBody* ViewportHostWidget::getPhysicsBodyForSceneItem(int sceneIndex) const
 {
     if (!m_runtime || !m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
@@ -1158,8 +1797,8 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
             config.position = QVector3D(camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z);
             const glm::vec2 rotation = camera->getEulerRotation();
             config.rotation = QVector3D(
-                glm::degrees(rotation.y),
                 glm::degrees(rotation.x),
+                glm::degrees(rotation.y),
                 0.0f
             );
             
@@ -1169,18 +1808,20 @@ QList<ViewportHostWidget::CameraConfig> ViewportHostWidget::cameraConfigs() cons
             config.followPitch = glm::degrees(fs.relativePitch);
             config.followSmoothSpeed = fs.smoothSpeed;
             config.followTargetOffset = QVector3D(fs.targetOffset.x, fs.targetOffset.y, fs.targetOffset.z);
-            config.freeFly = false;
+            config.freeFly = camera->isFreeFlyCamera();
+            config.invertHorizontalDrag = camera->isHorizontalDragInverted();
         } else {
             config.type = CameraConfig::Type::Free;
             config.position = QVector3D(camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z);
             // Convert camera rotation (radians) to degrees
             const glm::vec2 rotation = camera->getEulerRotation();
             config.rotation = QVector3D(
-                glm::degrees(rotation.y),  // yaw
-                glm::degrees(rotation.x),  // pitch
+                glm::degrees(rotation.x),  // yaw
+                glm::degrees(rotation.y),  // pitch
                 0.0f
             );
             config.freeFly = camera->isFreeFlyCamera();
+            config.invertHorizontalDrag = camera->isHorizontalDragInverted();
         }
         config.nearClip = camera->getPerspectiveNear();
         config.farClip = camera->getPerspectiveFar();
@@ -1410,7 +2051,24 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
 
 void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
 {
-    m_pendingCameraConfigs = configs;
+    QList<CameraConfig> effectiveConfigs = configs;
+    if (!hasFreeCameraConfig(effectiveConfigs))
+    {
+        CameraConfig freeConfig;
+        freeConfig.id = makeCameraId();
+        freeConfig.name = QStringLiteral("Main Fly Camera");
+        freeConfig.type = CameraConfig::Type::Free;
+        freeConfig.mode = QStringLiteral("FreeFly");
+        freeConfig.freeFly = true;
+        freeConfig.invertHorizontalDrag = true;
+        freeConfig.position = QVector3D(0.0f, 0.0f, 3.0f);
+        freeConfig.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+        freeConfig.nearClip = 0.1f;
+        freeConfig.farClip = 100.0f;
+        effectiveConfigs.push_front(freeConfig);
+    }
+
+    m_pendingCameraConfigs = effectiveConfigs;
 
     if (!m_runtime->display() || !m_runtime->engine()) {
         return;
@@ -1423,7 +2081,7 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
     }
     
     // Recreate cameras from configs
-    for (const auto& config : configs) {
+    for (const auto& config : effectiveConfigs) {
         if (config.type == CameraConfig::Type::Follow && config.followTargetIndex >= 0) {
             // Create follow camera with full settings
             Camera* followCam = createFollowCameraInternal(
@@ -1438,16 +2096,22 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
             );
             if (followCam) {
                 followCam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
-                followCam->setCameraName(config.name.toStdString());
-                const CameraMode requestedMode = cameraModeFromString(config.mode, CameraMode::CharacterFollow);
-                followCam->setMode(isFollowMode(requestedMode) ? requestedMode : CameraMode::CharacterFollow);
+                if (!config.name.isEmpty())
+                {
+                    followCam->setCameraName(config.name.toStdString());
+                }
+                const CameraMode requestedMode = cameraModeFromString(
+                    config.mode,
+                    config.freeFly ? CameraMode::FreeFly : CameraMode::OrbitFollow);
+                followCam->setMode(requestedMode);
+                followCam->setInvertHorizontalDrag(config.invertHorizontalDrag);
                 // Follow target is already set via createFollowCameraInternal
                 followCam->setPerspectiveNearFar(config.nearClip, config.farClip);
             }
         } else {
             // Create free camera
             glm::vec3 pos(config.position.x(), config.position.y(), config.position.z());
-            glm::vec2 rot(glm::radians(config.rotation.y()), glm::radians(config.rotation.x()));
+            glm::vec2 rot(glm::radians(config.rotation.x()), glm::radians(config.rotation.y()));
             Camera* cam = m_runtime->display()->createCamera(config.name.toStdString(), pos, rot);
             if (cam) {
                 cam->setCameraId((config.id.isEmpty() ? makeCameraId() : config.id).toStdString());
@@ -1455,6 +2119,7 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
                     config.mode,
                     config.freeFly ? CameraMode::FreeFly : CameraMode::Fixed);
                 cam->setMode(requestedMode);
+                cam->setInvertHorizontalDrag(config.invertHorizontalDrag);
                 cam->setPerspectiveNearFar(config.nearClip, config.farClip);
             }
         }
@@ -1462,9 +2127,11 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
     
     // Ensure we have at least one camera
     if (m_runtime->display()->cameras.empty()) {
-        Camera* camera = m_runtime->display()->createCamera("Main Camera");
+        Camera* camera = m_runtime->display()->createCamera("Main Fly Camera");
         if (camera) {
             camera->setCameraId(makeCameraId().toStdString());
+            camera->setMode(CameraMode::FreeFly);
+            camera->setInvertHorizontalDrag(true);
         }
     }
 
@@ -1507,22 +2174,6 @@ int ViewportHostWidget::ensureFollowCamera(int sceneIndex, float distance, float
     QString cameraName = QStringLiteral("Follow Cam (Scene %1)").arg(sceneIndex);
     std::string cameraNameStd = cameraName.toStdString();
 
-    // Backward-compat fallback: if an older named camera exists, reuse it.
-    Camera* existingCamera = m_runtime->display()->findCameraByName(cameraNameStd);
-    if (existingCamera) {
-        auto& cameras = m_runtime->display()->cameras;
-        auto it = std::find(cameras.begin(), cameras.end(), existingCamera);
-        if (it != cameras.end()) {
-            const int existingIndex = static_cast<int>(std::distance(cameras.begin(), it));
-            if (existingCamera->getFollowSceneIndex() != sceneIndex || !existingCamera->isFollowModeEnabled())
-            {
-                existingCamera->setFollowTarget(sceneIndex, followSettings);
-            }
-            qDebug() << "[ViewportHost] Reusing named follow camera for scene" << sceneIndex;
-            return existingIndex;
-        }
-    }
-    
     // Get target model
     Model* targetModel = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)].get();
     if (!targetModel) {
@@ -1601,9 +2252,11 @@ void ViewportHostWidget::deleteCamera(int cameraIndex)
     
     // Ensure we have at least one camera
     if (cameras.empty() && m_runtime->engine()) {
-        Camera* newCamera = m_runtime->display()->createCamera("Main Camera");
+        Camera* newCamera = m_runtime->display()->createCamera("Main Fly Camera");
         if (newCamera) {
             newCamera->setCameraId(makeCameraId().toStdString());
+            newCamera->setMode(CameraMode::FreeFly);
+            newCamera->setInvertHorizontalDrag(true);
         }
     }
 
@@ -1764,14 +2417,16 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
         
         // Update follow target and settings
         camera->setFollowTarget(config.followTargetIndex, fs);
-        const CameraMode requestedMode = cameraModeFromString(config.mode, CameraMode::CharacterFollow);
-        camera->setMode(isFollowMode(requestedMode) ? requestedMode : CameraMode::CharacterFollow);
+        const CameraMode requestedMode = cameraModeFromString(
+            config.mode,
+            config.freeFly ? CameraMode::FreeFly : CameraMode::OrbitFollow);
+        camera->setMode(requestedMode);
         
         // Follow target is already set via setFollowTarget above
     } else if (config.type == CameraConfig::Type::Free) {
         // Update position for free camera
         camera->cameraPos = glm::vec3(config.position.x(), config.position.y(), config.position.z());
-        camera->setEulerRotation(glm::vec2(glm::radians(config.rotation.y()), glm::radians(config.rotation.x())));
+        camera->setEulerRotation(glm::vec2(glm::radians(config.rotation.x()), glm::radians(config.rotation.y())));
         
         // Disable follow mode if previously a follow camera
         if (camera->isFollowModeEnabled()) {
@@ -1782,6 +2437,7 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
             config.freeFly ? CameraMode::FreeFly : CameraMode::Fixed);
         camera->setMode(requestedMode);
     }
+    camera->setInvertHorizontalDrag(config.invertHorizontalDrag);
     
     // Apply clipping planes
     camera->setPerspectiveNearFar(config.nearClip, config.farClip);
@@ -2330,6 +2986,66 @@ void ViewportHostWidget::updateSceneItemCharacterTurnResponsiveness(int index, f
     notifySceneChanged();
 }
 
+void ViewportHostWidget::updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance)
+{
+    m_sceneController->updateSceneItemFocusSettings(index, focusPointOffset, focusDistance);
+    m_sceneController->updateSceneItemFocusCameraOffset(index, QVector3D(0.0f, 0.0f, 0.0f), false);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::captureSceneItemFocusFromCurrentCamera(int index)
+{
+    if (index < 0 || !m_runtime || !m_runtime->engine())
+    {
+        return;
+    }
+
+    Camera* camera = focusedViewportCamera();
+    if (!camera)
+    {
+        camera = m_runtime->camera();
+    }
+    Model* model = modelForSceneIndex(m_runtime->engine(), index);
+    if (!camera || !model)
+    {
+        return;
+    }
+
+    const glm::vec3 anchor = model->getFollowAnchorPosition();
+    const glm::vec3 cameraPos = camera->cameraPos;
+    glm::vec3 forward = camera->getForwardVector();
+    if (glm::dot(forward, forward) <= 1e-8f)
+    {
+        const glm::vec3 towardAnchor = anchor - cameraPos;
+        forward = glm::dot(towardAnchor, towardAnchor) > 1e-8f ? glm::normalize(towardAnchor) : glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    float projectionDistance = glm::dot(anchor - cameraPos, forward);
+    if (!std::isfinite(projectionDistance) || projectionDistance < 0.05f)
+    {
+        projectionDistance = glm::length(anchor - cameraPos);
+    }
+    if (!std::isfinite(projectionDistance) || projectionDistance < 0.05f)
+    {
+        projectionDistance = 1.0f;
+    }
+
+    const glm::vec3 focusTarget = cameraPos + forward * projectionDistance;
+    const glm::vec3 focusPointOffset = focusTarget - anchor;
+    const glm::vec3 focusCameraOffset = cameraPos - focusTarget;
+    const float focusDistance = glm::length(focusCameraOffset);
+
+    m_sceneController->updateSceneItemFocusSettings(
+        index,
+        QVector3D(focusPointOffset.x, focusPointOffset.y, focusPointOffset.z),
+        focusDistance);
+    m_sceneController->updateSceneItemFocusCameraOffset(
+        index,
+        QVector3D(focusCameraOffset.x, focusCameraOffset.y, focusCameraOffset.z),
+        true);
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::renameSceneItem(int index, const QString& name)
 {
     m_sceneController->renameSceneItem(index, name);
@@ -2542,6 +3258,7 @@ void ViewportHostWidget::mousePressEvent(QMouseEvent* event)
         Camera* targetCamera = focusedViewportCamera();
         if (targetCamera)
         {
+            targetCamera->setExternalMouseInput(true);
             const QPoint renderPos = m_renderSurface ? m_renderSurface->mapFrom(this, event->pos()) : event->pos();
             targetCamera->handleMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
             targetCamera->handleCursorPos(static_cast<double>(renderPos.x()), static_cast<double>(renderPos.y()));
@@ -2556,6 +3273,7 @@ void ViewportHostWidget::mouseMoveEvent(QMouseEvent* event)
     Camera* targetCamera = focusedViewportCamera();
     if (targetCamera)
     {
+        targetCamera->setExternalMouseInput(true);
         const QPoint renderPos = m_renderSurface ? m_renderSurface->mapFrom(this, event->pos()) : event->pos();
         targetCamera->handleCursorPos(static_cast<double>(renderPos.x()), static_cast<double>(renderPos.y()));
     }
@@ -2575,6 +3293,7 @@ void ViewportHostWidget::mouseReleaseEvent(QMouseEvent* event)
         Camera* targetCamera = focusedViewportCamera();
         if (targetCamera)
         {
+            targetCamera->setExternalMouseInput(true);
             targetCamera->handleMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE, 0);
         }
     }
@@ -2787,7 +3506,6 @@ void ViewportHostWidget::ensureViewportInitialized()
             {
                 setCameraConfigs(m_pendingCameraConfigs);
             }
-            ensureFollowCamerasForAllSceneItems();
             notifySceneChanged();
         }
         else
@@ -2839,7 +3557,6 @@ void ViewportHostWidget::ensureViewportInitialized()
 void ViewportHostWidget::addAssetToScene(const QString& path)
 {
     m_sceneController->addAssetToScene(path);
-    ensureFollowCamerasForAllSceneItems();
     notifySceneChanged();
 }
 
@@ -2921,6 +3638,8 @@ void ViewportHostWidget::renderFrame()
         }
     }
 
+    captureMotionDebugFrame(dt);
+    updateMotionDebugOverlay();
     m_runtime->render();
     notifyCameraChangedIfNeeded();
 }

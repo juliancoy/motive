@@ -1,14 +1,16 @@
-# Motive Architecture (Simplified)
+# Motive Architecture (Current Implementation)
+
+This document describes what the repository currently implements.
 
 ## 1. Build Graph
 
-Runtime code is split by ownership:
+Runtime code is split into static libraries with explicit ownership:
 
-- `motive_vendor_ufbx`: third-party FBX parser only.
-- `motive_runtime_camera`: camera modes, follow rig, input router.
-- `motive_runtime_scene`: model/mesh/primitive/texture/animation/import.
-- `engine`: Vulkan/device/display/editor integration, physics/video orchestration.
-- apps: `motive3d`, `motive3d_runtime`, `motive2d`, `encode`, `motive_editor`, `asset_load_profile`.
+- `motive_vendor_ufbx`: third-party FBX parser (`ufbx.c`).
+- `motive_runtime_camera`: camera/follow/input runtime (`camera`, `orbit_follow_rig`, `follow_target_tracker`, `input_router`).
+- `motive_runtime_scene`: animation/import/model/primitive/texture runtime.
+- `engine`: Vulkan/device/display/editor integration plus orchestration.
+- App executables: `motive3d`, `motive3d_runtime`, `motive2d`, `encode`, `motive_editor`, `asset_load_profile`.
 
 Dependency direction:
 
@@ -16,79 +18,69 @@ Dependency direction:
 - `engine -> motive_runtime_camera + motive_runtime_scene + motive_vendor_ufbx`
 - `apps -> engine`
 
-No app target should directly own scene/camera runtime internals.
+All app executables are linked through `engine` in `CMakeLists.txt`.
 
 ## 2. Runtime Ownership
 
-- `Engine` owns: device/context, global GPU resources, model list, display instances, physics backend.
-- `Display` owns: render loop plumbing, camera runtime controller updates, swapchain/window lifecycle.
-- `ViewportHostWidget` owns: editor UI intent and scene-edit operations, not per-frame camera motion logic.
+- `Engine` owns global runtime systems (device/context, resource managers, models, physics world/backend selection).
+- `Display` owns rendering lifecycle and per-frame runtime controller updates (`Display::updateRuntimeControllers`).
+- `ViewportHostWidget` owns editor intent/state mutation and bridges UI/REST commands into runtime config.
+- `EngineUiControlServer` owns REST transport; business logic is delegated back through command/profile callbacks.
 
-## 3. Non-Negotiable Invariants
+## 3. Camera/Follow Ownership and Invariants
 
-### Camera/Follow
+- Camera mode source of truth is `Camera::mode` and is changed via `setMode`.
+- Follow target source of truth is camera follow state (`setFollowTarget`, `getFollowSceneIndex`, `isFollowModeEnabled`).
+- `setFollowTarget(sceneIndex, ...)` does not auto-switch mode for either assignment or clear.
+- Follow-camera lookup is explicit and state-only (`findFollowCameraIndexForScene`).
 
-- Camera mode source of truth: `Camera::mode` (`setMode` only).
-- Follow target source of truth: camera follow state (`setFollowTarget`, `getFollowSceneIndex`).
-- `setFollowTarget` does not implicitly switch mode.
-- Follow-camera identity is target-state based, not name based.
+## 4. Character Control Ownership
 
-### Character Control
+- Single-owner policy is enforced: enabling control for one scene item disables others.
+- Input/key state for non-owner characters is cleared when ownership changes.
+- Current UI behavior: selecting a scene item in hierarchy does not change character ownership; it may reframe only when focused viewport camera is in `FreeFly`.
+- Camera node selection updates active camera context but does not directly set character ownership.
 
-- Single-owner policy: at most one scene model is controllable at a time.
-- Enabling controllable on one model clears controllable/input state on all others.
-- Camera selection/activation must not implicitly toggle character controllability.
+## 5. Update Flow (Follow + Motion)
 
-### Update Order
+1. UI/REST sets desired state (camera mode, follow target/settings, controllable owner, animation/physics coupling).
+2. Runtime frame tick (`Display::updateRuntimeControllers`) applies input, character motion, and camera follow/orbit updates.
+3. Follow target tracking uses `follow_target_tracker` split outputs:
+   - `rawCenter` for framing/look-at lock.
+   - `motionCenter` for damped orbit/follow position integration.
+4. Viewport/editor layer samples runtime telemetry (`sceneProfileJson`, motion debug frame/summary/history) for UI + REST.
 
-- Follow transform application happens in the runtime tick owner (`Display::updateRuntimeControllers` path).
-- UI/REST handlers may change configuration/state, but should not force per-frame follow transform updates.
+## 6. UI/REST Surfaces
 
-## 4. Follow-Cam Flow
+- Explicit profile endpoints:
+  - `GET /profile/scene_state`
+  - `GET /profile/camera_state`
+  - `GET /profile/viewport_state`
+  - `GET /profile/motion_state`
+  - `GET /profile/hierarchy_state`
+- Compatibility aggregate endpoint: `GET /profile/scene` (deprecated; use explicit endpoints above).
+- Motion debug endpoints:
+  - `GET /debug/motion/frame`
+  - `GET /debug/motion/summary`
+  - `GET /debug/motion/history`
+  - `GET /debug/motion/overlay`
+  - `POST /controls/debug_motion`
+  - `POST /controls/debug_motion_overlay`
+- Inspector Runtime tab includes follow/kinematic/animation runtime info and motion overlay toggles.
 
-1. Resolve target scene index.
-2. Resolve/reuse follow camera by follow target state.
-3. Configure follow settings (`distance/yaw/pitch/smoothing`).
-4. Explicitly choose mode (`CharacterFollow`, `OrbitFollow`, `Fixed`, `FreeFly`) through `setMode`.
-5. Runtime tick applies motion/follow each frame.
+## 7. Executable Roles
 
-### Follow Target Subsystem
-
-- Module: `follow_target_tracker.{h,cpp}` (owned by `motive_runtime_camera`).
-- Input: raw target center sampled from model follow anchor each frame.
-- Outputs:
-  - `rawCenter`: exact center for view lock (`lookAt`) and framing diagnostics.
-  - `motionCenter`: damped center for orbit/follow position integration.
-- Contract:
-  - Camera position integrates against `motionCenter` to suppress animated-bounds jitter.
-  - Camera view always targets `rawCenter` to keep object centered in screen space.
-  - Reset tracker state whenever follow target is cleared/invalidated/reassigned.
-
-This split keeps visual centering accurate while preventing high-frequency camera oscillation.
-
-## 5. UI Ownership Rules
-
-- Hierarchy selection changes view context (active camera/inspector context).
-- Hierarchy selection should not silently mutate gameplay ownership state.
-- Inspector is organized by domain:
-  - `Overview`, `Visual`, `Motion`, `Camera`, `Runtime`.
-- Section visibility is selection-driven (camera/light/scene item/primitive).
-
-## 6. Executable Roles
-
-- `motive3d`: shell/editor program (tabs/panels + REST control plane).
-- `motive3d_runtime`: standalone runtime loop.
-- `motive2d`: video-first runtime.
+- `motive3d`: shell/editor entrypoint (`main.cpp` -> `runMotiveEditorApp`).
+- `motive_editor`: compatibility alias; same editor entrypoint pattern.
+- `motive3d_runtime`: standalone runtime app (`motive3d.cpp` + `motive3d_app.cpp`).
+- `motive2d`: 2D/video-focused runtime.
 - `encode`: headless decode/encode path.
-- `motive_editor`: compatibility alias for shell/editor entry.
 
-## 7. Testing Surface
+## 8. Testing Surface
 
-Current automated checks:
+Automated tests currently present under `tests/`:
 
-- camera mode/transition/input routing unit coverage
-- REST integration coverage for animation/physics controls
+- Unit tests for camera mode rules, follow settings/tracker, orbit rig, control server, inspector UI.
+- Integration REST test: `tests/integration/test_rest_animation_physics.py`.
 
-Recommended next expansion:
-
-- deterministic fixed-timestep end-to-end tests for follow-cam + physics + animation progression.
+Repository also includes script-based runtime/API regression helpers (`test_follow_cam.py`, `test_follow_cam.sh`, `test_character_animation_flow.sh`, etc.).

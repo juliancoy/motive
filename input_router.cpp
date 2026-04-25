@@ -178,7 +178,7 @@ void InputRouter::updateForMode(float deltaTime,
         const float yaw = cameraRotation.x;
         // Match camera forward convention used by rendering:
         // front = (sin(yaw), 0, -cos(yaw)) when pitch is ignored for ground motion.
-        glm::vec3 forward(std::sin(yaw), 0.0f, -std::cos(yaw));
+        glm::vec3 forward(-std::sin(yaw), 0.0f, -std::cos(yaw));
         if (glm::length(forward) > 0.0f)
         {
             forward = glm::normalize(forward);
@@ -236,7 +236,7 @@ void InputRouter::updateForMode(float deltaTime,
         const float pitch = cameraRotation.y;
 
         glm::vec3 front;
-        front.x = cos(pitch) * sin(yaw);
+        front.x = -cos(pitch) * sin(yaw);
         front.y = sin(pitch);
         front.z = -cos(pitch) * cos(yaw);
         front = glm::normalize(front);

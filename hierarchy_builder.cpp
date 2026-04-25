@@ -10,6 +10,7 @@
 #include "model.h"
 #include "object_transform.h"
 
+#include <QHash>
 #include <QJsonObject>
 #include <vulkan/vulkan.h>
 
@@ -91,6 +92,8 @@ ViewportHierarchyBuilder::ViewportHierarchyBuilder(ViewportRuntime& runtime,
 QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItems() const
 {
     QList<ViewportHostWidget::HierarchyNode> items;
+    QHash<int, QList<ViewportHostWidget::HierarchyNode>> followCameraNodesByScene;
+    bool hasAnyRealCamera = false;
     
     // Add all cameras from display
     if (m_runtime.display()) {
@@ -99,19 +102,15 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
         for (size_t i = 0; i < cameras.size(); ++i) {
             Camera* camera = cameras[i];
             if (!camera) continue;
+            hasAnyRealCamera = true;
             const QString cameraName = QString::fromStdString(camera->getCameraName());
-            if (camera->isFollowModeEnabled() && camera->getFollowTargetIndex() >= 0) {
-                // Follow cameras are attached to scene items conceptually and should
-                // not appear as independent hierarchy root nodes.
-                continue;
-            }
             
             QString label = cameraName;
             if (label.isEmpty()) {
                 label = (i == 0) ? QStringLiteral("Camera") : QStringLiteral("Camera %1").arg(i);
             }
             
-            items.push_back(ViewportHostWidget::HierarchyNode{
+            ViewportHostWidget::HierarchyNode cameraNode{
                 label,
                 ViewportHostWidget::HierarchyNode::Type::Camera,
                 detail::kHierarchyCameraIndex - static_cast<int>(i),  // sceneIndex: unique negative index for UI
@@ -121,12 +120,19 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
                 -1,                                                   // primitiveIndex
                 QString(),                                            // clipName
                 {}                                                    // children
-            });
+            };
+
+            if (camera->isFollowModeEnabled() && camera->getFollowSceneIndex() >= 0) {
+                followCameraNodesByScene[camera->getFollowSceneIndex()].push_back(cameraNode);
+                continue;
+            }
+
+            items.push_back(cameraNode);
         }
     }
     
-    // Ensure at least one camera entry exists if no display or no cameras
-    if (items.empty() || (items.size() > 0 && items[0].type != ViewportHostWidget::HierarchyNode::Type::Camera)) {
+    // Ensure at least one camera entry exists if no display or no real cameras.
+    if (!hasAnyRealCamera) {
         items.push_front(ViewportHostWidget::HierarchyNode{
             QStringLiteral("Camera"),
             ViewportHostWidget::HierarchyNode::Type::Camera,
@@ -165,6 +171,16 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
         sceneNode.label = entry.name;
         sceneNode.type = ViewportHostWidget::HierarchyNode::Type::SceneItem;
         sceneNode.sceneIndex = i;
+
+        const auto followIt = followCameraNodesByScene.constFind(i);
+        if (followIt != followCameraNodesByScene.cend())
+        {
+            for (const auto& cameraNode : followIt.value())
+            {
+                sceneNode.children.push_back(cameraNode);
+            }
+            followCameraNodesByScene.remove(i);
+        }
 
         if (i < loadedCount && m_runtime.engine() && m_runtime.engine()->models[static_cast<size_t>(i)])
         {
@@ -297,6 +313,16 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
         items.push_back(sceneNode);
     }
 
+    // Any remaining follow cameras point at scene indices that do not currently exist.
+    // Keep them visible at root so they remain discoverable and editable.
+    for (auto it = followCameraNodesByScene.cbegin(); it != followCameraNodesByScene.cend(); ++it)
+    {
+        for (const auto& cameraNode : it.value())
+        {
+            items.push_back(cameraNode);
+        }
+    }
+
     for (int i = 0; i < m_sceneController.pendingEntries().size(); ++i)
     {
         const auto& entry = m_sceneController.pendingEntries()[i];
@@ -372,6 +398,24 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
         }
         return QStringLiteral("Unknown");
     };
+    auto jumpPhaseName = [](Model::CharacterController::JumpPhase phase) -> QString
+    {
+        using JumpPhase = Model::CharacterController::JumpPhase;
+        switch (phase)
+        {
+        case JumpPhase::None:
+            return QStringLiteral("None");
+        case JumpPhase::Start:
+            return QStringLiteral("Start");
+        case JumpPhase::Apex:
+            return QStringLiteral("Apex");
+        case JumpPhase::Fall:
+            return QStringLiteral("Fall");
+        case JumpPhase::Land:
+            return QStringLiteral("Land");
+        }
+        return QStringLiteral("Unknown");
+    };
 
     QJsonArray sceneItems;
     const auto& entries = m_sceneController.loadedEntries();
@@ -391,7 +435,11 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             {QStringLiteral("activeAnimationClip"), entry.activeAnimationClip},
             {QStringLiteral("animationPlaying"), entry.animationPlaying},
             {QStringLiteral("animationLoop"), entry.animationLoop},
-            {QStringLiteral("animationSpeed"), entry.animationSpeed}
+            {QStringLiteral("animationSpeed"), entry.animationSpeed},
+            {QStringLiteral("focusPointOffset"), QJsonArray{entry.focusPointOffset.x(), entry.focusPointOffset.y(), entry.focusPointOffset.z()}},
+            {QStringLiteral("focusDistance"), entry.focusDistance},
+            {QStringLiteral("focusCameraOffset"), QJsonArray{entry.focusCameraOffset.x(), entry.focusCameraOffset.y(), entry.focusCameraOffset.z()}},
+            {QStringLiteral("focusCameraOffsetValid"), entry.focusCameraOffsetValid}
         };
 
         QJsonArray meshArray;
@@ -417,6 +465,7 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("inputDir"), QJsonArray{character.inputDir.x, character.inputDir.y, character.inputDir.z});
             sceneItem.insert(QStringLiteral("velocity"), QJsonArray{character.velocity.x, character.velocity.y, character.velocity.z});
             sceneItem.insert(QStringLiteral("currentAnimState"), animStateName(character.currentAnimState));
+            sceneItem.insert(QStringLiteral("jumpPhase"), jumpPhaseName(character.jumpPhase));
             sceneItem.insert(QStringLiteral("currentAnimWeight"), character.currentAnimWeight);
             sceneItem.insert(QStringLiteral("currentAnimSpeed"), character.currentAnimSpeed);
             sceneItem.insert(QStringLiteral("animationPreprocessedFrameValid"), model->animationPreprocessedFrameValid);

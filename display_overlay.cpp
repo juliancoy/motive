@@ -25,6 +25,23 @@ void logBitmap(const glyph::OverlayBitmap& bitmap)
 }
 } // namespace
 
+void Display::setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap, bool enabled)
+{
+    customOverlayEnabled = enabled;
+    if (!enabled)
+    {
+        customOverlayBitmap = glyph::OverlayBitmap{};
+        return;
+    }
+    customOverlayBitmap = bitmap;
+}
+
+void Display::clearCustomOverlayBitmap()
+{
+    customOverlayEnabled = false;
+    customOverlayBitmap = glyph::OverlayBitmap{};
+}
+
 void Display::createOverlayBuffer(VkDeviceSize size)
 {
     if (size == 0)
@@ -97,9 +114,17 @@ void Display::destroyOverlayBuffer()
 
 void Display::updateOverlayBitmap(float fps)
 {
-    const uint32_t referenceWidth = static_cast<uint32_t>(std::max(1, width));
-    const uint32_t referenceHeight = static_cast<uint32_t>(std::max(1, height));
-    glyph::OverlayBitmap bitmap = glyph::buildFrameRateOverlay(referenceWidth, referenceHeight, fps);
+    glyph::OverlayBitmap bitmap;
+    if (customOverlayEnabled)
+    {
+        bitmap = customOverlayBitmap;
+    }
+    else
+    {
+        const uint32_t referenceWidth = static_cast<uint32_t>(std::max(1, width));
+        const uint32_t referenceHeight = static_cast<uint32_t>(std::max(1, height));
+        bitmap = glyph::buildFrameRateOverlay(referenceWidth, referenceHeight, fps);
+    }
 
     if (bitmap.width == 0 || bitmap.height == 0 || bitmap.pixels.empty())
     {

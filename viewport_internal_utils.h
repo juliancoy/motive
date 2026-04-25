@@ -37,7 +37,7 @@ inline glm::vec3 cameraForwardVector(const glm::vec2& cameraRotation)
     const float yaw = cameraRotation.x;
     const float pitch = cameraRotation.y;
     glm::vec3 front;
-    front.x = std::cos(pitch) * std::sin(yaw);
+    front.x = -std::cos(pitch) * std::sin(yaw);
     front.y = std::sin(pitch);
     front.z = -std::cos(pitch) * std::cos(yaw);
     if (glm::length(front) <= 1e-6f)
@@ -50,7 +50,7 @@ inline glm::vec3 cameraForwardVector(const glm::vec2& cameraRotation)
 inline glm::vec2 cameraRotationForDirection(const glm::vec3& direction)
 {
     const glm::vec3 normalized = glm::normalize(direction);
-    const float yaw = std::atan2(normalized.x, -normalized.z);
+    const float yaw = std::atan2(-normalized.x, -normalized.z);
     const float pitch = std::asin(glm::clamp(normalized.y, -1.0f, 1.0f));
     return glm::vec2(yaw, pitch);
 }

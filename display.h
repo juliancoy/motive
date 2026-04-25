@@ -64,6 +64,8 @@ public:
     void setBackgroundColor(float r, float g, float b);
     void setViewportSlots(const std::vector<ViewportSlot>& viewportSlotsIn);
     void setMouseButtonEventCallback(std::function<void(int, int, int, double, double)> callback);
+    void setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap, bool enabled);
+    void clearCustomOverlayBitmap();
     void shutdown();
 
     // Input handling (forwarded to camera)
@@ -179,6 +181,8 @@ private:
     std::chrono::steady_clock::time_point runtimeUpdateLastTime = std::chrono::steady_clock::now();
     bool runtimeUpdateInitialized = false;
     OverlayResources overlayResources;
+    glyph::OverlayBitmap customOverlayBitmap;
+    bool customOverlayEnabled = false;
     std::vector<ViewportSlot> viewportSlots;
     bool useExplicitViewportSlots = false;
     std::function<void(int, int, int, double, double)> mouseButtonEventCallback;

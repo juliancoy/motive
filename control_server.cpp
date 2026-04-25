@@ -10,6 +10,7 @@
 #include <QMetaObject>
 #include <QStringList>
 #include <QTimer>
+#include <QUrlQuery>
 
 #include <cerrno>
 #include <cstring>
@@ -349,7 +350,16 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
     }
 
     const QByteArray method = requestLine.at(0);
-    const QByteArray path = requestLine.at(1);
+    const QByteArray requestTarget = requestLine.at(1);
+    QByteArray path = requestTarget;
+    QByteArray queryBytes;
+    const int querySeparator = requestTarget.indexOf('?');
+    if (querySeparator >= 0)
+    {
+        path = requestTarget.left(querySeparator);
+        queryBytes = requestTarget.mid(querySeparator + 1);
+    }
+    const QUrlQuery query(QString::fromUtf8(queryBytes));
 
     if (method == "POST")
     {
@@ -519,6 +529,32 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/debug_motion")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("debug_motion"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("motion debug control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/debug_motion_overlay")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("motion_debug_overlay"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("motion debug overlay control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
 
         return jsonResponse(404, compactJson(QJsonObject{
             {QStringLiteral("ok"), false},
@@ -555,6 +591,82 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             {QStringLiteral("application"), QStringLiteral("MotiveEditor")},
             {QStringLiteral("port"), static_cast<int>(m_port)}
         }));
+    }
+
+    if (path == "/profile/scene_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonArray sceneItemsArray;
+        for (const auto& sceneItem : data.sceneItems)
+        {
+            sceneItemsArray.append(sceneItem);
+        }
+
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("rootPath"), data.rootPath);
+        payload.insert(QStringLiteral("sceneItemCount"), data.sceneItemCount);
+        payload.insert(QStringLiteral("sceneItems"), sceneItemsArray);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/camera_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonArray cameraPosArray;
+        cameraPosArray.append(data.cameraPosition.x());
+        cameraPosArray.append(data.cameraPosition.y());
+        cameraPosArray.append(data.cameraPosition.z());
+
+        QJsonArray cameraRotArray;
+        cameraRotArray.append(data.cameraRotation.x());
+        cameraRotArray.append(data.cameraRotation.y());
+        cameraRotArray.append(data.cameraRotation.z());
+
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("cameraPosition"), cameraPosArray);
+        payload.insert(QStringLiteral("cameraRotation"), cameraRotArray);
+        payload.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/viewport_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonArray viewportCameraIdsArray;
+        for (const QString& cameraId : data.viewportCameraIds)
+        {
+            viewportCameraIdsArray.append(cameraId);
+        }
+
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex);
+        payload.insert(QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId);
+        payload.insert(QStringLiteral("viewportCameraIds"), viewportCameraIdsArray);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/motion_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("motionDebugFrame"), data.motionDebugFrame);
+        payload.insert(QStringLiteral("motionDebugSummary"), data.motionDebugSummary);
+        payload.insert(QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/hierarchy_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("rootPath"), data.rootPath);
+        payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        return jsonResponse(200, compactJson(payload));
     }
 
     if (path == "/profile/scene")
@@ -600,6 +712,39 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId);
         payload.insert(QStringLiteral("viewportCameraIds"), viewportCameraIdsArray);
         payload.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
+        payload.insert(QStringLiteral("motionDebugFrame"), data.motionDebugFrame);
+        payload.insert(QStringLiteral("motionDebugSummary"), data.motionDebugSummary);
+        payload.insert(QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay);
+        payload.insert(QStringLiteral("deprecated"), true);
+        payload.insert(QStringLiteral("deprecatedMessage"),
+                       QStringLiteral("Use explicit endpoints: /profile/scene_state, /profile/camera_state, /profile/viewport_state, /profile/motion_state, /profile/hierarchy_state"));
+        payload.insert(QStringLiteral("scene"), QJsonObject{
+            {QStringLiteral("rootPath"), data.rootPath},
+            {QStringLiteral("sceneItemCount"), data.sceneItemCount},
+            {QStringLiteral("sceneItems"), sceneItemsArray}
+        });
+        payload.insert(QStringLiteral("camera"), QJsonObject{
+            {QStringLiteral("cameraPosition"), cameraPosArray},
+            {QStringLiteral("cameraRotation"), cameraRotArray},
+            {QStringLiteral("cameraTracking"), data.cameraTracking}
+        });
+        payload.insert(QStringLiteral("viewport"), QJsonObject{
+            {QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex},
+            {QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId},
+            {QStringLiteral("viewportCameraIds"), viewportCameraIdsArray}
+        });
+        payload.insert(QStringLiteral("motion"), QJsonObject{
+            {QStringLiteral("motionDebugFrame"), data.motionDebugFrame},
+            {QStringLiteral("motionDebugSummary"), data.motionDebugSummary},
+            {QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay}
+        });
+        payload.insert(QStringLiteral("performance"), QJsonObject{
+            {QStringLiteral("fps"), static_cast<double>(data.currentFps)},
+            {QStringLiteral("renderIntervalMs"), data.renderIntervalMs},
+            {QStringLiteral("renderTimerActive"), data.renderTimerActive},
+            {QStringLiteral("viewportWidth"), data.viewportWidth},
+            {QStringLiteral("viewportHeight"), data.viewportHeight}
+        });
         return jsonResponse(200, compactJson(payload));
     }
 
@@ -710,6 +855,79 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("viewport"), viewport);
         
         return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/debug/motion/frame")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.motionDebugFrame;
+        payload.insert(QStringLiteral("ok"), payload.value(QStringLiteral("ok")).toBool(true));
+        payload.insert(QStringLiteral("summary"), data.motionDebugSummary);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/debug/motion/summary")
+    {
+        QJsonObject result;
+        if (!invokeCommandHandler(m_commandHandler, QStringLiteral("motion_debug_summary"), QJsonObject{}, result))
+        {
+            return jsonResponse(500, compactJson(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("motion debug summary unavailable")}
+            }));
+        }
+        result.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(result));
+    }
+
+    if (path == "/debug/motion/history")
+    {
+        QJsonObject requestBody;
+        const QString maxFramesValue = query.queryItemValue(QStringLiteral("maxFrames"));
+        if (!maxFramesValue.isEmpty())
+        {
+            bool ok = false;
+            const int parsed = maxFramesValue.toInt(&ok);
+            if (ok)
+            {
+                requestBody.insert(QStringLiteral("maxFrames"), parsed);
+            }
+        }
+        const QString sceneIndexValue = query.queryItemValue(QStringLiteral("sceneIndex"));
+        if (!sceneIndexValue.isEmpty())
+        {
+            bool ok = false;
+            const int parsed = sceneIndexValue.toInt(&ok);
+            if (ok)
+            {
+                requestBody.insert(QStringLiteral("sceneIndex"), parsed);
+            }
+        }
+
+        QJsonObject result;
+        if (!invokeCommandHandler(m_commandHandler, QStringLiteral("motion_debug_history"), requestBody, result))
+        {
+            return jsonResponse(500, compactJson(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("motion debug history unavailable")}
+            }));
+        }
+        result.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(result));
+    }
+
+    if (path == "/debug/motion/overlay")
+    {
+        QJsonObject result;
+        if (!invokeCommandHandler(m_commandHandler, QStringLiteral("motion_debug_overlay"), QJsonObject{}, result))
+        {
+            return jsonResponse(500, compactJson(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("motion debug overlay unavailable")}
+            }));
+        }
+        result.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(result));
     }
 
     if (path == "/controls/camera")

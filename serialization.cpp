@@ -21,6 +21,7 @@ QJsonObject cameraConfigToJson(const ViewportHostWidget::CameraConfig& config)
     obj[QStringLiteral("followSmoothSpeed")] = config.followSmoothSpeed;
     obj[QStringLiteral("followTargetOffset")] = QJsonArray{config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z()};
     obj[QStringLiteral("freeFly")] = config.freeFly;
+    obj[QStringLiteral("invertHorizontalDrag")] = config.invertHorizontalDrag;
     obj[QStringLiteral("nearClip")] = config.nearClip;
     obj[QStringLiteral("farClip")] = config.farClip;
     return obj;
@@ -59,6 +60,14 @@ ViewportHostWidget::CameraConfig cameraConfigFromJson(const QJsonObject& obj)
         obj.value(QStringLiteral("followSmoothSpeed")).toDouble(followcam::kDefaultSmoothSpeed));
     config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
     config.freeFly = obj.value(QStringLiteral("freeFly")).toBool(true);
+    if (obj.contains(QStringLiteral("invertHorizontalDrag")))
+    {
+        config.invertHorizontalDrag = obj.value(QStringLiteral("invertHorizontalDrag")).toBool(false);
+    }
+    else
+    {
+        config.invertHorizontalDrag = (config.name == QStringLiteral("Main Fly Camera"));
+    }
     config.nearClip = static_cast<float>(obj.value(QStringLiteral("nearClip")).toDouble(0.1));
     config.farClip = static_cast<float>(obj.value(QStringLiteral("farClip")).toDouble(100.0));
     
@@ -125,7 +134,11 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("animationPhysicsCoupling"), item.animationPhysicsCoupling},
             {QStringLiteral("useGravity"), item.useGravity},
             {QStringLiteral("customGravity"), QJsonArray{item.customGravity.x(), item.customGravity.y(), item.customGravity.z()}},
-            {QStringLiteral("characterTurnResponsiveness"), item.characterTurnResponsiveness}
+            {QStringLiteral("characterTurnResponsiveness"), item.characterTurnResponsiveness},
+            {QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()}},
+            {QStringLiteral("focusDistance"), item.focusDistance},
+            {QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()}},
+            {QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid}
         });
     }
     return array;
@@ -171,7 +184,12 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             object.value(QStringLiteral("animationPhysicsCoupling")).toString(QStringLiteral("AnimationOnly")),
             object.value(QStringLiteral("useGravity")).toBool(true),
             readVector(object.value(QStringLiteral("customGravity")), QVector3D(0.0f, 0.0f, 0.0f)),
-            static_cast<float>(object.value(QStringLiteral("characterTurnResponsiveness")).toDouble(10.0))
+            static_cast<float>(object.value(QStringLiteral("characterTurnResponsiveness")).toDouble(10.0)),
+            QJsonArray{},
+            readVector(object.value(QStringLiteral("focusPointOffset")), QVector3D(0.0f, 0.0f, 0.0f)),
+            static_cast<float>(object.value(QStringLiteral("focusDistance")).toDouble(0.0)),
+            readVector(object.value(QStringLiteral("focusCameraOffset")), QVector3D(0.0f, 0.0f, 0.0f)),
+            object.value(QStringLiteral("focusCameraOffsetValid")).toBool(false)
         });
     }
     return result;

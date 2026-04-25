@@ -39,6 +39,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     static constexpr int kHierarchyCameraIndex = -1000;
@@ -84,9 +85,11 @@ private:
     QGroupBox* m_transformSection = nullptr;
     QGroupBox* m_physicsSection = nullptr;
     QGroupBox* m_runtimeSection = nullptr;
+    QGroupBox* m_motionDebugOverlaySection = nullptr;
     QLabel* m_inspectorNameValue = nullptr;
     QLabel* m_inspectorPathValue = nullptr;
     QLabel* m_animationModeValue = nullptr;
+    QLabel* m_cameraTypeValue = nullptr;
     QLabel* m_boundsSizeValue = nullptr;
     QLabel* m_inspectorTexturePreview = nullptr;
     QComboBox* m_primitiveCullModeCombo = nullptr;
@@ -114,6 +117,12 @@ private:
     QLabel* m_objectFollowCamInfoValue = nullptr;
     QLabel* m_objectKinematicInfoValue = nullptr;
     QLabel* m_objectAnimationRuntimeInfoValue = nullptr;
+    QCheckBox* m_motionOverlayEnabledCheck = nullptr;
+    QCheckBox* m_motionOverlayTargetMarkersCheck = nullptr;
+    QCheckBox* m_motionOverlayVelocityCheck = nullptr;
+    QCheckBox* m_motionOverlayCameraLineCheck = nullptr;
+    QCheckBox* m_motionOverlayCenterCrosshairCheck = nullptr;
+    QDoubleSpinBox* m_motionOverlayVelocityScaleSpin = nullptr;
     
     QWidget* m_lightTypeWidget = nullptr;
     QComboBox* m_lightTypeCombo = nullptr;
@@ -153,7 +162,9 @@ private:
     QCheckBox* m_meshConsolidationCheck = nullptr;
     QCheckBox* m_validationLayersCheck = nullptr;
     QLabel* m_validationRestartLabel = nullptr;
+    QComboBox* m_wasdRoutingCombo = nullptr;
     QCheckBox* m_freeFlyCameraCheck = nullptr;
+    QCheckBox* m_invertHorizontalDragCheck = nullptr;
     QWidget* m_bgColorWidget = nullptr;
 
     ProjectSession m_projectSession;
@@ -163,6 +174,7 @@ private:
     bool m_savingUiState = false;
     bool m_updatingInspector = false;
     bool m_updatingCameraSettings = false;
+    bool m_suppressHierarchySelectionEffects = false;
     
     // Undo stack for scene operations
     QUndoStack* m_undoStack = nullptr;

@@ -10,10 +10,14 @@
 #include <QDebug>
 #include <QImageReader>
 #include <QMetaObject>
+#include <QPixmap>
 #include <QProcess>
+#include <QThread>
 #include <QTimer>
+#include <QVector3D>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace motive::ui {
@@ -103,6 +107,9 @@ int runMotiveEditorApp(int argc, char** argv)
                 data.focusedViewportCameraId = viewport->focusedViewportCameraId();
                 data.viewportCameraIds = viewport->viewportCameraIds();
                 data.cameraTracking = viewport->cameraTrackingDebugJson();
+                data.motionDebugFrame = viewport->motionDebugFrameJson();
+                data.motionDebugSummary = viewport->motionDebugSummaryJson();
+                data.motionDebugOverlay = viewport->motionDebugOverlayOptionsJson();
             }
             return data;
         },
@@ -113,10 +120,17 @@ int runMotiveEditorApp(int argc, char** argv)
                 const int width = body.value(QStringLiteral("width")).toInt(-1);
                 const int height = body.value(QStringLiteral("height")).toInt(-1);
                 const bool requestResize = width > 0 || height > 0;
+                const QString snapshotPath = body.value(QStringLiteral("snapshotPath")).toString();
+                const bool requestSnapshot = !snapshotPath.isEmpty();
+                const bool viewportOnly = body.value(QStringLiteral("viewportOnly")).toBool(false);
 
+                const Qt::ConnectionType invokeType =
+                    (QThread::currentThread() == qApp->thread())
+                        ? Qt::DirectConnection
+                        : Qt::BlockingQueuedConnection;
                 const bool invoked = QMetaObject::invokeMethod(
                     qApp,
-                    [&window, width, height, requestResize, &result]()
+                    [&window, width, height, requestResize, requestSnapshot, snapshotPath, viewportOnly, &result]()
                     {
                         if (requestResize)
                         {
@@ -125,8 +139,34 @@ int runMotiveEditorApp(int argc, char** argv)
                             window.resize(targetWidth, targetHeight);
                         }
                         result = window.uiDebugJson();
+                        if (requestSnapshot)
+                        {
+                            QWidget* target = viewportOnly
+                                ? static_cast<QWidget*>(window.viewportHost())
+                                : static_cast<QWidget*>(&window);
+                            if (!target)
+                            {
+                                result.insert(QStringLiteral("snapshotSaved"), false);
+                                result.insert(QStringLiteral("snapshotError"), QStringLiteral("snapshot target unavailable"));
+                            }
+                            else
+                            {
+                                const QPixmap pixmap = target->grab();
+                                const bool saved = pixmap.save(snapshotPath, "PNG");
+                                result.insert(QStringLiteral("snapshotSaved"), saved);
+                                result.insert(QStringLiteral("snapshotPath"), snapshotPath);
+                                result.insert(QStringLiteral("snapshotViewportOnly"), viewportOnly);
+                                result.insert(QStringLiteral("snapshotWidth"), pixmap.width());
+                                result.insert(QStringLiteral("snapshotHeight"), pixmap.height());
+                                if (!saved)
+                                {
+                                    result.insert(QStringLiteral("snapshotError"),
+                                                  QStringLiteral("failed to save snapshot to %1").arg(snapshotPath));
+                                }
+                            }
+                        }
                     },
-                    Qt::BlockingQueuedConnection);
+                    invokeType);
 
                 if (!invoked)
                 {
@@ -142,6 +182,98 @@ int runMotiveEditorApp(int argc, char** argv)
             {
                 result.insert(QStringLiteral("error"), QStringLiteral("viewport unavailable"));
                 return false;
+            }
+
+            if (command == QStringLiteral("debug_motion"))
+            {
+                const QString action = body.value(QStringLiteral("action")).toString(QStringLiteral("summary"));
+                if (action == QStringLiteral("reset"))
+                {
+                    viewport->resetMotionDebug();
+                    result.insert(QStringLiteral("action"), action);
+                    result.insert(QStringLiteral("summary"), viewport->motionDebugSummaryJson());
+                    return true;
+                }
+
+                result.insert(QStringLiteral("action"), action);
+                result.insert(QStringLiteral("frame"), viewport->motionDebugFrameJson());
+                result.insert(QStringLiteral("summary"), viewport->motionDebugSummaryJson());
+                return true;
+            }
+
+            if (command == QStringLiteral("motion_debug_history"))
+            {
+                const int maxFrames = body.value(QStringLiteral("maxFrames")).toInt(300);
+                const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+                result.insert(QStringLiteral("maxFrames"), maxFrames);
+                result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                result.insert(QStringLiteral("history"), viewport->motionDebugHistoryJson(maxFrames, sceneIndex));
+                result.insert(QStringLiteral("frame"), viewport->motionDebugFrameJson());
+                result.insert(QStringLiteral("summary"), viewport->motionDebugSummaryJson());
+                return true;
+            }
+
+            if (command == QStringLiteral("motion_debug_summary"))
+            {
+                result = viewport->motionDebugSummaryJson();
+                result.insert(QStringLiteral("frame"), viewport->motionDebugFrameJson());
+                return true;
+            }
+
+            if (command == QStringLiteral("motion_debug_overlay"))
+            {
+                ViewportHostWidget::MotionDebugOverlayOptions options;
+                const QJsonObject current = viewport->motionDebugOverlayOptionsJson();
+                options.enabled = current.value(QStringLiteral("enabled")).toBool(false);
+                options.showTargetMarkers = current.value(QStringLiteral("showTargetMarkers")).toBool(true);
+                options.showVelocityVector = current.value(QStringLiteral("showVelocityVector")).toBool(true);
+                options.showCameraToTargetLine = current.value(QStringLiteral("showCameraToTargetLine")).toBool(true);
+                options.showScreenCenterCrosshair = current.value(QStringLiteral("showScreenCenterCrosshair")).toBool(true);
+                options.showMotionTrail = current.value(QStringLiteral("showMotionTrail")).toBool(true);
+                options.showRawTrail = current.value(QStringLiteral("showRawTrail")).toBool(false);
+                options.trailFrames = current.value(QStringLiteral("trailFrames")).toInt(32);
+                options.velocityScale = static_cast<float>(current.value(QStringLiteral("velocityScale")).toDouble(0.25));
+
+                if (body.contains(QStringLiteral("enabled")))
+                {
+                    options.enabled = body.value(QStringLiteral("enabled")).toBool(options.enabled);
+                }
+                if (body.contains(QStringLiteral("showTargetMarkers")))
+                {
+                    options.showTargetMarkers = body.value(QStringLiteral("showTargetMarkers")).toBool(options.showTargetMarkers);
+                }
+                if (body.contains(QStringLiteral("showVelocityVector")))
+                {
+                    options.showVelocityVector = body.value(QStringLiteral("showVelocityVector")).toBool(options.showVelocityVector);
+                }
+                if (body.contains(QStringLiteral("showCameraToTargetLine")))
+                {
+                    options.showCameraToTargetLine = body.value(QStringLiteral("showCameraToTargetLine")).toBool(options.showCameraToTargetLine);
+                }
+                if (body.contains(QStringLiteral("showScreenCenterCrosshair")))
+                {
+                    options.showScreenCenterCrosshair = body.value(QStringLiteral("showScreenCenterCrosshair")).toBool(options.showScreenCenterCrosshair);
+                }
+                if (body.contains(QStringLiteral("showMotionTrail")))
+                {
+                    options.showMotionTrail = body.value(QStringLiteral("showMotionTrail")).toBool(options.showMotionTrail);
+                }
+                if (body.contains(QStringLiteral("showRawTrail")))
+                {
+                    options.showRawTrail = body.value(QStringLiteral("showRawTrail")).toBool(options.showRawTrail);
+                }
+                if (body.contains(QStringLiteral("trailFrames")))
+                {
+                    options.trailFrames = body.value(QStringLiteral("trailFrames")).toInt(options.trailFrames);
+                }
+                if (body.contains(QStringLiteral("velocityScale")))
+                {
+                    options.velocityScale = static_cast<float>(body.value(QStringLiteral("velocityScale")).toDouble(options.velocityScale));
+                }
+
+                viewport->setMotionDebugOverlayOptions(options);
+                result = viewport->motionDebugOverlayOptionsJson();
+                return true;
             }
 
             if (command == QStringLiteral("primitive"))
@@ -171,15 +303,73 @@ int runMotiveEditorApp(int argc, char** argv)
                     result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex is required"));
                     return false;
                 }
+                const auto items = viewport->sceneItems();
+                if (sceneIndex >= items.size())
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex out of range"));
+                    return false;
+                }
                 if (body.contains(QStringLiteral("visible")))
                 {
                     viewport->setSceneItemVisible(sceneIndex, body.value(QStringLiteral("visible")).toBool(true));
+                }
+                if (body.value(QStringLiteral("setFocusPointFromCamera")).toBool(false))
+                {
+                    viewport->captureSceneItemFocusFromCurrentCamera(sceneIndex);
+                }
+                if (body.contains(QStringLiteral("focusPointOffset")) ||
+                    body.contains(QStringLiteral("focusOffsetX")) ||
+                    body.contains(QStringLiteral("focusOffsetY")) ||
+                    body.contains(QStringLiteral("focusOffsetZ")) ||
+                    body.contains(QStringLiteral("focusDistance")))
+                {
+                    QVector3D focusOffset = items[sceneIndex].focusPointOffset;
+                    float focusDistance = items[sceneIndex].focusDistance;
+
+                    if (body.contains(QStringLiteral("focusPointOffset")))
+                    {
+                        const QJsonArray offset = body.value(QStringLiteral("focusPointOffset")).toArray();
+                        if (offset.size() == 3)
+                        {
+                            focusOffset = QVector3D(
+                                static_cast<float>(offset.at(0).toDouble(focusOffset.x())),
+                                static_cast<float>(offset.at(1).toDouble(focusOffset.y())),
+                                static_cast<float>(offset.at(2).toDouble(focusOffset.z())));
+                        }
+                    }
+                    if (body.contains(QStringLiteral("focusOffsetX")))
+                    {
+                        focusOffset.setX(static_cast<float>(body.value(QStringLiteral("focusOffsetX")).toDouble(focusOffset.x())));
+                    }
+                    if (body.contains(QStringLiteral("focusOffsetY")))
+                    {
+                        focusOffset.setY(static_cast<float>(body.value(QStringLiteral("focusOffsetY")).toDouble(focusOffset.y())));
+                    }
+                    if (body.contains(QStringLiteral("focusOffsetZ")))
+                    {
+                        focusOffset.setZ(static_cast<float>(body.value(QStringLiteral("focusOffsetZ")).toDouble(focusOffset.z())));
+                    }
+                    if (body.contains(QStringLiteral("focusDistance")))
+                    {
+                        focusDistance = static_cast<float>(body.value(QStringLiteral("focusDistance")).toDouble(focusDistance));
+                    }
+
+                    viewport->updateSceneItemFocusSettings(sceneIndex, focusOffset, focusDistance);
                 }
                 if (body.value(QStringLiteral("focus")).toBool(false))
                 {
                     viewport->focusSceneItem(sceneIndex);
                 }
                 result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                const auto refreshedItems = viewport->sceneItems();
+                if (sceneIndex >= 0 && sceneIndex < refreshedItems.size())
+                {
+                    const auto& item = refreshedItems[sceneIndex];
+                    result.insert(QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()});
+                    result.insert(QStringLiteral("focusDistance"), item.focusDistance);
+                    result.insert(QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()});
+                    result.insert(QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid);
+                }
                 return true;
             }
 
@@ -304,6 +494,30 @@ int runMotiveEditorApp(int argc, char** argv)
                     result.insert(QStringLiteral("controllable"), enabled);
                 }
 
+                if (body.contains(QStringLiteral("pattern")))
+                {
+                    const QString pattern = body.value(QStringLiteral("pattern")).toString();
+                    const int stepDurationMs = body.value(QStringLiteral("stepDurationMs")).toInt(120);
+                    const int steps = body.value(QStringLiteral("steps")).toInt(32);
+                    const bool includeJump = body.value(QStringLiteral("includeJump")).toBool(false);
+                    const bool accepted = viewport->playCharacterInputPattern(sceneIndex,
+                                                                              pattern,
+                                                                              stepDurationMs,
+                                                                              steps,
+                                                                              includeJump);
+                    result.insert(QStringLiteral("pattern"), pattern);
+                    result.insert(QStringLiteral("patternAccepted"), accepted);
+                    result.insert(QStringLiteral("stepDurationMs"), stepDurationMs);
+                    result.insert(QStringLiteral("steps"), steps);
+                    result.insert(QStringLiteral("includeJump"), includeJump);
+                    if (!accepted)
+                    {
+                        result.insert(QStringLiteral("error"),
+                                      QStringLiteral("unknown pattern; valid values: circle, figure8, strafe"));
+                        return false;
+                    }
+                }
+
                 const bool hasInputPayload =
                     body.contains(QStringLiteral("keyW")) ||
                     body.contains(QStringLiteral("keyA")) ||
@@ -388,6 +602,7 @@ int runMotiveEditorApp(int argc, char** argv)
                         cam.insert(QStringLiteral("followYaw"), configs[i].followYaw);
                         cam.insert(QStringLiteral("followPitch"), configs[i].followPitch);
                         cam.insert(QStringLiteral("followSmoothSpeed"), configs[i].followSmoothSpeed);
+                        cam.insert(QStringLiteral("invertHorizontalDrag"), configs[i].invertHorizontalDrag);
                         cam.insert(QStringLiteral("rotation"), QJsonArray{configs[i].rotation.x(), configs[i].rotation.y(), configs[i].rotation.z()});
                         cam.insert(QStringLiteral("position"), QJsonArray{configs[i].position.x(), configs[i].position.y(), configs[i].position.z()});
                         cameras.append(cam);
@@ -460,6 +675,100 @@ int runMotiveEditorApp(int argc, char** argv)
                         result.insert(QStringLiteral("error"), QStringLiteral("Camera not found"));
                         return false;
                     }
+                }
+
+                const bool hasNavigatePayload =
+                    body.contains(QStringLiteral("navigate")) ||
+                    body.contains(QStringLiteral("navigateId")) ||
+                    body.contains(QStringLiteral("forward")) ||
+                    body.contains(QStringLiteral("right")) ||
+                    body.contains(QStringLiteral("up")) ||
+                    body.contains(QStringLiteral("distance")) ||
+                    body.contains(QStringLiteral("yawDelta")) ||
+                    body.contains(QStringLiteral("pitchDelta")) ||
+                    body.contains(QStringLiteral("forceFreeFly"));
+                if (hasNavigatePayload)
+                {
+                    int cameraIndex = resolveCameraIndex(QStringLiteral("navigate"), QStringLiteral("navigateId"));
+                    if (cameraIndex < 0)
+                    {
+                        cameraIndex = viewport->activeCameraIndex();
+                    }
+
+                    auto configs = viewport->cameraConfigs();
+                    if (cameraIndex < 0 || cameraIndex >= configs.size())
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("Camera not found"));
+                        return false;
+                    }
+
+                    auto& config = configs[cameraIndex];
+                    const bool forceFreeFly = body.value(QStringLiteral("forceFreeFly")).toBool(true);
+                    if (forceFreeFly)
+                    {
+                        config.type = ViewportHostWidget::CameraConfig::Type::Free;
+                        config.followTargetIndex = -1;
+                        config.freeFly = true;
+                        config.mode = QStringLiteral("FreeFly");
+                    }
+
+                    // CameraConfig.rotation is stored as (yawDeg, pitchDeg, 0).
+                    float yawDeg = config.rotation.x();
+                    float pitchDeg = config.rotation.y();
+                    yawDeg += static_cast<float>(body.value(QStringLiteral("yawDelta")).toDouble(0.0));
+                    pitchDeg += static_cast<float>(body.value(QStringLiteral("pitchDelta")).toDouble(0.0));
+                    pitchDeg = std::clamp(pitchDeg, -80.0f, 80.0f);
+                    config.rotation = QVector3D(yawDeg, pitchDeg, 0.0f);
+
+                    const float travelDistance = static_cast<float>(body.value(QStringLiteral("distance")).toDouble(1.0));
+                    const float forwardAmount = static_cast<float>(body.value(QStringLiteral("forward")).toDouble(0.0));
+                    const float rightAmount = static_cast<float>(body.value(QStringLiteral("right")).toDouble(0.0));
+                    const float upAmount = static_cast<float>(body.value(QStringLiteral("up")).toDouble(0.0));
+
+                    const float yaw = yawDeg * static_cast<float>(M_PI / 180.0);
+                    const float pitch = pitchDeg * static_cast<float>(M_PI / 180.0);
+
+                    QVector3D front(-std::cos(pitch) * std::sin(yaw),
+                                    std::sin(pitch),
+                                    -std::cos(pitch) * std::cos(yaw));
+                    if (front.lengthSquared() > 1e-8f)
+                    {
+                        front.normalize();
+                    }
+                    const QVector3D worldUp(0.0f, 1.0f, 0.0f);
+                    QVector3D rightVec = QVector3D::crossProduct(front, worldUp);
+                    if (rightVec.lengthSquared() > 1e-8f)
+                    {
+                        rightVec.normalize();
+                    }
+                    QVector3D upVec = QVector3D::crossProduct(rightVec, front);
+                    if (upVec.lengthSquared() > 1e-8f)
+                    {
+                        upVec.normalize();
+                    }
+
+                    QVector3D delta = (front * forwardAmount) + (rightVec * rightAmount) + (upVec * upAmount);
+                    if (delta.lengthSquared() > 1e-8f)
+                    {
+                        delta.normalize();
+                        delta *= travelDistance;
+                    }
+                    config.position += delta;
+
+                    viewport->updateCameraConfig(cameraIndex, config);
+                    if (viewport->activeCameraIndex() != cameraIndex)
+                    {
+                        viewport->setActiveCamera(cameraIndex);
+                    }
+
+                    result.insert(QStringLiteral("updated"), true);
+                    result.insert(QStringLiteral("cameraIndex"), cameraIndex);
+                    result.insert(QStringLiteral("cameraId"), config.id);
+                    result.insert(QStringLiteral("mode"), config.mode);
+                    result.insert(QStringLiteral("position"),
+                                  QJsonArray{config.position.x(), config.position.y(), config.position.z()});
+                    result.insert(QStringLiteral("rotation"),
+                                  QJsonArray{config.rotation.x(), config.rotation.y(), config.rotation.z()});
                 }
                 
                 // Update camera config (e.g., change follow target)
@@ -538,6 +847,11 @@ int runMotiveEditorApp(int argc, char** argv)
                                     return false;
                                 }
                                 config.mode = mode;
+                            }
+                            if (body.contains(QStringLiteral("invertHorizontalDrag")))
+                            {
+                                config.invertHorizontalDrag =
+                                    body.value(QStringLiteral("invertHorizontalDrag")).toBool(config.invertHorizontalDrag);
                             }
                             
                             viewport->updateCameraConfig(cameraIndex, config);
@@ -623,6 +937,7 @@ int runMotiveEditorApp(int argc, char** argv)
                         defaultConfig.type = ViewportHostWidget::CameraConfig::Type::Free;
                         defaultConfig.position = QVector3D(0.0f, 0.0f, 3.0f);
                         defaultConfig.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+                        defaultConfig.invertHorizontalDrag = true;
                         viewport->updateCameraConfig(0, defaultConfig);
                         viewport->setActiveCamera(0);
                     }
@@ -647,6 +962,7 @@ int runMotiveEditorApp(int argc, char** argv)
                         defaultConfig.type = ViewportHostWidget::CameraConfig::Type::Free;
                         defaultConfig.position = QVector3D(0.0f, 0.0f, 3.0f);
                         defaultConfig.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+                        defaultConfig.invertHorizontalDrag = true;
                         viewport->updateCameraConfig(0, defaultConfig);
                         viewport->setActiveCamera(0);
                     }

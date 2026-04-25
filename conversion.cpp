@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <limits>
 #include <optional>
 
 namespace motive::ui {
@@ -270,7 +271,19 @@ QList<QFileInfo> findConvertibleSourcesWithoutGltf(const QString& rootPath, cons
 QDoubleSpinBox* MainWindowShell::createSpinBox(QWidget* parent, double min, double max, double step)
 {
     auto* spinBox = new QDoubleSpinBox(parent);
-    spinBox->setRange(min, max);
+    constexpr double kNoLimit = std::numeric_limits<double>::max() / 1000.0;
+    if (min == 0.0 && max == 0.0)
+    {
+        spinBox->setRange(-kNoLimit, kNoLimit);
+    }
+    else if (max == 0.0)
+    {
+        spinBox->setRange(min, kNoLimit);
+    }
+    else
+    {
+        spinBox->setRange(min, max);
+    }
     spinBox->setSingleStep(step);
     spinBox->setDecimals(3);
     spinBox->setFixedWidth(80);

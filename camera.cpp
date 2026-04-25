@@ -186,12 +186,13 @@ void Camera::update(uint32_t currentImage)
     (void)currentImage;
     // Recover from missed mouse-release events (focus/capture transitions).
     // If orbit drag is active but RMB is no longer physically pressed, end drag.
-    if (rightMouseDown && windowHandle)
+    if (rightMouseDown && windowHandle && !externalMouseInput)
     {
         const int rmbState = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_RIGHT);
         if (rmbState != GLFW_PRESS)
         {
             rightMouseDown = false;
+            dragAnchorValid = false;
             if (temporaryOrbitDrag && mode == CameraMode::OrbitFollow)
             {
                 setMode(CameraMode::CharacterFollow);
@@ -238,19 +239,10 @@ void Camera::handleMouseButton(int button, int action, int mods)
             temporaryOrbitDrag = false;
         }
         rightMouseDown = pressed;
-        if (rightMouseDown)
-        {
-            double x, y;
-            if (windowHandle)
-            {
-                glfwGetCursorPos(windowHandle, &x, &y);
-                lastMousePos = glm::vec2(x, y);
-            }
-            else
-            {
-                std::cerr << "[Warning] Camera " << this << " received mouse input without a valid window handle" << std::endl;
-            }
-        }
+        // Anchor drag from the first subsequent cursor sample.
+        // This avoids mixing coordinate spaces (GLFW window coords vs Qt widget coords),
+        // which can cause jumpy/non-smooth right-drag rotation.
+        dragAnchorValid = false;
     }
 }
 
@@ -265,11 +257,18 @@ void Camera::handleCursorPos(double xpos, double ypos)
         if (rightMouseDown)
         {
             glm::vec2 currentPos(xpos, ypos);
+            if (!dragAnchorValid)
+            {
+                lastMousePos = currentPos;
+                dragAnchorValid = true;
+                return;
+            }
             glm::vec2 delta = currentPos - lastMousePos;
             lastMousePos = currentPos;
 
-            const float sensitivity = 0.005f;
-            float deltaYaw = delta.x * sensitivity;
+            const float sensitivity = 0.003f;
+            const float horizontalSign = invertHorizontalDrag ? -1.0f : 1.0f;
+            float deltaYaw = delta.x * sensitivity * horizontalSign;
             float deltaPitch = -delta.y * sensitivity;
             
             // Clamp pitch
@@ -344,6 +343,7 @@ void Camera::clearInputState()
 {
     std::fill(std::begin(keysPressed), std::end(keysPressed), false);
     rightMouseDown = false;
+    dragAnchorValid = false;
 }
 
 void Camera::setWindow(GLFWwindow *window)
@@ -551,10 +551,6 @@ void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
         std::cout << "[Camera] Follow target cleared" << std::endl;
         followWarningActive = false;
         followWarningCooldownSeconds = 0.0f;
-        if (mode == CameraMode::CharacterFollow || mode == CameraMode::OrbitFollow)
-        {
-            setMode(CameraMode::Fixed);
-        }
     }
 }
 
@@ -671,7 +667,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
     if (glm::length(toTarget) > 0.001f)
     {
         const glm::vec3 front = glm::normalize(toTarget);
-        const float yaw = std::atan2(front.x, -front.z);
+        const float yaw = std::atan2(-front.x, -front.z);
         const float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
         setEulerRotation(glm::vec2(yaw, pitch));
     }
@@ -688,8 +684,9 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
     const bool targetBehind = frontDot < 0.0f;
     const bool targetTooClose = targetDistance <= std::max(perspNear + 0.05f, followcam::kMinDistance * 0.35f);
     const bool badFraming = targetBehind || targetTooClose;
+    const bool shouldLogFollowWarnings = (display && display->getActiveCamera() == this);
     followWarningCooldownSeconds = std::max(0.0f, followWarningCooldownSeconds - std::max(deltaTime, 0.0f));
-    if (badFraming && followWarningCooldownSeconds <= 0.0f)
+    if (shouldLogFollowWarnings && badFraming && followWarningCooldownSeconds <= 0.0f)
     {
         std::cout << "[Camera][Follow][Warning] Target framing is invalid."
                   << " camera=\"" << cameraName << "\""
@@ -705,7 +702,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
                   << std::endl;
         followWarningCooldownSeconds = 1.0f;
     }
-    if (!badFraming && followWarningActive)
+    if (shouldLogFollowWarnings && !badFraming && followWarningActive)
     {
         std::cout << "[Camera][Follow] Target framing recovered."
                   << " camera=\"" << cameraName << "\""
@@ -859,7 +856,7 @@ glm::quat Camera::quaternionFromYawPitch(float yaw, float pitch)
 glm::vec2 Camera::yawPitchFromQuaternion(const glm::quat& orientation)
 {
     const glm::vec3 front = glm::normalize(orientation * glm::vec3(0.0f, 0.0f, -1.0f));
-    const float yaw = std::atan2(front.x, -front.z);
+    const float yaw = std::atan2(-front.x, -front.z);
     const float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
     return glm::vec2(yaw, pitch);
 }

@@ -106,7 +106,9 @@ public:
         
         // Animation state
         enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
+        enum class JumpPhase { None, Start, Apex, Fall, Land };
         AnimState currentAnimState = AnimState::Idle;
+        JumpPhase jumpPhase = JumpPhase::None;
         float walkSpeedThreshold = 0.1f;
         float runSpeedThreshold = 4.0f;
         float turnResponsiveness = 3.0f; // Lower = wider turning radius, more gradual
@@ -172,6 +174,14 @@ public:
         float animBlendSpeed = 5.0f;     // How fast to blend between states
         float comeToRestDuration = 0.20f;
         float comeToRestTimer = 0.0f;
+        float moveIntentGraceDuration = 0.10f;
+        float moveIntentGraceTimer = 0.0f;
+        float jumpStartMinDuration = 0.08f;
+        float jumpLandMinDuration = 0.12f;
+        float jumpFallVelocityThreshold = -0.5f;
+        float jumpApexVelocityThreshold = 0.5f;
+        float jumpPhaseTimer = 0.0f;
+        bool wasGroundedLastFrame = true;
         AnimState previousAnimState = AnimState::Idle;
     };
 

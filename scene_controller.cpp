@@ -353,6 +353,28 @@ void ViewportSceneController::updateSceneItemCharacterTurnResponsiveness(int ind
     }
 }
 
+void ViewportSceneController::updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    m_sceneEntries[index].focusPointOffset = focusPointOffset;
+    m_sceneEntries[index].focusDistance = focusDistance > 0.0f ? focusDistance : 0.0f;
+}
+
+void ViewportSceneController::updateSceneItemFocusCameraOffset(int index, const QVector3D& focusCameraOffset, bool valid)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    m_sceneEntries[index].focusCameraOffset = focusCameraOffset;
+    m_sceneEntries[index].focusCameraOffsetValid = valid;
+}
+
 void ViewportSceneController::renameSceneItem(int index, const QString& name)
 {
     if (index < 0 || index >= m_sceneEntries.size())

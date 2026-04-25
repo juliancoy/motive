@@ -509,6 +509,8 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         character.velocity.y = character.jumpSpeed;
         character.isGrounded = false;
         character.jumpRequested = false;
+        character.jumpPhase = CharacterController::JumpPhase::Start;
+        character.jumpPhaseTimer = character.jumpStartMinDuration;
         character.currentAnimState = CharacterController::AnimState::Jump;
     }
     
@@ -594,6 +596,65 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     
     const bool hasMoveKeyIntent =
         (character.keyW || character.keyA || character.keyS || character.keyD);
+    if (hasMoveKeyIntent)
+    {
+        character.moveIntentGraceTimer = character.moveIntentGraceDuration;
+    }
+    else
+    {
+        character.moveIntentGraceTimer = std::max(0.0f, character.moveIntentGraceTimer - dt);
+    }
+    const bool hasRecentMoveIntent = hasMoveKeyIntent || character.moveIntentGraceTimer > 0.0f;
+
+    if (!character.isGrounded)
+    {
+        if (character.jumpPhase == CharacterController::JumpPhase::None ||
+            character.jumpPhase == CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Start;
+            character.jumpPhaseTimer = character.jumpStartMinDuration;
+        }
+
+        if (character.jumpPhase == CharacterController::JumpPhase::Start)
+        {
+            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
+            if (character.jumpPhaseTimer <= 0.0f ||
+                character.velocity.y <= character.jumpApexVelocityThreshold)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::Apex;
+            }
+        }
+
+        if ((character.jumpPhase == CharacterController::JumpPhase::Start ||
+             character.jumpPhase == CharacterController::JumpPhase::Apex) &&
+            character.velocity.y <= character.jumpFallVelocityThreshold)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Fall;
+        }
+    }
+    else
+    {
+        if (!character.wasGroundedLastFrame &&
+            character.jumpPhase != CharacterController::JumpPhase::None)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Land;
+            character.jumpPhaseTimer = character.jumpLandMinDuration;
+        }
+        else if (character.jumpPhase == CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
+            if (character.jumpPhaseTimer <= 0.0f)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::None;
+            }
+        }
+        else if (character.jumpPhase != CharacterController::JumpPhase::None &&
+                 character.jumpPhase != CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::None;
+        }
+    }
+    character.wasGroundedLastFrame = character.isGrounded;
 
     const auto isLocomotionState = [](CharacterController::AnimState state) -> bool {
         return state == CharacterController::AnimState::WalkForward ||
@@ -604,17 +665,16 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     };
     const bool wasLocomotion = isLocomotionState(character.currentAnimState);
 
-    // Jump animation takes priority when not grounded.
-    if (!character.isGrounded)
+    // Jump animation takes priority while in any jump phase.
+    if (character.jumpPhase != CharacterController::JumpPhase::None)
     {
         character.comeToRestTimer = 0.0f;
         targetState = CharacterController::AnimState::Jump;
     }
     else if (!hasMoveKeyIntent)
     {
-        // Trigger a short "come to rest" phase when transitioning out of locomotion.
-        if (wasLocomotion && character.comeToRestTimer <= 0.0f &&
-            horizontalSpeedForAnim > (character.walkSpeedThreshold * 0.5f))
+        // Trigger a short come-to-rest phase whenever locomotion input is released.
+        if (character.comeToRestTimer <= 0.0f && (wasLocomotion || hasRecentMoveIntent))
         {
             character.comeToRestTimer = character.comeToRestDuration;
         }
@@ -685,6 +745,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     if (animated && !animationClips.empty())
     {
         std::string targetClip;
+        bool targetLoop = true;
         
         // Helper to find clip by substring
         auto findClip = [&](const std::vector<std::string>& searchTerms) -> std::string {
@@ -726,6 +787,14 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                         "idle_loop", "idle_standing", "idle_stand",
                         "Idle", "IDLE", "idle"
                     });
+                }
+                if (!targetClip.empty())
+                {
+                    const bool isIdleFallback =
+                        targetClip.find("idle") != std::string::npos ||
+                        targetClip.find("Idle") != std::string::npos ||
+                        targetClip.find("IDLE") != std::string::npos;
+                    targetLoop = isIdleFallback;
                 }
                 break;
                 
@@ -804,12 +873,38 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 break;
                 
             case CharacterController::AnimState::Jump:
-                // Standard: jump, jump_up, jump_start, jumping
-                targetClip = findClip({
-                    character.animJump,
-                    "jump_start", "jump_up", "jump_loop", "jump",
-                    "Jumping", "JUMPING", "jumping", "Jump", "JUMP"
-                });
+                if (character.jumpPhase == CharacterController::JumpPhase::Start)
+                {
+                    targetClip = findClip({
+                        character.animJump,
+                        "jump_start", "jump_takeoff", "takeoff", "jump_up"
+                    });
+                    targetLoop = false;
+                }
+                else if (character.jumpPhase == CharacterController::JumpPhase::Land)
+                {
+                    targetClip = findClip({
+                        character.animLand,
+                        "jump_land", "landing", "land", "land_to_idle"
+                    });
+                    targetLoop = false;
+                }
+                else if (character.jumpPhase == CharacterController::JumpPhase::Fall)
+                {
+                    targetClip = findClip({
+                        character.animFall,
+                        "jump_fall", "fall_loop", "falling", "fall"
+                    });
+                    targetLoop = true;
+                }
+                else
+                {
+                    targetClip = findClip({
+                        "jump_apex", "jump_loop", character.animJump, "jump",
+                        "Jumping", "JUMPING", "jumping", "Jump", "JUMP"
+                    });
+                    targetLoop = true;
+                }
                 // Fallback to idle
                 if (targetClip.empty())
                     targetClip = findClip({
@@ -909,13 +1004,13 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             
             if (needSwitch)
             {
-                setAnimationPlaybackState(targetClip, true, true, targetSpeed);
+                setAnimationPlaybackState(targetClip, true, targetLoop, targetSpeed);
             }
             else
             {
-                // Same clip: keep runtime explicitly in playing/looping character mode.
+                // Same clip: keep runtime explicitly in character-mode playback settings.
                 fbxAnimationRuntime->playing = true;
-                fbxAnimationRuntime->loop = true;
+                fbxAnimationRuntime->loop = targetLoop;
                 fbxAnimationRuntime->speed = targetSpeed;
             }
         }

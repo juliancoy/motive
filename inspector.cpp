@@ -94,23 +94,23 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     const auto setFollowParamsVisible = [this](bool visible)
     {
         if (m_followParamsLabel) {
-            m_followParamsLabel->setVisible(true);
+            m_followParamsLabel->setVisible(visible);
             m_followParamsLabel->setEnabled(visible);
         }
         if (m_followDistanceSpin) {
-            m_followDistanceSpin->setVisible(true);
+            m_followDistanceSpin->setVisible(visible);
             m_followDistanceSpin->setEnabled(visible);
         }
         if (m_followYawSpin) {
-            m_followYawSpin->setVisible(true);
+            m_followYawSpin->setVisible(visible);
             m_followYawSpin->setEnabled(visible);
         }
         if (m_followPitchSpin) {
-            m_followPitchSpin->setVisible(true);
+            m_followPitchSpin->setVisible(visible);
             m_followPitchSpin->setEnabled(visible);
         }
         if (m_followSmoothSpin) {
-            m_followSmoothSpin->setVisible(true);
+            m_followSmoothSpin->setVisible(visible);
             m_followSmoothSpin->setEnabled(visible);
         }
     };
@@ -321,6 +321,63 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             m_objectAnimationRuntimeInfoValue->setText(animationInfo);
         }
     };
+    const auto setMotionOverlayInspector = [this](bool visible)
+    {
+        if (m_motionDebugOverlaySection)
+        {
+            m_motionDebugOverlaySection->setVisible(true);
+            m_motionDebugOverlaySection->setEnabled(visible);
+        }
+        if (!visible || !m_viewportHost)
+        {
+            return;
+        }
+
+        const QJsonObject options = m_viewportHost->motionDebugOverlayOptionsJson();
+        const bool enabled = options.value(QStringLiteral("enabled")).toBool(false);
+        const bool drawTargetMarkers = options.value(QStringLiteral("showTargetMarkers")).toBool(true);
+        const bool drawVelocity = options.value(QStringLiteral("showVelocityVector")).toBool(true);
+        const bool drawCameraLine = options.value(QStringLiteral("showCameraToTargetLine")).toBool(true);
+        const bool drawCenterCrosshair = options.value(QStringLiteral("showScreenCenterCrosshair")).toBool(true);
+        const double velocityScale = options.value(QStringLiteral("velocityScale")).toDouble(0.25);
+
+        if (m_motionOverlayEnabledCheck)
+        {
+            m_motionOverlayEnabledCheck->blockSignals(true);
+            m_motionOverlayEnabledCheck->setChecked(enabled);
+            m_motionOverlayEnabledCheck->blockSignals(false);
+        }
+        if (m_motionOverlayTargetMarkersCheck)
+        {
+            m_motionOverlayTargetMarkersCheck->blockSignals(true);
+            m_motionOverlayTargetMarkersCheck->setChecked(drawTargetMarkers);
+            m_motionOverlayTargetMarkersCheck->blockSignals(false);
+        }
+        if (m_motionOverlayVelocityCheck)
+        {
+            m_motionOverlayVelocityCheck->blockSignals(true);
+            m_motionOverlayVelocityCheck->setChecked(drawVelocity);
+            m_motionOverlayVelocityCheck->blockSignals(false);
+        }
+        if (m_motionOverlayCameraLineCheck)
+        {
+            m_motionOverlayCameraLineCheck->blockSignals(true);
+            m_motionOverlayCameraLineCheck->setChecked(drawCameraLine);
+            m_motionOverlayCameraLineCheck->blockSignals(false);
+        }
+        if (m_motionOverlayCenterCrosshairCheck)
+        {
+            m_motionOverlayCenterCrosshairCheck->blockSignals(true);
+            m_motionOverlayCenterCrosshairCheck->setChecked(drawCenterCrosshair);
+            m_motionOverlayCenterCrosshairCheck->blockSignals(false);
+        }
+        if (m_motionOverlayVelocityScaleSpin)
+        {
+            m_motionOverlayVelocityScaleSpin->blockSignals(true);
+            m_motionOverlayVelocityScaleSpin->setValue(velocityScale);
+            m_motionOverlayVelocityScaleSpin->blockSignals(false);
+        }
+    };
     const auto vec3FromJson = [](const QJsonValue& value) -> QVector3D
     {
         const QJsonArray arr = value.toArray();
@@ -392,6 +449,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             float followSmooth = followcam::kDefaultSmoothSpeed;
             float nearClip = 0.1f;
             float farClip = 100.0f;
+            bool invertHorizontalDrag = false;
             
             if (cameraIndex >= 0 && cameraIndex < configs.size()) {
                 isFollowCamera = configs[cameraIndex].isFollowCamera();
@@ -402,6 +460,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 followSmooth = configs[cameraIndex].followSmoothSpeed;
                 nearClip = configs[cameraIndex].nearClip;
                 farClip = configs[cameraIndex].farClip;
+                invertHorizontalDrag = configs[cameraIndex].invertHorizontalDrag;
             }
             
             QString cameraName = QStringLiteral("Camera");
@@ -415,6 +474,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorNameValue, cameraName);
             setValue(m_inspectorPathValue, cameraPath);
             setValue(m_animationModeValue, QStringLiteral("Static"));
+            setValue(m_cameraTypeValue, isFollowCamera ? QStringLiteral("Follow Camera")
+                                                       : QStringLiteral("Free Camera"));
             setValue(m_boundsSizeValue, QStringLiteral("-"));
             setElementDetailTab(3); // Camera
             
@@ -423,12 +484,33 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 m_freeFlyCameraCheck->setVisible(true);
                 m_freeFlyCameraCheck->setEnabled(true);
                 bool freeFly = true;
+                QString mode = QStringLiteral("FreeFly");
                 if (cameraIndex >= 0 && cameraIndex < configs.size()) {
-                    freeFly = configs[cameraIndex].freeFly;
+                    mode = configs[cameraIndex].mode;
+                    freeFly = mode.compare(QStringLiteral("FreeFly"), Qt::CaseInsensitive) == 0;
                 }
                 m_freeFlyCameraCheck->blockSignals(true);
                 m_freeFlyCameraCheck->setChecked(freeFly);
                 m_freeFlyCameraCheck->blockSignals(false);
+                if (m_wasdRoutingCombo)
+                {
+                    const int index = m_wasdRoutingCombo->findData(mode);
+                    m_wasdRoutingCombo->blockSignals(true);
+                    m_wasdRoutingCombo->setVisible(true);
+                    m_wasdRoutingCombo->setEnabled(true);
+                    if (index >= 0)
+                    {
+                        m_wasdRoutingCombo->setCurrentIndex(index);
+                    }
+                    m_wasdRoutingCombo->blockSignals(false);
+                }
+            }
+            if (m_invertHorizontalDragCheck) {
+                m_invertHorizontalDragCheck->setVisible(true);
+                m_invertHorizontalDragCheck->setEnabled(true);
+                m_invertHorizontalDragCheck->blockSignals(true);
+                m_invertHorizontalDragCheck->setChecked(invertHorizontalDrag);
+                m_invertHorizontalDragCheck->blockSignals(false);
             }
             
             // Show near/far clip spinboxes for all cameras
@@ -517,6 +599,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setGravityInspector(false);
             setCharacterMotionInspector(false);
             setObjectRuntimeInspector(false);
+            setMotionOverlayInspector(true);
             setTexturePreview(QImage());
             
             // Show follow target selector for all cameras
@@ -530,6 +613,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorNameValue, QStringLiteral("Directional Light"));
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
             setValue(m_animationModeValue, QStringLiteral("Static"));
+            setValue(m_cameraTypeValue, QStringLiteral("-"));
             setValue(m_boundsSizeValue, QStringLiteral("-"));
             setElementDetailTab(1); // Visual
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
@@ -551,6 +635,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setGravityInspector(false);
             setCharacterMotionInspector(false);
             setObjectRuntimeInspector(false);
+            setMotionOverlayInspector(true);
             if (m_lockScaleXYZCheck) {
                 m_lockScaleXYZCheck->setVisible(true);
                 m_lockScaleXYZCheck->setEnabled(false);
@@ -558,6 +643,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_freeFlyCameraCheck) {
                 m_freeFlyCameraCheck->setVisible(true);
                 m_freeFlyCameraCheck->setEnabled(false);
+            }
+            if (m_wasdRoutingCombo) {
+                m_wasdRoutingCombo->setVisible(true);
+                m_wasdRoutingCombo->setEnabled(false);
+            }
+            if (m_invertHorizontalDragCheck) {
+                m_invertHorizontalDragCheck->setVisible(true);
+                m_invertHorizontalDragCheck->setEnabled(false);
             }
             if (m_nearClipSpin) {
                 m_nearClipSpin->setVisible(true);
@@ -591,6 +684,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             m_freeFlyCameraCheck->setVisible(true);
             m_freeFlyCameraCheck->setEnabled(false);
         }
+        if (m_wasdRoutingCombo) {
+            m_wasdRoutingCombo->setVisible(true);
+            m_wasdRoutingCombo->setEnabled(false);
+        }
+        if (m_invertHorizontalDragCheck) {
+            m_invertHorizontalDragCheck->setVisible(true);
+            m_invertHorizontalDragCheck->setEnabled(false);
+        }
         if (m_nearClipSpin) {
             m_nearClipSpin->setVisible(true);
             m_nearClipSpin->setEnabled(false);
@@ -602,6 +703,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
+        setValue(m_cameraTypeValue, QStringLiteral("-"));
         setValue(m_boundsSizeValue, QStringLiteral("-"));
         if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
         if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
@@ -620,6 +722,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setAnimationInspector(false);
         setCharacterMotionInspector(false);
         setObjectRuntimeInspector(false);
+        setMotionOverlayInspector(true);
         if (m_lockScaleXYZCheck) {
             m_lockScaleXYZCheck->setVisible(true);
             m_lockScaleXYZCheck->setEnabled(false);
@@ -653,6 +756,18 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     if (m_inspectorScaleX) m_inspectorScaleX->setValue(item.scale.x());
     if (m_inspectorScaleY) m_inspectorScaleY->setValue(item.scale.y());
     if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(item.scale.z());
+    // Scene items must always re-enable transform controls after camera/light selections
+    // may have disabled them.
+    setTransformInspectorVisible(true);
+    if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(true);
+    if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(true);
+    if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(true);
+    if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(true);
+    if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(true);
+    if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(true);
+    if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(true);
+    if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(true);
+    if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(true);
     if (m_lockScaleXYZCheck) {
         m_lockScaleXYZCheck->setVisible(true);
         m_lockScaleXYZCheck->setEnabled(true);
@@ -685,9 +800,35 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                                            : QStringLiteral("Set Alpha 1"));
     }
     setLightInspectorVisible(false);
-    setFollowTargetInspectorVisible(true, row);
+    int followCameraIndex = -1;
+    bool hasObjectFollowCamera = false;
+    ViewportHostWidget::CameraConfig objectFollowConfig;
+    if (m_viewportHost)
+    {
+        const auto configs = m_viewportHost->cameraConfigs();
+        for (int i = 0; i < configs.size(); ++i)
+        {
+            const auto& cfg = configs[i];
+            if (cfg.isFollowCamera() && cfg.followTargetIndex == row)
+            {
+                followCameraIndex = i;
+                hasObjectFollowCamera = true;
+                objectFollowConfig = cfg;
+                break;
+            }
+        }
+    }
+    setFollowTargetInspectorVisible(true, hasObjectFollowCamera ? row : -1);
+    setValue(m_cameraTypeValue, hasObjectFollowCamera ? QStringLiteral("Object Follow Camera")
+                                                      : QStringLiteral("None"));
     if (m_freeFlyCameraCheck) {
         m_freeFlyCameraCheck->setVisible(true);
+    }
+    if (m_wasdRoutingCombo) {
+        m_wasdRoutingCombo->setVisible(true);
+    }
+    if (m_invertHorizontalDragCheck) {
+        m_invertHorizontalDragCheck->setVisible(true);
     }
     if (m_nearClipSpin) {
         m_nearClipSpin->setVisible(true);
@@ -713,44 +854,43 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     if (m_viewportHost)
     {
         QString followCamInfo = QStringLiteral("None");
-        bool hasObjectFollowCamera = false;
-        ViewportHostWidget::CameraConfig objectFollowConfig;
-        const int followCameraIndex = m_viewportHost->ensureFollowCamera(row, 5.0f, 0.0f, 20.0f);
-        const auto configs = m_viewportHost->cameraConfigs();
-        if (followCameraIndex >= 0 && followCameraIndex < configs.size())
+        if (hasObjectFollowCamera)
         {
-            const auto& cfg = configs[followCameraIndex];
-            if (cfg.isFollowCamera())
-            {
-                hasObjectFollowCamera = true;
-                objectFollowConfig = cfg;
-                const QString followCamName = cfg.name.isEmpty()
-                    ? QStringLiteral("Follow Cam (Scene %1)").arg(row)
-                    : cfg.name;
-                followCamInfo = QStringLiteral("%1\nDistance: %2  Yaw: %3  Pitch: %4  Damping: %5")
-                    .arg(followCamName)
-                    .arg(QString::number(cfg.followDistance, 'f', 2))
-                    .arg(QString::number(cfg.followYaw, 'f', 1))
-                    .arg(QString::number(cfg.followPitch, 'f', 1))
-                    .arg(QString::number(cfg.followSmoothSpeed, 'f', 2));
-            }
+            const auto& cfg = objectFollowConfig;
+            const QString followCamName = cfg.name.isEmpty()
+                ? QStringLiteral("Follow Cam (Scene %1)").arg(row)
+                : cfg.name;
+            followCamInfo = QStringLiteral("%1\nDistance: %2  Yaw: %3  Pitch: %4  Damping: %5")
+                .arg(followCamName)
+                .arg(QString::number(cfg.followDistance, 'f', 2))
+                .arg(QString::number(cfg.followYaw, 'f', 1))
+                .arg(QString::number(cfg.followPitch, 'f', 1))
+                .arg(QString::number(cfg.followSmoothSpeed, 'f', 2));
         }
         if (m_followTargetCombo)
         {
             m_followTargetCombo->setEnabled(true);
         }
-        setFollowParamsVisible(true);
+        setFollowParamsVisible(hasObjectFollowCamera);
         if (m_freeFlyCameraCheck)
         {
-            m_freeFlyCameraCheck->setEnabled(true);
+            m_freeFlyCameraCheck->setEnabled(hasObjectFollowCamera);
+        }
+        if (m_wasdRoutingCombo)
+        {
+            m_wasdRoutingCombo->setEnabled(hasObjectFollowCamera);
+        }
+        if (m_invertHorizontalDragCheck)
+        {
+            m_invertHorizontalDragCheck->setEnabled(hasObjectFollowCamera);
         }
         if (m_nearClipSpin)
         {
-            m_nearClipSpin->setEnabled(true);
+            m_nearClipSpin->setEnabled(hasObjectFollowCamera);
         }
         if (m_farClipSpin)
         {
-            m_farClipSpin->setEnabled(true);
+            m_farClipSpin->setEnabled(hasObjectFollowCamera);
         }
         if (hasObjectFollowCamera)
         {
@@ -758,7 +898,17 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_followYawSpin) m_followYawSpin->setValue(objectFollowConfig.followYaw);
             if (m_followPitchSpin) m_followPitchSpin->setValue(objectFollowConfig.followPitch);
             if (m_followSmoothSpin) m_followSmoothSpin->setValue(objectFollowConfig.followSmoothSpeed);
-            if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setChecked(objectFollowConfig.freeFly);
+            if (m_freeFlyCameraCheck)
+            {
+                m_freeFlyCameraCheck->setChecked(
+                    objectFollowConfig.mode.compare(QStringLiteral("FreeFly"), Qt::CaseInsensitive) == 0);
+            }
+            if (m_wasdRoutingCombo)
+            {
+                const int modeIndex = m_wasdRoutingCombo->findData(objectFollowConfig.mode);
+                if (modeIndex >= 0) m_wasdRoutingCombo->setCurrentIndex(modeIndex);
+            }
+            if (m_invertHorizontalDragCheck) m_invertHorizontalDragCheck->setChecked(objectFollowConfig.invertHorizontalDrag);
             if (m_nearClipSpin) m_nearClipSpin->setValue(objectFollowConfig.nearClip);
             if (m_farClipSpin) m_farClipSpin->setValue(objectFollowConfig.farClip);
         }
@@ -769,6 +919,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             if (m_followPitchSpin) m_followPitchSpin->setValue(20.0);
             if (m_followSmoothSpin) m_followSmoothSpin->setValue(followcam::kDefaultSmoothSpeed);
             if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setChecked(false);
+            if (m_wasdRoutingCombo) m_wasdRoutingCombo->setCurrentIndex(m_wasdRoutingCombo->findData(QStringLiteral("OrbitFollow")));
+            if (m_invertHorizontalDragCheck) m_invertHorizontalDragCheck->setChecked(false);
             if (m_nearClipSpin) m_nearClipSpin->setValue(0.1);
             if (m_farClipSpin) m_farClipSpin->setValue(100.0);
         }
@@ -836,10 +988,12 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         }
 
         setObjectRuntimeInspector(true, followCamInfo, kinematicInfo, animationRuntimeInfo);
+        setMotionOverlayInspector(true);
     }
     else
     {
         setObjectRuntimeInspector(false);
+        setMotionOverlayInspector(false);
     }
     if (m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0)
     {
