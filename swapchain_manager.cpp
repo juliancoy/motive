@@ -125,6 +125,15 @@ void SwapchainManager::shutdown()
 
 void SwapchainManager::createSwapchain()
 {
+    // Defensive checks: ensure engine and surface are valid
+    if (!engine_ || !engine_->logicalDevice || !engine_->physicalDevice) {
+        throw std::runtime_error("SwapchainManager: Engine or device is not initialized!");
+    }
+    
+    if (surface_ == VK_NULL_HANDLE) {
+        throw std::runtime_error("SwapchainManager: Surface is not initialized!");
+    }
+    
     VkDevice device = engine_->logicalDevice;
     VkPhysicalDevice physicalDevice = engine_->physicalDevice;
     
@@ -134,6 +143,11 @@ void SwapchainManager::createSwapchain()
     uint32_t graphicsFamilyIndex = UINT32_MAX;
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+    
+    if (queueFamilyCount == 0) {
+        throw std::runtime_error("SwapchainManager: No queue families available!");
+    }
+    
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
 

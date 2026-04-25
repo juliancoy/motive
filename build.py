@@ -86,7 +86,7 @@ LIB_ALIASES = {
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Build the Motive engine')
 parser.add_argument('--rebuild', action='store_true', help='Force rebuild all files, ignoring timestamps')
-parser.add_argument('--full', action='store_true', help='Also build the standalone runtime executables (motive3d, motive2d, encode)')
+parser.add_argument('--full', action='store_true', help='Also build additional standalone runtime executables (motive3d_runtime, motive2d, encode)')
 args = parser.parse_args()
 REBUILD = args.rebuild
 FULL_BUILD = args.full
@@ -99,9 +99,9 @@ manifest_path = os.path.join(this_dir, ".build_manifest.json")
 ffmpeg_install_dir = os.path.abspath(os.path.join(this_dir, "FFmpeg/.build/install"))
 
 # Source and object files
-full_main_sources = ["motive3d.cpp", "motive2d.cpp", "encode.cpp"]
+full_main_sources = ["motive3d.cpp", "motive3d_app.cpp", "motive2d.cpp", "encode.cpp"]
 main_sources = list(full_main_sources) if FULL_BUILD else []
-qt_main_sources = ["motive_editor_main.cpp"]
+qt_main_sources = ["main.cpp"]
 exclude_sources = [
     "brain_viewer_engine.cpp",  # currently does not match the main engine APIs
     "vulkan_video_bridge.cpp",  # missing Vulkan-Video-Samples libraries
@@ -511,11 +511,11 @@ if FULL_BUILD:
         else:
             print(f"\nExecutable {binary_name} up to date.")
 else:
-    print("\nSkipping runtime executables. Use --full to build motive3d, motive2d, and encode.")
+    print("\nSkipping runtime executables. Use --full to build motive3d_runtime, motive2d, and encode.")
 
-# Link Qt editor executable when needed
+# Link Qt shell executable when needed
 for src, obj in zip(qt_main_sources, qt_main_objects):
-    binary_name = "motive_editor"
+    binary_name = "motive3d"
     need_link = not os.path.exists(binary_name)
     if not need_link and not REBUILD:
         bin_mtime = os.path.getmtime(binary_name)

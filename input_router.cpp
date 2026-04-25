@@ -3,14 +3,27 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <iostream>
+#include <chrono>
+#include <algorithm>
+
+#include "camera.h"
+#include "display.h"
+#include "input_mode_rules.h"
+#include "model.h"
 
 InputRouter::InputRouter()
-    : m_characterTarget(nullptr)
+    : m_characterTarget(nullptr),
+      m_display(nullptr)
 {
 }
 
 InputRouter::~InputRouter()
 {
+}
+
+void InputRouter::setDisplay(Display* display)
+{
+    m_display = display;
 }
 
 void InputRouter::setCharacterTarget(Model* model)
@@ -62,24 +75,120 @@ void InputRouter::handleKey(int key, int action)
     }
 }
 
-void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, 
-                         glm::vec3& inout_cameraPos, bool isFollowMode, 
-                         bool controlsEnabled, float moveSpeed)
+void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::vec3& inout_cameraPos)
 {
-    if (!controlsEnabled)
+    // Query camera state from Display
+    Camera* camera = m_display ? m_display->getActiveCamera() : nullptr;
+    if (!camera)
     {
         m_isCharacterInputActive = false;
         return;
     }
 
-    // Character input: follow mode with target
-    if (isFollowMode && m_characterTarget)
+    const auto now = std::chrono::steady_clock::now();
+    if (m_simulatedInputActive && now >= m_simulatedInputExpiry)
+    {
+        clearSimulatedInput();
+    }
+
+    // Keep key state in sync with real keyboard state to avoid stale "stuck key"
+    // behavior when release events are missed due to focus/input capture transitions.
+    if (m_simulatedInputActive)
+    {
+        for (int i = 0; i < 6; ++i)
+        {
+            m_inputState.keysPressed[i] = m_simulatedKeys[static_cast<size_t>(i)];
+        }
+        if (m_simulatedJumpRequested)
+        {
+            m_inputState.jumpRequested = true;
+            m_simulatedJumpRequested = false;
+        }
+    }
+    else if (m_display && m_display->window)
+    {
+        const bool nativeFocused = (glfwGetWindowAttrib(m_display->window, GLFW_FOCUSED) == GLFW_TRUE);
+        if (nativeFocused)
+        {
+            m_inputState.keysPressed[0] = (glfwGetKey(m_display->window, GLFW_KEY_W) == GLFW_PRESS);
+            m_inputState.keysPressed[1] = (glfwGetKey(m_display->window, GLFW_KEY_A) == GLFW_PRESS);
+            m_inputState.keysPressed[2] = (glfwGetKey(m_display->window, GLFW_KEY_S) == GLFW_PRESS);
+            m_inputState.keysPressed[3] = (glfwGetKey(m_display->window, GLFW_KEY_D) == GLFW_PRESS);
+            m_inputState.keysPressed[4] = (glfwGetKey(m_display->window, GLFW_KEY_Q) == GLFW_PRESS);
+            m_inputState.keysPressed[5] = (glfwGetKey(m_display->window, GLFW_KEY_E) == GLFW_PRESS);
+        }
+    }
+
+    updateForMode(deltaTime,
+                  cameraRotation,
+                  inout_cameraPos,
+                  camera->getMode(),
+                  camera->getControlsEnabled(),
+                  camera->moveSpeed);
+}
+
+void InputRouter::setSimulatedInput(const std::array<bool, 6>& keys, bool jumpRequested, float durationSeconds)
+{
+    m_simulatedKeys = keys;
+    m_simulatedInputActive = true;
+    m_simulatedJumpRequested = jumpRequested;
+    const float clampedDuration = std::max(0.0f, durationSeconds);
+    m_simulatedInputExpiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(
+        static_cast<int>(clampedDuration * 1000.0f));
+}
+
+void InputRouter::clearSimulatedInput()
+{
+    m_simulatedKeys = {false, false, false, false, false, false};
+    m_simulatedInputActive = false;
+    m_simulatedJumpRequested = false;
+    m_simulatedInputExpiry = std::chrono::steady_clock::time_point::min();
+    for (int i = 0; i < 6; ++i)
+    {
+        m_inputState.keysPressed[i] = false;
+    }
+    m_inputState.inputDir = glm::vec3(0.0f);
+    if (m_characterTarget && m_characterTarget->character.isControllable)
+    {
+        m_characterTarget->character.keyW = false;
+        m_characterTarget->character.keyA = false;
+        m_characterTarget->character.keyS = false;
+        m_characterTarget->character.keyD = false;
+        m_characterTarget->setCharacterInput(glm::vec3(0.0f));
+    }
+}
+
+void InputRouter::updateForMode(float deltaTime,
+                                const glm::vec3& cameraRotation,
+                                glm::vec3& inout_cameraPos,
+                                CameraMode mode,
+                                bool controlsEnabled,
+                                float moveSpeed)
+{
+    (void)deltaTime;
+
+    const bool routeCharacterInput = input_mode_rules::shouldRouteCharacterInput(mode, m_characterTarget != nullptr);
+    const bool moveCamera = input_mode_rules::shouldMoveCamera(mode, controlsEnabled);
+
+    // Character input is tied to CharacterFollow mode, even if direct camera controls are disabled.
+    if (routeCharacterInput)
     {
         m_isCharacterInputActive = true;
         
         const float yaw = cameraRotation.x;
-        const glm::vec3 forward(-sin(yaw), 0.0f, cos(yaw));
-        const glm::vec3 right(cos(yaw), 0.0f, sin(yaw));
+        // Match camera forward convention used by rendering:
+        // front = (sin(yaw), 0, -cos(yaw)) when pitch is ignored for ground motion.
+        glm::vec3 forward(std::sin(yaw), 0.0f, -std::cos(yaw));
+        if (glm::length(forward) > 0.0f)
+        {
+            forward = glm::normalize(forward);
+        }
+        const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        glm::vec3 right = glm::cross(forward, worldUp);
+        if (glm::length(right) > 0.0f)
+        {
+            right = glm::normalize(right);
+        }
 
         glm::vec3 inputDir(0.0f);
         if (m_inputState.keysPressed[0]) inputDir += forward;
@@ -91,6 +200,10 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation,
         
         if (m_characterTarget->character.isControllable)
         {
+            m_characterTarget->character.keyW = m_inputState.keysPressed[0];
+            m_characterTarget->character.keyA = m_inputState.keysPressed[1];
+            m_characterTarget->character.keyS = m_inputState.keysPressed[2];
+            m_characterTarget->character.keyD = m_inputState.keysPressed[3];
             m_characterTarget->setCharacterInput(inputDir);
 
             // Handle jump
@@ -105,10 +218,19 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation,
     {
         m_isCharacterInputActive = false;
         m_inputState.inputDir = glm::vec3(0.0f);
+        m_inputState.jumpRequested = false;
+        if (m_characterTarget && m_characterTarget->character.isControllable)
+        {
+            m_characterTarget->setCharacterInput(glm::vec3(0.0f));
+            m_characterTarget->character.keyW = false;
+            m_characterTarget->character.keyA = false;
+            m_characterTarget->character.keyS = false;
+            m_characterTarget->character.keyD = false;
+        }
     }
 
-    // Camera movement: free-fly mode (not follow)
-    if (!isFollowMode && !m_inputState.inputDir.x && !m_inputState.inputDir.z)
+    // Camera movement is only active in FreeFly mode with controls enabled.
+    if (moveCamera)
     {
         const float yaw = cameraRotation.x;
         const float pitch = cameraRotation.y;
@@ -146,6 +268,7 @@ void InputRouter::clearInput()
     }
     m_inputState.inputDir = glm::vec3(0.0f);
     m_inputState.jumpRequested = false;
+    clearSimulatedInput();
     
     if (m_characterTarget)
     {

@@ -461,6 +461,32 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/animation")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("animation"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("animation control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/selection")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("selection"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("selection control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
         if (path == "/controls/build_restart")
         {
             QJsonObject result;
@@ -596,6 +622,14 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         return jsonResponse(200, compactJson(payload));
     }
 
+    if (path == "/profile/inspector")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.inspector;
+        payload.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(payload));
+    }
+
     if (path == "/profile/performance")
     {
         const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
@@ -617,6 +651,64 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("ok"), true);
         payload.insert(QStringLiteral("rootPath"), data.rootPath);
         payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/debug")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        
+        // Hierarchy
+        payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        
+        // Scene
+        QJsonObject scene;
+        scene.insert(QStringLiteral("itemCount"), data.sceneItemCount);
+        scene.insert(QStringLiteral("items"), QJsonArray::fromStringList(QStringList{}));
+        for (const auto& item : data.sceneItems)
+        {
+            scene.insert(QStringLiteral("items"), item.value(QStringLiteral("name")).toString());
+        }
+        payload.insert(QStringLiteral("scene"), scene);
+        
+        // Camera state
+        QJsonObject camera;
+        QJsonArray camPos;
+        camPos.append(data.cameraPosition.x());
+        camPos.append(data.cameraPosition.y());
+        camPos.append(data.cameraPosition.z());
+        camera.insert(QStringLiteral("position"), camPos);
+        QJsonArray camRot;
+        camRot.append(data.cameraRotation.x());
+        camRot.append(data.cameraRotation.y());
+        camRot.append(data.cameraRotation.z());
+        camera.insert(QStringLiteral("rotation"), camRot);
+        payload.insert(QStringLiteral("camera"), camera);
+        
+        // Input state (requires separate /profile/scene call for full data due to Display namespace conflict)
+        QJsonObject input;
+        input.insert(QStringLiteral("note"), QStringLiteral("Call /profile/scene for input state"));
+        payload.insert(QStringLiteral("input"), input);
+        
+        // Performance
+        QJsonObject perf;
+        perf.insert(QStringLiteral("fps"), static_cast<double>(data.currentFps));
+        perf.insert(QStringLiteral("renderIntervalMs"), data.renderIntervalMs);
+        perf.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
+        perf.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
+        perf.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
+        payload.insert(QStringLiteral("performance"), perf);
+        
+        // Viewport
+        QJsonObject viewport;
+        viewport.insert(QStringLiteral("focusedIndex"), data.focusedViewportIndex);
+        viewport.insert(QStringLiteral("focusedCameraId"), data.focusedViewportCameraId);
+        viewport.insert(QStringLiteral("cameraIds"), QJsonArray::fromStringList(data.viewportCameraIds));
+        payload.insert(QStringLiteral("viewport"), viewport);
+        
         return jsonResponse(200, compactJson(payload));
     }
 

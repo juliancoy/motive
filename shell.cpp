@@ -175,6 +175,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     {
         QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
         const int row = item ? item->data(0, Qt::UserRole).toInt() : -1;
+        const int nodeType = item ? item->data(0, Qt::UserRole + 3).toInt() : -1;
+        const int cameraIndex = item ? item->data(0, Qt::UserRole + 5).toInt() : -1;
+        const QString cameraId = item ? item->data(0, Qt::UserRole + 6).toString() : QString();
+        
         if (!item)
         {
             QMenu menu(this);
@@ -195,6 +199,99 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
             return;
         }
+        
+        // Check if this is a camera node
+        const bool isCamera = (nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera));
+        
+        if (isCamera)
+        {
+            // Camera context menu
+            if (!m_viewportHost) return;
+            
+            QMenu menu(this);
+            QAction* renameAction = menu.addAction(QStringLiteral("Rename"));
+            QAction* deleteAction = menu.addAction(QStringLiteral("Delete"));
+            
+            QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
+            if (chosen == renameAction)
+            {
+                // Get current camera name
+                QList<ViewportHostWidget::CameraConfig> configs = m_viewportHost->cameraConfigs();
+                QString currentName;
+                if (cameraIndex >= 0 && cameraIndex < configs.size())
+                {
+                    currentName = configs[cameraIndex].name;
+                }
+                else if (!cameraId.isEmpty())
+                {
+                    // Try to find camera by ID
+                    for (int i = 0; i < configs.size(); ++i)
+                    {
+                        if (configs[i].id == cameraId)
+                        {
+                            currentName = configs[i].name;
+                            break;
+                        }
+                    }
+                }
+                
+                bool ok = false;
+                const QString name = QInputDialog::getText(this,
+                                                           QStringLiteral("Rename Camera"),
+                                                           QStringLiteral("Name:"),
+                                                           QLineEdit::Normal,
+                                                           currentName,
+                                                           &ok);
+                if (ok && !name.trimmed().isEmpty())
+                {
+                    if (cameraIndex >= 0 && cameraIndex < configs.size())
+                    {
+                        configs[cameraIndex].name = name;
+                        m_viewportHost->updateCameraConfig(cameraIndex, configs[cameraIndex]);
+                    }
+                    else if (!cameraId.isEmpty())
+                    {
+                        // Find camera by ID and update
+                        for (int i = 0; i < configs.size(); ++i)
+                        {
+                            if (configs[i].id == cameraId)
+                            {
+                                configs[i].name = name;
+                                m_viewportHost->updateCameraConfig(i, configs[i]);
+                                break;
+                            }
+                        }
+                    }
+                    refreshHierarchy(m_viewportHost->sceneItems());
+                    saveProjectState();
+                }
+            }
+            else if (chosen == deleteAction)
+            {
+                if (cameraIndex >= 0)
+                {
+                    m_viewportHost->deleteCamera(cameraIndex);
+                }
+                else if (!cameraId.isEmpty())
+                {
+                    // Find camera by ID and delete
+                    QList<ViewportHostWidget::CameraConfig> configs = m_viewportHost->cameraConfigs();
+                    for (int i = 0; i < configs.size(); ++i)
+                    {
+                        if (configs[i].id == cameraId)
+                        {
+                            m_viewportHost->deleteCamera(i);
+                            break;
+                        }
+                    }
+                }
+                refreshHierarchy(m_viewportHost->sceneItems());
+                saveProjectState();
+            }
+            return;
+        }
+        
+        // Regular scene item (model) context menu
         if (row < 0 || row >= m_sceneItems.size() || !m_viewportHost)
         {
             return;
@@ -449,7 +546,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorDock->setFeatures(QDockWidget::DockWidgetMovable);
     m_rightTabs = new QTabWidget(inspectorDock);
     auto* inspectorPanel = new QWidget(m_rightTabs);
-    auto* inspectorLayout = new QFormLayout(inspectorPanel);
+    auto* inspectorLayout = new QVBoxLayout(inspectorPanel);
+    inspectorLayout->setContentsMargins(8, 8, 8, 8);
+    inspectorLayout->setSpacing(8);
     m_inspectorNameValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorPathValue->setWordWrap(true);
@@ -472,8 +571,8 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: #ff00ff; border: 1px solid #888;"));
     m_paintColorWidget->setProperty("paintColor", QStringLiteral("#ff00ff"));
     auto* paintColorButton = new QPushButton(QStringLiteral("Choose"), inspectorPanel);
-    auto* paintColorContainer = new QWidget(inspectorPanel);
-    auto* paintColorLayout = new QHBoxLayout(paintColorContainer);
+    m_paintColorContainer = new QWidget(inspectorPanel);
+    auto* paintColorLayout = new QHBoxLayout(m_paintColorContainer);
     paintColorLayout->setContentsMargins(0, 0, 0, 0);
     paintColorLayout->addWidget(m_paintColorWidget);
     paintColorLayout->addWidget(paintColorButton);
@@ -524,8 +623,8 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_lightColorWidget->setFixedSize(60, 24);
     m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: #ffffff; border: 1px solid #888;"));
     auto* lightColorButton = new QPushButton(QStringLiteral("Change"), inspectorPanel);
-    auto* lightColorContainer = new QWidget(inspectorPanel);
-    auto* lightColorLayout = new QHBoxLayout(lightColorContainer);
+    m_lightColorContainer = new QWidget(inspectorPanel);
+    auto* lightColorLayout = new QHBoxLayout(m_lightColorContainer);
     lightColorLayout->setContentsMargins(0, 0, 0, 0);
     lightColorLayout->addWidget(m_lightColorWidget);
     lightColorLayout->addWidget(lightColorButton);
@@ -557,52 +656,52 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_followYawSpin->setValue(0.0);
     m_followPitchSpin = createSpinBox(inspectorPanel, -90.0, 90.0, 1.0);
     m_followPitchSpin->setValue(20.0);
-    m_followSmoothSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
-    m_followSmoothSpin->setValue(5.0);
-    m_followSmoothSpin->setToolTip(QStringLiteral("Follow-camera damping strength. Higher values track target motion more tightly."));
+    m_followSmoothSpin = createSpinBox(inspectorPanel, 0.0, 50.0, 0.1);
+    m_followSmoothSpin->setValue(followcam::kDefaultSmoothSpeed);
+    m_followSmoothSpin->setToolTip(QStringLiteral("Follow-camera response speed. 0 disables smoothing; higher values track target motion more tightly."));
 
     // Create translation spin boxes
-    auto* translationWidget = new QWidget(inspectorPanel);
-    auto* translationLayout = new QHBoxLayout(translationWidget);
+    m_translationWidget = new QWidget(inspectorPanel);
+    auto* translationLayout = new QHBoxLayout(m_translationWidget);
     m_inspectorTranslationX = createSpinBox(inspectorPanel, -1000.0, 1000.0, 0.001);
     m_inspectorTranslationY = createSpinBox(inspectorPanel, -1000.0, 1000.0, 0.001);
     m_inspectorTranslationZ = createSpinBox(inspectorPanel, -1000.0, 1000.0, 0.001);
-    translationLayout->addWidget(new QLabel("X:", translationWidget));
+    translationLayout->addWidget(new QLabel("X:", m_translationWidget));
     translationLayout->addWidget(m_inspectorTranslationX);
-    translationLayout->addWidget(new QLabel("Y:", translationWidget));
+    translationLayout->addWidget(new QLabel("Y:", m_translationWidget));
     translationLayout->addWidget(m_inspectorTranslationY);
-    translationLayout->addWidget(new QLabel("Z:", translationWidget));
+    translationLayout->addWidget(new QLabel("Z:", m_translationWidget));
     translationLayout->addWidget(m_inspectorTranslationZ);
     translationLayout->setContentsMargins(0, 0, 0, 0);
 
     // Create rotation spin boxes
-    auto* rotationWidget = new QWidget(inspectorPanel);
-    auto* rotationLayout = new QHBoxLayout(rotationWidget);
+    m_rotationWidget = new QWidget(inspectorPanel);
+    auto* rotationLayout = new QHBoxLayout(m_rotationWidget);
     m_inspectorRotationX = createSpinBox(inspectorPanel, -360.0, 360.0, 0.1);
     m_inspectorRotationY = createSpinBox(inspectorPanel, -360.0, 360.0, 0.1);
     m_inspectorRotationZ = createSpinBox(inspectorPanel, -360.0, 360.0, 0.1);
-    rotationLayout->addWidget(new QLabel("X:", rotationWidget));
+    rotationLayout->addWidget(new QLabel("X:", m_rotationWidget));
     rotationLayout->addWidget(m_inspectorRotationX);
-    rotationLayout->addWidget(new QLabel("Y:", rotationWidget));
+    rotationLayout->addWidget(new QLabel("Y:", m_rotationWidget));
     rotationLayout->addWidget(m_inspectorRotationY);
-    rotationLayout->addWidget(new QLabel("Z:", rotationWidget));
+    rotationLayout->addWidget(new QLabel("Z:", m_rotationWidget));
     rotationLayout->addWidget(m_inspectorRotationZ);
     rotationLayout->setContentsMargins(0, 0, 0, 0);
 
     // Create scale spin boxes
-    auto* scaleWidget = new QWidget(inspectorPanel);
-    auto* scaleLayout = new QHBoxLayout(scaleWidget);
+    m_scaleWidget = new QWidget(inspectorPanel);
+    auto* scaleLayout = new QHBoxLayout(m_scaleWidget);
     m_inspectorScaleX = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
     m_inspectorScaleY = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
     m_inspectorScaleZ = createSpinBox(inspectorPanel, 0.001, 1000.0, 0.001);
-    m_lockScaleXYZCheck = new QCheckBox(QStringLiteral("Lock XYZ"), scaleWidget);
+    m_lockScaleXYZCheck = new QCheckBox(QStringLiteral("Lock XYZ"), m_scaleWidget);
     m_lockScaleXYZCheck->setChecked(true);
     m_lockScaleXYZCheck->setToolTip(QStringLiteral("When enabled, editing any scale axis applies the same value to X/Y/Z."));
-    scaleLayout->addWidget(new QLabel("X:", scaleWidget));
+    scaleLayout->addWidget(new QLabel("X:", m_scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleX);
-    scaleLayout->addWidget(new QLabel("Y:", scaleWidget));
+    scaleLayout->addWidget(new QLabel("Y:", m_scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleY);
-    scaleLayout->addWidget(new QLabel("Z:", scaleWidget));
+    scaleLayout->addWidget(new QLabel("Z:", m_scaleWidget));
     scaleLayout->addWidget(m_inspectorScaleZ);
     scaleLayout->addWidget(m_lockScaleXYZCheck);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
@@ -625,36 +724,124 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_characterTurnResponsivenessSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
     m_characterTurnResponsivenessSpin->setValue(10.0);
     m_characterTurnResponsivenessSpin->setToolTip(QStringLiteral("How quickly this target rotates to face movement direction."));
+    m_objectFollowCamInfoValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_objectFollowCamInfoValue->setWordWrap(true);
+    m_objectKinematicInfoValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_objectKinematicInfoValue->setWordWrap(true);
+    m_objectAnimationRuntimeInfoValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_objectAnimationRuntimeInfoValue->setWordWrap(true);
 
-    inspectorLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
-    inspectorLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
-    inspectorLayout->addRow(QStringLiteral("Animation Path"), m_animationModeValue);
-    inspectorLayout->addRow(QStringLiteral("Bounds Size"), m_boundsSizeValue);
-    inspectorLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
-    inspectorLayout->addRow(QStringLiteral("Load"), m_loadMeshConsolidationCheck);
-    inspectorLayout->addRow(QStringLiteral("Cull Mode"), m_primitiveCullModeCombo);
-    inspectorLayout->addRow(QStringLiteral("Opacity"), m_primitiveForceAlphaButton);
-    inspectorLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
-    inspectorLayout->addRow(QStringLiteral("Paint Color"), paintColorContainer);
-    inspectorLayout->addRow(QStringLiteral("Animation"), m_animationControlsWidget);
-    inspectorLayout->addRow(QStringLiteral("Camera Mode"), m_freeFlyCameraCheck);
-    inspectorLayout->addRow(QStringLiteral("Near Clip"), m_nearClipSpin);
-    inspectorLayout->addRow(QStringLiteral("Far Clip"), m_farClipSpin);
-    inspectorLayout->addRow(QStringLiteral("Follow Target"), m_followTargetCombo);
-    inspectorLayout->addRow(m_followParamsLabel);
-    inspectorLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
-    inspectorLayout->addRow(QStringLiteral("Yaw"), m_followYawSpin);
-    inspectorLayout->addRow(QStringLiteral("Pitch"), m_followPitchSpin);
-    inspectorLayout->addRow(QStringLiteral("Follow Damping"), m_followSmoothSpin);
-    inspectorLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
-    inspectorLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
-    inspectorLayout->addRow(QStringLiteral("Color"), lightColorContainer);
-    inspectorLayout->addRow(QStringLiteral("Translation"), translationWidget);
-    inspectorLayout->addRow(QStringLiteral("Rotation"), rotationWidget);
-    inspectorLayout->addRow(QStringLiteral("Scale"), scaleWidget);
-    inspectorLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
-    inspectorLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
-    inspectorLayout->addRow(QStringLiteral("Turn Responsiveness"), m_characterTurnResponsivenessSpin);
+    m_elementDetailTabs = new QTabWidget(inspectorPanel);
+    m_elementDetailTabs->setDocumentMode(true);
+    m_elementDetailTabs->setTabPosition(QTabWidget::North);
+
+    auto* overviewTab = new QWidget(m_elementDetailTabs);
+    auto* overviewLayout = new QVBoxLayout(overviewTab);
+    overviewLayout->setContentsMargins(6, 6, 6, 6);
+    overviewLayout->setSpacing(8);
+
+    auto* visualTab = new QWidget(m_elementDetailTabs);
+    auto* visualLayout = new QVBoxLayout(visualTab);
+    visualLayout->setContentsMargins(6, 6, 6, 6);
+    visualLayout->setSpacing(8);
+
+    auto* motionTab = new QWidget(m_elementDetailTabs);
+    auto* motionLayout = new QVBoxLayout(motionTab);
+    motionLayout->setContentsMargins(6, 6, 6, 6);
+    motionLayout->setSpacing(8);
+
+    auto* cameraTab = new QWidget(m_elementDetailTabs);
+    auto* cameraTabLayout = new QVBoxLayout(cameraTab);
+    cameraTabLayout->setContentsMargins(6, 6, 6, 6);
+    cameraTabLayout->setSpacing(8);
+
+    auto* runtimeTab = new QWidget(m_elementDetailTabs);
+    auto* runtimeTabLayout = new QVBoxLayout(runtimeTab);
+    runtimeTabLayout->setContentsMargins(6, 6, 6, 6);
+    runtimeTabLayout->setSpacing(8);
+
+    m_summarySection = new QGroupBox(QStringLiteral("Summary"), overviewTab);
+    auto* summaryLayout = new QFormLayout(m_summarySection);
+    summaryLayout->addRow(QStringLiteral("Name"), m_inspectorNameValue);
+    summaryLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
+    summaryLayout->addRow(QStringLiteral("Animation Path"), m_animationModeValue);
+    summaryLayout->addRow(QStringLiteral("Bounds Size"), m_boundsSizeValue);
+    summaryLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
+
+    m_materialSection = new QGroupBox(QStringLiteral("Material & Mesh"), visualTab);
+    auto* materialLayout = new QFormLayout(m_materialSection);
+    materialLayout->addRow(QStringLiteral("Load"), m_loadMeshConsolidationCheck);
+    materialLayout->addRow(QStringLiteral("Cull Mode"), m_primitiveCullModeCombo);
+    materialLayout->addRow(QStringLiteral("Opacity"), m_primitiveForceAlphaButton);
+    materialLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
+    materialLayout->addRow(QStringLiteral("Paint Color"), m_paintColorContainer);
+
+    m_animationSection = new QGroupBox(QStringLiteral("Animation"), motionTab);
+    auto* animationLayout = new QFormLayout(m_animationSection);
+    animationLayout->addRow(QStringLiteral("Controls"), m_animationControlsWidget);
+
+    m_cameraSection = new QGroupBox(QStringLiteral("Camera"), cameraTab);
+    auto* cameraLayout = new QFormLayout(m_cameraSection);
+    cameraLayout->addRow(QStringLiteral("Camera Mode"), m_freeFlyCameraCheck);
+    cameraLayout->addRow(QStringLiteral("Near Clip"), m_nearClipSpin);
+    cameraLayout->addRow(QStringLiteral("Far Clip"), m_farClipSpin);
+    cameraLayout->addRow(QStringLiteral("Follow Target"), m_followTargetCombo);
+    cameraLayout->addRow(m_followParamsLabel);
+    cameraLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
+    cameraLayout->addRow(QStringLiteral("Yaw"), m_followYawSpin);
+    cameraLayout->addRow(QStringLiteral("Pitch"), m_followPitchSpin);
+    cameraLayout->addRow(QStringLiteral("Follow Damping"), m_followSmoothSpin);
+
+    m_lightSection = new QGroupBox(QStringLiteral("Lighting"), visualTab);
+    auto* lightLayout = new QFormLayout(m_lightSection);
+    lightLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
+    lightLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
+    lightLayout->addRow(QStringLiteral("Color"), m_lightColorContainer);
+
+    m_transformSection = new QGroupBox(QStringLiteral("Transform"), overviewTab);
+    auto* transformLayout = new QFormLayout(m_transformSection);
+    transformLayout->addRow(QStringLiteral("Translation"), m_translationWidget);
+    transformLayout->addRow(QStringLiteral("Rotation"), m_rotationWidget);
+    transformLayout->addRow(QStringLiteral("Scale"), m_scaleWidget);
+
+    m_physicsSection = new QGroupBox(QStringLiteral("Physics & Motion"), motionTab);
+    auto* physicsLayout = new QFormLayout(m_physicsSection);
+    physicsLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
+    physicsLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
+    physicsLayout->addRow(QStringLiteral("Turn Responsiveness"), m_characterTurnResponsivenessSpin);
+
+    m_runtimeSection = new QGroupBox(QStringLiteral("Runtime Diagnostics"), runtimeTab);
+    auto* runtimeLayout = new QFormLayout(m_runtimeSection);
+    runtimeLayout->addRow(QStringLiteral("Object Follow Cam"), m_objectFollowCamInfoValue);
+    runtimeLayout->addRow(QStringLiteral("Kinematic Runtime"), m_objectKinematicInfoValue);
+    runtimeLayout->addRow(QStringLiteral("Animation Runtime"), m_objectAnimationRuntimeInfoValue);
+
+    overviewLayout->addWidget(m_summarySection);
+    overviewLayout->addWidget(m_transformSection);
+    overviewLayout->addStretch(1);
+
+    visualLayout->addWidget(m_materialSection);
+    visualLayout->addWidget(m_lightSection);
+    visualLayout->addStretch(1);
+
+    motionLayout->addWidget(m_animationSection);
+    motionLayout->addWidget(m_physicsSection);
+    motionLayout->addStretch(1);
+
+    cameraTabLayout->addWidget(m_cameraSection);
+    cameraTabLayout->addStretch(1);
+
+    runtimeTabLayout->addWidget(m_runtimeSection);
+    runtimeTabLayout->addStretch(1);
+
+    m_elementDetailTabs->addTab(overviewTab, QStringLiteral("Overview"));
+    m_elementDetailTabs->addTab(visualTab, QStringLiteral("Visual"));
+    m_elementDetailTabs->addTab(motionTab, QStringLiteral("Motion"));
+    m_elementDetailTabs->addTab(cameraTab, QStringLiteral("Camera"));
+    m_elementDetailTabs->addTab(runtimeTab, QStringLiteral("Runtime"));
+
+    inspectorLayout->addWidget(m_elementDetailTabs);
+    inspectorLayout->addStretch(1);
     m_rightTabs->addTab(wrapTabInScrollArea(inspectorPanel), QStringLiteral("Element"));
     inspectorDock->setWidget(m_rightTabs);
     addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
@@ -693,6 +880,20 @@ MainWindowShell::MainWindowShell(QWidget* parent)
                 if (cameraIndex >= 0)
                 {
                     m_viewportHost->setActiveCamera(cameraIndex);
+                }
+            }
+            else if (type == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem))
+            {
+                const int sceneIndex = current->data(0, Qt::UserRole).toInt();
+                if (sceneIndex >= 0)
+                {
+                    // Scene-item selection implies this object is the current WASD owner.
+                    m_viewportHost->selectCharacterControlOwner(sceneIndex);
+                    const int followCameraIndex = m_viewportHost->ensureFollowCamera(sceneIndex, 5.0f, 0.0f, 20.0f);
+                    if (followCameraIndex >= 0)
+                    {
+                        m_viewportHost->setActiveCamera(followCameraIndex);
+                    }
                 }
             }
         }
@@ -891,14 +1092,22 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
         
-        // Check if a camera is selected
         const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
-        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+        const int sceneIndex = current->data(0, Qt::UserRole).toInt();
+        const bool isCameraNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera);
+        const bool isSceneItemNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem);
+        if (!isCameraNode && !isSceneItemNode) {
             return;
         }
         
-        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
-        const int targetIndex = m_followTargetCombo->currentData().toInt();
+        const int cameraIndex = isCameraNode
+            ? resolveCameraIndexFromTreeItem(current)
+            : m_viewportHost->ensureFollowCamera(sceneIndex, 5.0f, 0.0f, 20.0f);
+        int targetIndex = m_followTargetCombo->currentData().toInt();
+        if (isSceneItemNode && targetIndex < 0)
+        {
+            targetIndex = sceneIndex;
+        }
         
         // Get current camera config
         auto configs = m_viewportHost->cameraConfigs();
@@ -932,11 +1141,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         if (!current) return;
         
         const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
-        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+        const int sceneIndex = current->data(0, Qt::UserRole).toInt();
+        const bool isCameraNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera);
+        const bool isSceneItemNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem);
+        if (!isCameraNode && !isSceneItemNode) {
             return;
         }
         
-        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
+        const int cameraIndex = isCameraNode
+            ? resolveCameraIndexFromTreeItem(current)
+            : m_viewportHost->ensureFollowCamera(sceneIndex, 5.0f, 0.0f, 20.0f);
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;
@@ -944,8 +1158,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         
         ViewportHostWidget::CameraConfig config = configs[cameraIndex];
         
-        // Update follow parameters from spin boxes (only for follow cameras)
-        if (config.isFollowCamera()) {
+        if (isSceneItemNode)
+        {
+            config.type = ViewportHostWidget::CameraConfig::Type::Follow;
+            config.followTargetIndex = sceneIndex;
+        }
+
+        // Update follow parameters for follow cameras and selected scene items.
+        if (config.isFollowCamera() || isSceneItemNode) {
             if (m_followDistanceSpin) config.followDistance = m_followDistanceSpin->value();
             if (m_followYawSpin) config.followYaw = m_followYawSpin->value();
             if (m_followPitchSpin) config.followPitch = m_followPitchSpin->value();
@@ -967,11 +1187,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         if (!current) return;
         
         const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
-        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera)) {
+        const int sceneIndex = current->data(0, Qt::UserRole).toInt();
+        const bool isCameraNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera);
+        const bool isSceneItemNode = nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem);
+        if (!isCameraNode && !isSceneItemNode) {
             return;
         }
         
-        const int cameraIndex = resolveCameraIndexFromTreeItem(current);
+        const int cameraIndex = isCameraNode
+            ? resolveCameraIndexFromTreeItem(current)
+            : m_viewportHost->ensureFollowCamera(sceneIndex, 5.0f, 0.0f, 20.0f);
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;
@@ -1121,6 +1346,143 @@ QJsonArray MainWindowShell::hierarchyJson() const
     return m_viewportHost ? m_viewportHost->hierarchyJson() : QJsonArray{};
 }
 
+bool MainWindowShell::selectHierarchySceneItem(int sceneIndex)
+{
+    if (!m_hierarchyTree || sceneIndex < 0)
+    {
+        return false;
+    }
+
+    const QList<QTreeWidgetItem*> items =
+        m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+    for (QTreeWidgetItem* item : items)
+    {
+        if (!item)
+        {
+            continue;
+        }
+        const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem))
+        {
+            continue;
+        }
+        if (item->data(0, Qt::UserRole).toInt() != sceneIndex)
+        {
+            continue;
+        }
+        m_hierarchyTree->setCurrentItem(item);
+        item->setSelected(true);
+        updateInspectorForSelection(item);
+        return true;
+    }
+    return false;
+}
+
+bool MainWindowShell::selectHierarchyCamera(const QString& cameraId, int cameraIndex)
+{
+    if (!m_hierarchyTree)
+    {
+        return false;
+    }
+
+    const QList<QTreeWidgetItem*> items =
+        m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+    for (QTreeWidgetItem* item : items)
+    {
+        if (!item)
+        {
+            continue;
+        }
+        const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
+        {
+            continue;
+        }
+
+        if (!cameraId.isEmpty() && item->data(0, Qt::UserRole + 6).toString() == cameraId)
+        {
+            m_hierarchyTree->setCurrentItem(item);
+            item->setSelected(true);
+            updateInspectorForSelection(item);
+            return true;
+        }
+
+        if (cameraId.isEmpty() && cameraIndex >= 0 && item->data(0, Qt::UserRole + 5).toInt() == cameraIndex)
+        {
+            m_hierarchyTree->setCurrentItem(item);
+            item->setSelected(true);
+            updateInspectorForSelection(item);
+            return true;
+        }
+    }
+    return false;
+}
+
+QJsonObject MainWindowShell::inspectorDebugJson() const
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("ok"), true);
+
+    QTreeWidgetItem* current = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
+    payload.insert(QStringLiteral("hasSelection"), current != nullptr);
+    payload.insert(QStringLiteral("selectedLabel"), current ? current->text(0) : QString());
+    payload.insert(QStringLiteral("selectedSceneIndex"), current ? current->data(0, Qt::UserRole).toInt() : -1);
+    payload.insert(QStringLiteral("selectedMeshIndex"), current ? current->data(0, Qt::UserRole + 1).toInt() : -1);
+    payload.insert(QStringLiteral("selectedPrimitiveIndex"), current ? current->data(0, Qt::UserRole + 2).toInt() : -1);
+    payload.insert(QStringLiteral("selectedNodeType"), current ? current->data(0, Qt::UserRole + 3).toInt() : -1);
+    payload.insert(QStringLiteral("selectedCameraIndex"), current ? current->data(0, Qt::UserRole + 5).toInt() : -1);
+    payload.insert(QStringLiteral("selectedCameraId"), current ? current->data(0, Qt::UserRole + 6).toString() : QString());
+
+    payload.insert(QStringLiteral("followCamInfoText"), m_objectFollowCamInfoValue ? m_objectFollowCamInfoValue->text() : QString());
+    payload.insert(QStringLiteral("kinematicInfoText"), m_objectKinematicInfoValue ? m_objectKinematicInfoValue->text() : QString());
+    payload.insert(QStringLiteral("animationRuntimeInfoText"), m_objectAnimationRuntimeInfoValue ? m_objectAnimationRuntimeInfoValue->text() : QString());
+
+    payload.insert(QStringLiteral("followDistanceVisible"), m_followDistanceSpin ? !m_followDistanceSpin->isHidden() : false);
+    payload.insert(QStringLiteral("followYawVisible"), m_followYawSpin ? !m_followYawSpin->isHidden() : false);
+    payload.insert(QStringLiteral("followPitchVisible"), m_followPitchSpin ? !m_followPitchSpin->isHidden() : false);
+    payload.insert(QStringLiteral("followSmoothVisible"), m_followSmoothSpin ? !m_followSmoothSpin->isHidden() : false);
+    payload.insert(QStringLiteral("followDistanceEnabled"), m_followDistanceSpin ? m_followDistanceSpin->isEnabled() : false);
+    payload.insert(QStringLiteral("followYawEnabled"), m_followYawSpin ? m_followYawSpin->isEnabled() : false);
+    payload.insert(QStringLiteral("followPitchEnabled"), m_followPitchSpin ? m_followPitchSpin->isEnabled() : false);
+    payload.insert(QStringLiteral("followSmoothEnabled"), m_followSmoothSpin ? m_followSmoothSpin->isEnabled() : false);
+    payload.insert(QStringLiteral("followDistance"), m_followDistanceSpin ? m_followDistanceSpin->value() : 0.0);
+    payload.insert(QStringLiteral("followYaw"), m_followYawSpin ? m_followYawSpin->value() : 0.0);
+    payload.insert(QStringLiteral("followPitch"), m_followPitchSpin ? m_followPitchSpin->value() : 0.0);
+    payload.insert(QStringLiteral("followSmooth"), m_followSmoothSpin ? m_followSmoothSpin->value() : 0.0);
+
+    QJsonArray hierarchyState;
+    if (m_hierarchyTree)
+    {
+        const QList<QTreeWidgetItem*> allItems =
+            m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        int expandedCount = 0;
+        for (QTreeWidgetItem* item : allItems)
+        {
+            if (!item)
+            {
+                continue;
+            }
+            if (item->isExpanded())
+            {
+                ++expandedCount;
+            }
+            QJsonObject node{
+                {QStringLiteral("label"), item->text(0)},
+                {QStringLiteral("expanded"), item->isExpanded()},
+                {QStringLiteral("childCount"), item->childCount()},
+                {QStringLiteral("sceneIndex"), item->data(0, Qt::UserRole).toInt()},
+                {QStringLiteral("nodeType"), item->data(0, Qt::UserRole + 3).toInt()}
+            };
+            hierarchyState.append(node);
+        }
+        payload.insert(QStringLiteral("hierarchyItemCount"), allItems.size());
+        payload.insert(QStringLiteral("hierarchyExpandedCount"), expandedCount);
+    }
+    payload.insert(QStringLiteral("hierarchy"), hierarchyState);
+
+    return payload;
+}
+
 QWidget* MainWindowShell::wrapTabInScrollArea(QWidget* content) const
 {
     auto* scroll = new QScrollArea(m_rightTabs);
@@ -1159,6 +1521,59 @@ QJsonObject MainWindowShell::uiDebugJson() const
         dockArray.append(dockObject);
     }
     payload.insert(QStringLiteral("dockWidgets"), dockArray);
+
+    QJsonObject rightTabsObject;
+    rightTabsObject.insert(QStringLiteral("metrics"), widgetMetrics(m_rightTabs));
+    if (m_rightTabs)
+    {
+        rightTabsObject.insert(QStringLiteral("currentIndex"), m_rightTabs->currentIndex());
+        rightTabsObject.insert(QStringLiteral("currentTabLabel"), m_rightTabs->tabText(m_rightTabs->currentIndex()));
+        rightTabsObject.insert(QStringLiteral("tabCount"), m_rightTabs->count());
+        QJsonArray tabNames;
+        for (int i = 0; i < m_rightTabs->count(); ++i)
+        {
+            tabNames.append(m_rightTabs->tabText(i));
+        }
+        rightTabsObject.insert(QStringLiteral("tabNames"), tabNames);
+    }
+    payload.insert(QStringLiteral("rightTabs"), rightTabsObject);
+
+    QJsonObject elementTabsObject;
+    elementTabsObject.insert(QStringLiteral("metrics"), widgetMetrics(m_elementDetailTabs));
+    if (m_elementDetailTabs)
+    {
+        elementTabsObject.insert(QStringLiteral("currentIndex"), m_elementDetailTabs->currentIndex());
+        elementTabsObject.insert(QStringLiteral("currentTabLabel"), m_elementDetailTabs->tabText(m_elementDetailTabs->currentIndex()));
+        elementTabsObject.insert(QStringLiteral("tabCount"), m_elementDetailTabs->count());
+        QJsonArray tabNames;
+        for (int i = 0; i < m_elementDetailTabs->count(); ++i)
+        {
+            tabNames.append(m_elementDetailTabs->tabText(i));
+        }
+        elementTabsObject.insert(QStringLiteral("tabNames"), tabNames);
+    }
+    payload.insert(QStringLiteral("elementDetailTabs"), elementTabsObject);
+
+    QJsonObject inspectorWidgets;
+    inspectorWidgets.insert(QStringLiteral("cameraSection"), widgetMetrics(m_cameraSection));
+    inspectorWidgets.insert(QStringLiteral("transformSection"), widgetMetrics(m_transformSection));
+    inspectorWidgets.insert(QStringLiteral("materialSection"), widgetMetrics(m_materialSection));
+    inspectorWidgets.insert(QStringLiteral("animationSection"), widgetMetrics(m_animationSection));
+    inspectorWidgets.insert(QStringLiteral("physicsSection"), widgetMetrics(m_physicsSection));
+    inspectorWidgets.insert(QStringLiteral("lightSection"), widgetMetrics(m_lightSection));
+    inspectorWidgets.insert(QStringLiteral("runtimeSection"), widgetMetrics(m_runtimeSection));
+    inspectorWidgets.insert(QStringLiteral("followTargetCombo"), widgetMetrics(m_followTargetCombo));
+    inspectorWidgets.insert(QStringLiteral("followDistanceSpin"), widgetMetrics(m_followDistanceSpin));
+    inspectorWidgets.insert(QStringLiteral("followYawSpin"), widgetMetrics(m_followYawSpin));
+    inspectorWidgets.insert(QStringLiteral("followPitchSpin"), widgetMetrics(m_followPitchSpin));
+    inspectorWidgets.insert(QStringLiteral("followSmoothSpin"), widgetMetrics(m_followSmoothSpin));
+    inspectorWidgets.insert(QStringLiteral("freeFlyCameraCheck"), widgetMetrics(m_freeFlyCameraCheck));
+    inspectorWidgets.insert(QStringLiteral("nearClipSpin"), widgetMetrics(m_nearClipSpin));
+    inspectorWidgets.insert(QStringLiteral("farClipSpin"), widgetMetrics(m_farClipSpin));
+
+    QJsonObject inspector = inspectorDebugJson();
+    inspector.insert(QStringLiteral("widgets"), inspectorWidgets);
+    payload.insert(QStringLiteral("inspector"), inspector);
     return payload;
 }
 

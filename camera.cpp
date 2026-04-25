@@ -1,4 +1,5 @@
 #include "camera.h"
+#include "camera_mode_rules.h"
 #include "engine.h"
 #include "display.h"
 #include "input_router.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace
 {
@@ -26,7 +28,7 @@ Camera::Camera(Engine *engine,
 {
     // Initialize camera state
     cameraPos = initialCameraPos;
-    cameraRotation = initialCameraRotation;
+    setEulerRotation(initialCameraRotation);
 
     // Initialize orthographic defaults based on the initial viewport
     const float initialAspect = (height > 0.0f) ? (width / height) : (800.0f / 600.0f);
@@ -181,26 +183,61 @@ void Camera::allocateDescriptorSet()
 
 void Camera::update(uint32_t currentImage)
 {
+    (void)currentImage;
+    // Recover from missed mouse-release events (focus/capture transitions).
+    // If orbit drag is active but RMB is no longer physically pressed, end drag.
+    if (rightMouseDown && windowHandle)
+    {
+        const int rmbState = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_RIGHT);
+        if (rmbState != GLFW_PRESS)
+        {
+            rightMouseDown = false;
+            if (temporaryOrbitDrag && mode == CameraMode::OrbitFollow)
+            {
+                setMode(CameraMode::CharacterFollow);
+            }
+            temporaryOrbitDrag = false;
+        }
+    }
     updateCameraMatrices();
 }
 
 void Camera::reset()
 {
     cameraPos = initialCameraPos;
-    cameraRotation = initialCameraRotation;
+    setEulerRotation(initialCameraRotation);
     std::cout << "[Debug] Camera " << this << " reset. position (" << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z
               << ") rotation (" << cameraRotation.x << ", " << cameraRotation.y << ")" << std::endl;
 }
 
 void Camera::handleMouseButton(int button, int action, int mods)
 {
-    if (!controlsEnabled)
+    const bool allowFollowOrbitInput = followOrbit.isEnabled();
+    if (!controlsEnabled && !allowFollowOrbitInput)
     {
         return;
     }
     if (button == GLFW_MOUSE_BUTTON_RIGHT)
     {
-        rightMouseDown = (action == GLFW_PRESS);
+        const bool pressed = (action == GLFW_PRESS);
+        if (pressed)
+        {
+            // Orbit drag is a temporary sub-mode over character follow.
+            if (followOrbit.isEnabled() && mode == CameraMode::CharacterFollow)
+            {
+                temporaryOrbitDrag = true;
+                setMode(CameraMode::OrbitFollow);
+            }
+        }
+        else
+        {
+            if (temporaryOrbitDrag && mode == CameraMode::OrbitFollow)
+            {
+                setMode(CameraMode::CharacterFollow);
+            }
+            temporaryOrbitDrag = false;
+        }
+        rightMouseDown = pressed;
         if (rightMouseDown)
         {
             double x, y;
@@ -219,39 +256,42 @@ void Camera::handleMouseButton(int button, int action, int mods)
 
 void Camera::handleCursorPos(double xpos, double ypos)
 {
-    if (!controlsEnabled)
+    const bool allowFollowOrbitInput = followOrbit.isEnabled();
+    if (!controlsEnabled && !allowFollowOrbitInput)
     {
         return;
     }
 
-    if (rightMouseDown)
-    {
-        glm::vec2 currentPos(xpos, ypos);
-        glm::vec2 delta = currentPos - lastMousePos;
-        lastMousePos = currentPos;
+        if (rightMouseDown)
+        {
+            glm::vec2 currentPos(xpos, ypos);
+            glm::vec2 delta = currentPos - lastMousePos;
+            lastMousePos = currentPos;
 
-        const float sensitivity = 0.005f;
-        float deltaYaw = delta.x * sensitivity;
-        float deltaPitch = -delta.y * sensitivity;
-        
-        // Clamp pitch
-        deltaPitch = std::clamp(deltaPitch, -0.1f, 0.1f);
-        
-        if (characterTarget && followOrbit.isEnabled())
-        {
-            // In character follow mode: orbit camera around character
-            // Update the follow offset angle
-            addYawOffset(-deltaYaw);  // Invert for natural feel (drag left = look left)
-            addPitchOffset(deltaPitch);
+            const float sensitivity = 0.005f;
+            float deltaYaw = delta.x * sensitivity;
+            float deltaPitch = -delta.y * sensitivity;
+            
+            // Clamp pitch
+            deltaPitch = std::clamp(deltaPitch, -0.1f, 0.1f);
+            
+            if (followOrbit.isEnabled() && mode != CameraMode::FreeFly)
+            {
+                // In follow mode: orbit camera around target
+                // Match free-fly horizontal drag direction for consistent feel.
+                addYawOffset(deltaYaw);
+                addPitchOffset(deltaPitch);
+            }
+            else
+            {
+                // Free-fly mode or no target: rotate camera directly
+                glm::vec2 rot = getEulerRotation();
+                rot.x += deltaYaw;
+                rot.y -= delta.y * sensitivity;
+                rot.y = std::clamp(rot.y, -1.4f, 1.4f);
+                setEulerRotation(rot);
+            }
         }
-        else
-        {
-            // Free-fly mode or no character: rotate camera directly
-            cameraRotation.x += deltaYaw;
-            cameraRotation.y -= delta.y * sensitivity;
-            cameraRotation.y = std::clamp(cameraRotation.y, -1.4f, 1.4f);
-        }
-    }
 }
 
 #include "model.h"  // For character controller
@@ -287,58 +327,13 @@ void Camera::handleKey(int key, int scancode, int action, int mods)
         return;
     }
 
-    if (!controlsEnabled && freeFlyCamera)
+    if (!controlsEnabled)
     {
         return;
     }
 
-    // Character locomotion only when free-fly is disabled.
-    const bool characterDrivenMode = !freeFlyCamera;
-    if (characterDrivenMode)
-    {
-        if (key == GLFW_KEY_W) keysPressed[0] = (action != GLFW_RELEASE);
-        if (key == GLFW_KEY_A) keysPressed[1] = (action != GLFW_RELEASE);
-        if (key == GLFW_KEY_S) keysPressed[2] = (action != GLFW_RELEASE);
-        if (key == GLFW_KEY_D) keysPressed[3] = (action != GLFW_RELEASE);
-
-        if (characterTarget && characterTarget->character.isControllable)
-        {
-            characterTarget->character.keyW = keysPressed[0];
-            characterTarget->character.keyA = keysPressed[1];
-            characterTarget->character.keyS = keysPressed[2];
-            characterTarget->character.keyD = keysPressed[3];
-
-            const float yaw = cameraRotation.x;
-            const glm::vec3 forward(-sin(yaw), 0.0f, cos(yaw));
-            const glm::vec3 right(cos(yaw), 0.0f, sin(yaw));
-
-            glm::vec3 inputDir(0.0f);
-            if (keysPressed[0]) inputDir += forward;
-            if (keysPressed[1]) inputDir -= right;
-            if (keysPressed[2]) inputDir -= forward;
-            if (keysPressed[3]) inputDir += right;
-            characterTarget->setCharacterInput(inputDir);
-
-            if (key == GLFW_KEY_SPACE && action == GLFW_PRESS && characterTarget->character.isGrounded)
-            {
-                characterTarget->character.jumpRequested = true;
-            }
-        }
-
-        if (key == GLFW_KEY_R && action == GLFW_PRESS)
-        {
-            reset();
-        }
-        return;
-    }
-
-    // Free-fly camera movement
-    if (key == GLFW_KEY_W) keysPressed[0] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_A) keysPressed[1] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_S) keysPressed[2] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_D) keysPressed[3] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_Q) keysPressed[4] = (action != GLFW_RELEASE);
-    if (key == GLFW_KEY_E) keysPressed[5] = (action != GLFW_RELEASE);
+    // Camera only handles camera-specific keys (P/O for projection, R for reset)
+    // WASD input is handled exclusively by InputRouter
     if (key == GLFW_KEY_R && action == GLFW_PRESS)
     {
         reset();
@@ -391,60 +386,46 @@ float Camera::getFullscreenPercentY() const
 
 void Camera::updateCameraMatrices()
 {
+    syncEulerCacheFromOrientation();
     CameraTransform camera0TransformUBO{};
-
-    float yaw = cameraRotation.x;
-    float pitch = cameraRotation.y;
-
-    glm::vec3 front;
-    front.x = cos(pitch) * sin(yaw);
-    front.y = sin(pitch);
-    front.z = -cos(pitch) * cos(yaw);
-    front = glm::normalize(front);
-
-    glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
-    glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
-    glm::vec3 up = glm::normalize(glm::cross(right, front));
-
-    // Only process camera movement in free-fly mode, and only if character input is NOT active
-    // When character mode is active, character moves and camera follows automatically
-    bool shouldMoveCamera = false;
-    if (controlsEnabled && freeFlyCamera)
+    const glm::vec3 front = getForwardVector();
+    glm::vec3 up = cameraOrientation * glm::vec3(0.0f, 1.0f, 0.0f);
+    if (glm::length(up) <= 1e-6f)
     {
-        if (display && display->getInputRouter())
+        up = glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    else
+    {
+        up = glm::normalize(up);
+    }
+
+    // Camera movement is handled by InputRouter::update()
+    // In FreeFly mode: InputRouter moves camera directly via inout_cameraPos parameter
+    // In CharacterFollow mode: InputRouter moves character, camera follows via updateFollow()
+    // In other modes: No camera movement
+
+    if ((mode == CameraMode::CharacterFollow || mode == CameraMode::OrbitFollow) && followTargetValidForView)
+    {
+        glm::vec3 toTarget = followTargetForView - cameraPos;
+        if (glm::length(toTarget) > 1e-6f)
         {
-            shouldMoveCamera = !display->getInputRouter()->isCharacterInputActive();
+            const glm::vec3 forward = glm::normalize(toTarget);
+            glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+            if (std::abs(glm::dot(forward, worldUp)) > 0.999f)
+            {
+                worldUp = glm::vec3(0.0f, 0.0f, 1.0f);
+            }
+            viewMatrix = glm::lookAt(cameraPos, followTargetForView, worldUp);
         }
         else
         {
-            shouldMoveCamera = true;
+            viewMatrix = glm::lookAt(cameraPos, cameraPos + front, up);
         }
     }
-
-    if (shouldMoveCamera)
+    else
     {
-        const bool* keys = keysPressed;
-        glm::vec3 moveDir(0.0f);
-        if (keys[0])
-            moveDir += front;
-        if (keys[1])
-            moveDir -= right;
-        if (keys[2])
-            moveDir -= front;
-        if (keys[3])
-            moveDir += right;
-        if (keys[4])
-            moveDir -= up;
-        if (keys[5])
-            moveDir += up;
-
-        if (glm::length(moveDir) > 0.0f)
-        {
-            cameraPos += glm::normalize(moveDir) * moveSpeed;
-        }
+        viewMatrix = glm::lookAt(cameraPos, cameraPos + front, up);
     }
-
-    viewMatrix = glm::lookAt(cameraPos, cameraPos + front, worldUp);
     camera0TransformUBO.view = viewMatrix;
 
     float aspect = (height > 0.0f) ? (width / height) : (800.0f / 600.0f);
@@ -525,22 +506,22 @@ void Camera::setControlsEnabled(bool enabled)
 }
 
 
-void Camera::setCharacterTarget(Model* model)
-{
-    characterTarget = model;
-    if (model) {
-        std::cout << "[Camera] Character target set: " << model << " controllable=" << model->character.isControllable << std::endl;
-    } else {
-        std::cout << "[Camera] Character target cleared" << std::endl;
-    }
-}
-
 void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
 {
+    std::cout << "[Camera][DEBUG] setFollowTarget called: sceneIndex=" << sceneIndex 
+              << " current mode=" << static_cast<int>(mode) 
+              << " current followIndex=" << followOrbit.sceneIndex() << std::endl;
+    
     const FollowSettings sanitized = followcam::sanitizeSettings(settings);
     if (sceneIndex >= 0) {
         followOrbit.configure(sceneIndex, sanitized);
-        freeFlyCamera = false;
+        orbitRig.configure(sceneIndex, sanitized);
+        followTargetValidForView = false;
+        followTargetRaw = glm::vec3(0.0f);
+        followTargetMotion = glm::vec3(0.0f);
+        followTargetTracker.reset();
+        // Follow target assignment should not implicitly change camera mode.
+        // Callers explicitly control mode transitions via setMode().
         clearInputState();
         std::cout << "[Camera] Follow target set: scene index " << sceneIndex << std::endl;
         std::cout << "[Camera] Follow settings: distance=" << sanitized.distance
@@ -562,9 +543,18 @@ void Camera::setFollowTarget(int sceneIndex, const FollowSettings& settings)
         }
     } else {
         followOrbit.clear();
+        orbitRig.clear();
+        followTargetValidForView = false;
+        followTargetRaw = glm::vec3(0.0f);
+        followTargetMotion = glm::vec3(0.0f);
+        followTargetTracker.reset();
         std::cout << "[Camera] Follow target cleared" << std::endl;
         followWarningActive = false;
         followWarningCooldownSeconds = 0.0f;
+        if (mode == CameraMode::CharacterFollow || mode == CameraMode::OrbitFollow)
+        {
+            setMode(CameraMode::Fixed);
+        }
     }
 }
 
@@ -575,6 +565,7 @@ void Camera::setFollowSettings(const FollowSettings& settings)
     {
         const FollowSettings sanitized = followcam::sanitizeSettings(settings);
         followOrbit.configure(sceneIndex, sanitized);
+        orbitRig.configure(sceneIndex, sanitized);
         if (std::abs(sanitized.distance - settings.distance) > 1e-4f ||
             std::abs(sanitized.relativePitch - settings.relativePitch) > 1e-4f ||
             std::abs(sanitized.smoothSpeed - settings.smoothSpeed) > 1e-4f)
@@ -596,6 +587,7 @@ void Camera::addYawOffset(float deltaYaw)
     FollowSettings settings = followOrbit.settings();
     settings.relativeYaw = normalizeAngle(settings.relativeYaw + deltaYaw);
     followOrbit.configure(followOrbit.sceneIndex(), settings);
+    orbitRig.configure(followOrbit.sceneIndex(), settings);
 }
 
 void Camera::addPitchOffset(float deltaPitch)
@@ -603,6 +595,7 @@ void Camera::addPitchOffset(float deltaPitch)
     FollowSettings settings = followOrbit.settings();
     settings.relativePitch = std::clamp(settings.relativePitch + deltaPitch, -followcam::kMaxPitchRadians, followcam::kMaxPitchRadians);
     followOrbit.configure(followOrbit.sceneIndex(), settings);
+    orbitRig.configure(followOrbit.sceneIndex(), settings);
 }
 
 void Camera::updateFollowOffsetFromCameraRotation()
@@ -614,8 +607,9 @@ void Camera::updateFollowOffsetFromCameraRotation()
     // The camera's current rotation (cameraRotation) is absolute, we need relative
     // relativeYaw is offset FROM character's facing direction
     // For now, just store absolute and compute relative on each frame
-    settings.relativeYaw = cameraRotation.x;
-    settings.relativePitch = cameraRotation.y;
+    const glm::vec2 rot = getEulerRotation();
+    settings.relativeYaw = rot.x;
+    settings.relativePitch = rot.y;
     
     followOrbit.configure(followOrbit.sceneIndex(), settings);
 }
@@ -623,65 +617,71 @@ void Camera::updateFollowOffsetFromCameraRotation()
 void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models)
 {
     if (!followOrbit.isEnabled()) {
+        followTargetValidForView = false;
+        followTargetRaw = glm::vec3(0.0f);
+        followTargetMotion = glm::vec3(0.0f);
+        followTargetTracker.reset();
         return;
     }
 
     const int sceneIndex = followOrbit.sceneIndex();
     if (sceneIndex < 0 || sceneIndex >= static_cast<int>(models.size()) || !models[sceneIndex]) {
+        followTargetValidForView = false;
+        followTargetRaw = glm::vec3(0.0f);
+        followTargetMotion = glm::vec3(0.0f);
+        followTargetTracker.reset();
         return;
     }
 
     Model* targetModel = models[sceneIndex].get();
     if (!targetModel) {
+        followTargetValidForView = false;
+        followTargetRaw = glm::vec3(0.0f);
+        followTargetMotion = glm::vec3(0.0f);
+        followTargetTracker.reset();
         return;
     }
 
     const FollowSettings& settings = followOrbit.settings();
-    const glm::vec3 targetCenter = followAnchorPosition(*targetModel, settings);
-
-    constexpr float kPi = 3.14159265358979323846f;
-    const float dist = std::max(followcam::kMinDistance, settings.distance);
-    const float relativePitch = settings.relativePitch;
+    const glm::vec3 targetCenterRaw = followAnchorPosition(*targetModel, settings);
+    const FollowTargetFrame targetFrame = followTargetTracker.update(targetCenterRaw, deltaTime, settings.smoothSpeed);
+    const glm::vec3 targetCenterForRig = targetFrame.motionCenter;
+    followTargetRaw = targetFrame.rawCenter;
+    followTargetMotion = targetFrame.motionCenter;
+    // Use one tracked target for both orbit position and view lock to avoid
+    // phase error oscillation when animation-driven bounds jitter.
+    followTargetForView = targetCenterForRig;
+    followTargetValidForView = true;
     const glm::vec3 modelForward = glm::vec3(targetModel->worldTransform[2]);
-    const float targetYaw = FollowOrbit::computeTargetYaw(modelForward);
-    // Keep semantics aligned with FollowOrbit::computePose:
-    // relativeYaw=0 should position camera behind target.
-    const float worldYaw = normalizeAngle(targetYaw + settings.relativeYaw + kPi);
-
-    // Compute camera position from spherical coordinates around target
-    // When relativeYaw=0, camera is behind character (+Z), when relativeYaw=pi, camera is in front
-    // Standard spherical to cartesian conversion
-    glm::vec3 cameraOffset;
-    cameraOffset.x = sin(worldYaw) * cos(relativePitch) * dist;
-    cameraOffset.y = sin(relativePitch) * dist;
-    cameraOffset.z = cos(worldYaw) * cos(relativePitch) * dist;
-
-    glm::vec3 desiredPos = targetCenter + cameraOffset;
-    
-    const float smoothSpeed = std::max(settings.smoothSpeed, 1.0f);
-    float t = std::clamp(1.0f - std::exp(-smoothSpeed * std::max(deltaTime, 0.0f)), 0.0f, 1.0f);
-    cameraPos = glm::mix(cameraPos, desiredPos, t);
-
-    // Camera always looks at target
-    glm::vec3 lookTarget = targetCenter + glm::vec3(0.0f, 0.5f, 0.0f);
-    glm::vec3 toTarget = lookTarget - cameraPos;
+    FollowOrbitPose currentPose{};
+    currentPose.position = cameraPos;
+    currentPose.rotation = getEulerRotation();
+    FollowOrbitPose nextPose{};
+    if (mode == CameraMode::OrbitFollow)
+    {
+        nextPose = orbitRig.update(targetCenterForRig, deltaTime, currentPose);
+    }
+    else
+    {
+        nextPose = followOrbit.update(targetCenterForRig, modelForward, deltaTime, currentPose);
+    }
+    cameraPos = nextPose.position;
+    // Hard constraint for follow/orbit cameras: always look at target center.
+    const glm::vec3 toTarget = followTargetForView - cameraPos;
     if (glm::length(toTarget) > 0.001f)
     {
-        glm::vec3 front = glm::normalize(toTarget);
-        float yaw = std::atan2(front.x, -front.z);
-        float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
-        cameraRotation = glm::vec2(normalizeAngle(yaw), pitch);
+        const glm::vec3 front = glm::normalize(toTarget);
+        const float yaw = std::atan2(front.x, -front.z);
+        const float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
+        setEulerRotation(glm::vec2(yaw, pitch));
+    }
+    else
+    {
+        setEulerRotation(nextPose.rotation);
     }
 
-    glm::vec3 cameraFront;
-    cameraFront.x = std::cos(cameraRotation.y) * std::sin(cameraRotation.x);
-    cameraFront.y = std::sin(cameraRotation.y);
-    cameraFront.z = -std::cos(cameraRotation.y) * std::cos(cameraRotation.x);
-    if (glm::length(cameraFront) > 1e-6f)
-    {
-        cameraFront = glm::normalize(cameraFront);
-    }
-    const glm::vec3 toTargetNow = targetCenter - cameraPos;
+    glm::vec3 cameraFront = getForwardVector();
+    const glm::vec3 toTargetNow = followTargetForView - cameraPos;
     const float targetDistance = glm::length(toTargetNow);
     const glm::vec3 toTargetDir = (targetDistance > 1e-6f) ? (toTargetNow / targetDistance) : glm::vec3(0.0f, 0.0f, -1.0f);
     const float frontDot = glm::dot(cameraFront, toTargetDir);
@@ -715,4 +715,151 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
                   << std::endl;
     }
     followWarningActive = badFraming;
+
+    // Keep view/projection state synchronized with follow updates so render/debug
+    // use the exact same orbit pose in the current frame.
+    updateCameraMatrices();
+}
+// New method implementations for camera mode management
+
+void Camera::setMode(CameraMode newMode)
+{
+    if (mode == newMode)
+    {
+        return;
+    }
+
+    if (!canEnterMode(newMode))
+    {
+        std::cout << "[Camera][Warning] Rejected mode transition from "
+                  << modeName(mode)
+                  << " to "
+                  << modeName(newMode)
+                  << " (requires valid follow target)" << std::endl;
+        return;
+    }
+
+    clearInputState();
+
+    if (newMode == CameraMode::OrbitFollow && followOrbit.isEnabled())
+    {
+        // Keep orbit rig synchronized with current follow settings when entering orbit mode.
+        orbitRig.configure(followOrbit.sceneIndex(), followOrbit.settings());
+    }
+
+    switch (newMode)
+    {
+        case CameraMode::FreeFly:
+            controlsEnabled = true;
+            break;
+        case CameraMode::CharacterFollow:
+        case CameraMode::OrbitFollow:
+            controlsEnabled = false;
+            break;
+        case CameraMode::Fixed:
+            controlsEnabled = false;
+            break;
+    }
+
+    mode = newMode;
+    std::cout << "[Camera] Mode changed to " << modeName(mode) << std::endl;
+}
+
+bool Camera::canEnterMode(CameraMode candidateMode) const
+{
+    return camera_mode_rules::canEnterMode(candidateMode, followOrbit.isEnabled(), followOrbit.sceneIndex());
+}
+
+const char* Camera::modeName(CameraMode value) const
+{
+    switch (value)
+    {
+        case CameraMode::FreeFly: return "FreeFly";
+        case CameraMode::CharacterFollow: return "CharacterFollow";
+        case CameraMode::OrbitFollow: return "OrbitFollow";
+        case CameraMode::Fixed: return "Fixed";
+        default: return "Unknown";
+    }
+}
+
+Model* Camera::getFollowTarget(const std::vector<std::unique_ptr<Model>>& models) const
+{
+    const int sceneIndex = followOrbit.sceneIndex();
+    if (sceneIndex >= 0 && sceneIndex < static_cast<int>(models.size())) {
+        return models[sceneIndex].get();
+    }
+    return nullptr;
+}
+
+void Camera::setFreeFlyCamera(bool freeFly)
+{
+    if (freeFly) {
+        setMode(CameraMode::FreeFly);
+    } else {
+        if (followOrbit.sceneIndex() >= 0 && followOrbit.isEnabled())
+        {
+            setMode(CameraMode::CharacterFollow);
+        }
+        else
+        {
+            setMode(CameraMode::Fixed);
+        }
+    }
+}
+
+bool Camera::isFreeFlyCamera() const
+{
+    return mode == CameraMode::FreeFly;
+}
+
+glm::vec2 Camera::getEulerRotation() const
+{
+    return yawPitchFromQuaternion(cameraOrientation);
+}
+
+void Camera::setEulerRotation(const glm::vec2& rotation)
+{
+    const glm::vec2 sanitized(
+        rotation.x,
+        std::clamp(rotation.y, -1.4f, 1.4f));
+    cameraOrientation = quaternionFromYawPitch(sanitized.x, sanitized.y);
+    cameraRotation = sanitized;
+    orientationSyncedEuler = sanitized;
+}
+
+glm::vec3 Camera::getForwardVector() const
+{
+    const glm::vec3 front = cameraOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+    if (glm::length(front) <= 1e-6f)
+    {
+        return glm::vec3(0.0f, 0.0f, -1.0f);
+    }
+    return glm::normalize(front);
+}
+
+void Camera::syncOrientationFromEulerCacheIfNeeded()
+{
+    // Quaternion is authoritative; keep Euler cache in sync for UI/reporting only.
+    syncEulerCacheFromOrientation();
+}
+
+void Camera::syncEulerCacheFromOrientation()
+{
+    cameraRotation = yawPitchFromQuaternion(cameraOrientation);
+    orientationSyncedEuler = cameraRotation;
+}
+
+glm::quat Camera::quaternionFromYawPitch(float yaw, float pitch)
+{
+    const glm::quat yawQ = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::quat pitchQ = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
+    return glm::normalize(yawQ * pitchQ);
+}
+
+glm::vec2 Camera::yawPitchFromQuaternion(const glm::quat& orientation)
+{
+    const glm::vec3 front = glm::normalize(orientation * glm::vec3(0.0f, 0.0f, -1.0f));
+    const float yaw = std::atan2(front.x, -front.z);
+    const float pitch = std::asin(glm::clamp(front.y, -1.0f, 1.0f));
+    return glm::vec2(yaw, pitch);
 }

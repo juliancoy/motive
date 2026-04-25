@@ -13,6 +13,7 @@
 #include <QProcess>
 #include <QTimer>
 
+#include <algorithm>
 #include <limits>
 
 namespace motive::ui {
@@ -83,6 +84,7 @@ int runMotiveEditorApp(int argc, char** argv)
             {
                 data.sceneItemCount = viewport->sceneItems().size();
                 data.hierarchy = window.hierarchyJson();
+                data.inspector = window.inspectorDebugJson();
                 for (const auto& item : viewport->sceneProfileJson())
                 {
                     data.sceneItems.append(item.toObject());
@@ -181,6 +183,77 @@ int runMotiveEditorApp(int argc, char** argv)
                 return true;
             }
 
+            if (command == QStringLiteral("selection"))
+            {
+                bool selected = false;
+                if (body.contains(QStringLiteral("sceneIndex")))
+                {
+                    selected = window.selectHierarchySceneItem(body.value(QStringLiteral("sceneIndex")).toInt(-1));
+                }
+                else if (body.contains(QStringLiteral("cameraId")) || body.contains(QStringLiteral("cameraIndex")))
+                {
+                    const QString cameraId = body.value(QStringLiteral("cameraId")).toString();
+                    const int cameraIndex = body.value(QStringLiteral("cameraIndex")).toInt(-1);
+                    selected = window.selectHierarchyCamera(cameraId, cameraIndex);
+                }
+
+                result = window.inspectorDebugJson();
+                result.insert(QStringLiteral("selected"), selected);
+                return selected;
+            }
+
+            if (command == QStringLiteral("animation"))
+            {
+                const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+                const auto items = viewport->sceneItems();
+                if (sceneIndex < 0 || sceneIndex >= items.size())
+                {
+                    result.insert(QStringLiteral("error"), QStringLiteral("valid sceneIndex is required"));
+                    return false;
+                }
+
+                QString clip = items[sceneIndex].activeAnimationClip;
+                bool playing = items[sceneIndex].animationPlaying;
+                bool loop = items[sceneIndex].animationLoop;
+                float speed = items[sceneIndex].animationSpeed;
+
+                if (body.contains(QStringLiteral("clip")))
+                {
+                    clip = body.value(QStringLiteral("clip")).toString(clip);
+                }
+                if (body.contains(QStringLiteral("playing")))
+                {
+                    playing = body.value(QStringLiteral("playing")).toBool(playing);
+                }
+                if (body.contains(QStringLiteral("loop")))
+                {
+                    loop = body.value(QStringLiteral("loop")).toBool(loop);
+                }
+                if (body.contains(QStringLiteral("speed")))
+                {
+                    speed = static_cast<float>(body.value(QStringLiteral("speed")).toDouble(speed));
+                }
+
+                viewport->updateSceneItemAnimationState(sceneIndex, clip, playing, loop, speed);
+
+                if (body.value(QStringLiteral("select")).toBool(false))
+                {
+                    window.selectHierarchySceneItem(sceneIndex);
+                }
+
+                const QJsonArray profile = viewport->sceneProfileJson();
+                if (sceneIndex >= 0 && sceneIndex < profile.size() && profile.at(sceneIndex).isObject())
+                {
+                    result.insert(QStringLiteral("scene"), profile.at(sceneIndex).toObject());
+                }
+                result.insert(QStringLiteral("sceneIndex"), sceneIndex);
+                result.insert(QStringLiteral("clip"), clip);
+                result.insert(QStringLiteral("playing"), playing);
+                result.insert(QStringLiteral("loop"), loop);
+                result.insert(QStringLiteral("speed"), speed);
+                return true;
+            }
+
             if (command == QStringLiteral("character"))
             {
                 // Support both sceneIndex and name/label
@@ -230,6 +303,42 @@ int runMotiveEditorApp(int argc, char** argv)
                     viewport->enableCharacterControl(sceneIndex, enabled);
                     result.insert(QStringLiteral("controllable"), enabled);
                 }
+
+                const bool hasInputPayload =
+                    body.contains(QStringLiteral("keyW")) ||
+                    body.contains(QStringLiteral("keyA")) ||
+                    body.contains(QStringLiteral("keyS")) ||
+                    body.contains(QStringLiteral("keyD")) ||
+                    body.contains(QStringLiteral("jump")) ||
+                    body.contains(QStringLiteral("durationMs")) ||
+                    body.contains(QStringLiteral("move"));
+                if (hasInputPayload)
+                {
+                    bool keyW = body.value(QStringLiteral("keyW")).toBool(false);
+                    bool keyA = body.value(QStringLiteral("keyA")).toBool(false);
+                    bool keyS = body.value(QStringLiteral("keyS")).toBool(false);
+                    bool keyD = body.value(QStringLiteral("keyD")).toBool(false);
+                    const bool jump = body.value(QStringLiteral("jump")).toBool(false);
+                    const int durationMs = body.value(QStringLiteral("durationMs")).toInt(250);
+
+                    if (body.contains(QStringLiteral("move")))
+                    {
+                        const QString move = body.value(QStringLiteral("move")).toString().toUpper();
+                        keyW = move.contains(QStringLiteral("W"));
+                        keyA = move.contains(QStringLiteral("A"));
+                        keyS = move.contains(QStringLiteral("S"));
+                        keyD = move.contains(QStringLiteral("D"));
+                    }
+
+                    const bool injected = viewport->injectCharacterInput(sceneIndex, keyW, keyA, keyS, keyD, jump, durationMs);
+                    result.insert(QStringLiteral("inputInjected"), injected);
+                    result.insert(QStringLiteral("keyW"), keyW);
+                    result.insert(QStringLiteral("keyA"), keyA);
+                    result.insert(QStringLiteral("keyS"), keyS);
+                    result.insert(QStringLiteral("keyD"), keyD);
+                    result.insert(QStringLiteral("jump"), jump);
+                    result.insert(QStringLiteral("durationMs"), durationMs);
+                }
                 
                 result.insert(QStringLiteral("sceneIndex"), sceneIndex);
                 result.insert(QStringLiteral("isControllable"), viewport->isCharacterControlEnabled(sceneIndex));
@@ -238,6 +347,12 @@ int runMotiveEditorApp(int argc, char** argv)
 
             if (command == QStringLiteral("camera"))
             {
+                const QStringList validCameraModes = {
+                    QStringLiteral("FreeFly"),
+                    QStringLiteral("CharacterFollow"),
+                    QStringLiteral("OrbitFollow"),
+                    QStringLiteral("Fixed")
+                };
                 auto resolveCameraIndex = [&](const QString& indexField, const QString& idField) -> int
                 {
                     if (body.contains(idField))
@@ -266,6 +381,7 @@ int runMotiveEditorApp(int argc, char** argv)
                         cam.insert(QStringLiteral("index"), i);
                         cam.insert(QStringLiteral("id"), configs[i].id);
                         cam.insert(QStringLiteral("name"), configs[i].name);
+                        cam.insert(QStringLiteral("mode"), configs[i].mode);
                         cam.insert(QStringLiteral("type"), configs[i].isFollowCamera() ? QStringLiteral("follow") : QStringLiteral("free"));
                         cam.insert(QStringLiteral("followTargetIndex"), configs[i].followTargetIndex);
                         cam.insert(QStringLiteral("followDistance"), configs[i].followDistance);
@@ -281,13 +397,49 @@ int runMotiveEditorApp(int argc, char** argv)
                 }
                 
                 // Create follow camera
-                if (body.contains(QStringLiteral("createFollow")))
+                if (body.contains(QStringLiteral("createFollow")) || body.contains(QStringLiteral("createFollowName")))
                 {
-                    const int sceneIndex = body.value(QStringLiteral("createFollow")).toInt(-1);
+                    int sceneIndex = -1;
+                    
+                    // Try to resolve by name first
+                    if (body.contains(QStringLiteral("createFollowName")))
+                    {
+                        const QString targetName = body.value(QStringLiteral("createFollowName")).toString();
+                        const auto items = viewport->sceneItems();
+                        for (int i = 0; i < items.size(); ++i)
+                        {
+                            if (items[i].name == targetName)
+                            {
+                                sceneIndex = i;
+                                break;
+                            }
+                        }
+                        if (sceneIndex < 0)
+                        {
+                            result.insert(QStringLiteral("error"), QStringLiteral("Scene item not found with name: %1").arg(targetName));
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        // Use integer index
+                        sceneIndex = body.value(QStringLiteral("createFollow")).toInt(-1);
+                    }
+                    
                     const float distance = body.value(QStringLiteral("distance")).toDouble(5.0);
                     const float yaw = body.value(QStringLiteral("yaw")).toDouble(0.0);
                     const float pitch = body.value(QStringLiteral("pitch")).toDouble(20.0);
                     const int camIndex = viewport->createFollowCamera(sceneIndex, distance, yaw, pitch);
+                    if (camIndex >= 0 && body.contains(QStringLiteral("smooth")))
+                    {
+                        auto configs = viewport->cameraConfigs();
+                        if (camIndex < configs.size())
+                        {
+                            configs[camIndex].followSmoothSpeed =
+                                std::max(0.0f, static_cast<float>(body.value(QStringLiteral("smooth")).toDouble(configs[camIndex].followSmoothSpeed)));
+                            viewport->updateCameraConfig(camIndex, configs[camIndex]);
+                        }
+                    }
                     result.insert(QStringLiteral("created"), camIndex >= 0);
                     result.insert(QStringLiteral("cameraIndex"), camIndex);
                     result.insert(QStringLiteral("sceneIndex"), sceneIndex);
@@ -321,10 +473,37 @@ int runMotiveEditorApp(int argc, char** argv)
                         {
                             auto& config = configs[cameraIndex];
                             
-                            // Update follow target
-                            if (body.contains(QStringLiteral("followTargetIndex")))
+                            // Update follow target - support both index and name
+                            if (body.contains(QStringLiteral("followTargetIndex")) || body.contains(QStringLiteral("followTargetName")))
                             {
-                                config.followTargetIndex = body.value(QStringLiteral("followTargetIndex")).toInt(-1);
+                                int targetIndex = -1;
+                                
+                                // Try to resolve by name first
+                                if (body.contains(QStringLiteral("followTargetName")))
+                                {
+                                    const QString targetName = body.value(QStringLiteral("followTargetName")).toString();
+                                    const auto items = viewport->sceneItems();
+                                    for (int i = 0; i < items.size(); ++i)
+                                    {
+                                        if (items[i].name == targetName)
+                                        {
+                                            targetIndex = i;
+                                            break;
+                                        }
+                                    }
+                                    if (targetIndex < 0)
+                                    {
+                                        result.insert(QStringLiteral("error"), QStringLiteral("Scene item not found with name: %1").arg(targetName));
+                                        return false;
+                                    }
+                                }
+                                else
+                                {
+                                    // Use integer index
+                                    targetIndex = body.value(QStringLiteral("followTargetIndex")).toInt(-1);
+                                }
+                                
+                                config.followTargetIndex = targetIndex;
                                 config.type = (config.followTargetIndex >= 0) 
                                     ? ViewportHostWidget::CameraConfig::Type::Follow 
                                     : ViewportHostWidget::CameraConfig::Type::Free;
@@ -345,6 +524,21 @@ int runMotiveEditorApp(int argc, char** argv)
                             {
                                 config.followPitch = body.value(QStringLiteral("pitch")).toDouble(20.0);
                             }
+                            if (body.contains(QStringLiteral("smooth")))
+                            {
+                                config.followSmoothSpeed =
+                                    std::max(0.0f, static_cast<float>(body.value(QStringLiteral("smooth")).toDouble(config.followSmoothSpeed)));
+                            }
+                            if (body.contains(QStringLiteral("mode")))
+                            {
+                                const QString mode = body.value(QStringLiteral("mode")).toString();
+                                if (!validCameraModes.contains(mode))
+                                {
+                                    result.insert(QStringLiteral("error"), QStringLiteral("Invalid camera mode: %1").arg(mode));
+                                    return false;
+                                }
+                                config.mode = mode;
+                            }
                             
                             viewport->updateCameraConfig(cameraIndex, config);
                             result.insert(QStringLiteral("updated"), true);
@@ -364,6 +558,34 @@ int runMotiveEditorApp(int argc, char** argv)
                     }
                 }
                 
+                if (body.contains(QStringLiteral("setMode")) || body.contains(QStringLiteral("setModeId")))
+                {
+                    const int cameraIndex = resolveCameraIndex(QStringLiteral("setMode"), QStringLiteral("setModeId"));
+                    if (cameraIndex < 0)
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("Camera not found"));
+                        return false;
+                    }
+                    const QString mode = body.value(QStringLiteral("mode")).toString();
+                    if (!validCameraModes.contains(mode))
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("mode is required and must be one of: FreeFly, CharacterFollow, OrbitFollow, Fixed"));
+                        return false;
+                    }
+                    auto configs = viewport->cameraConfigs();
+                    if (cameraIndex >= configs.size())
+                    {
+                        result.insert(QStringLiteral("error"), QStringLiteral("Camera index out of range"));
+                        return false;
+                    }
+                    configs[cameraIndex].mode = mode;
+                    viewport->updateCameraConfig(cameraIndex, configs[cameraIndex]);
+                    result.insert(QStringLiteral("updated"), true);
+                    result.insert(QStringLiteral("cameraIndex"), cameraIndex);
+                    result.insert(QStringLiteral("cameraId"), configs[cameraIndex].id);
+                    result.insert(QStringLiteral("mode"), mode);
+                }
+
                 result.insert(QStringLiteral("freeFly"), viewport->isFreeFlyCameraEnabled());
                 return true;
             }

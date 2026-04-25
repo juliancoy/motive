@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
+#include "input_router.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <stdexcept>
@@ -132,6 +133,14 @@ Camera* ViewportRuntime::camera() const
 void ViewportRuntime::setCamera(Camera* camera)
 {
     m_camera = camera;
+}
+
+InputRouter* ViewportRuntime::getInputRouter() const
+{
+    if (m_display) {
+        return m_display->getInputRouter();
+    }
+    return nullptr;
 }
 
 bool ViewportRuntime::isInitialized() const

@@ -6,6 +6,7 @@
 class Engine;
 class Display;
 class Camera;
+class InputRouter;
 
 namespace motive::ui {
 
@@ -29,6 +30,7 @@ public:
     Display* display() const;
     Camera* camera() const;
     void setCamera(Camera* camera);  // Set the active camera for input handling
+    InputRouter* getInputRouter() const;  // Get input router for debugging
 
     bool isInitialized() const;
 

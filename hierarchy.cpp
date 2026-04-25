@@ -110,7 +110,7 @@ void MainWindowShell::appendHierarchyNode(QTreeWidgetItem* parent, const Viewpor
 
     if (!node.children.isEmpty())
     {
-        item->setExpanded(true);
+        item->setExpanded(false);
     }
 }
 

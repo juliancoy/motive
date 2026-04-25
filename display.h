@@ -58,6 +58,7 @@ public:
     void render();
     void createCommandPool();
     void createGraphicsPipeline();
+    void updateRuntimeControllers(float deltaTime);
     void handleFramebufferResize(int newWidth, int newHeight);
     void updateCameraViewports();
     void setBackgroundColor(float r, float g, float b);
@@ -175,6 +176,8 @@ private:
 
     uint32_t fpsFrameCounter = 0;
     std::chrono::steady_clock::time_point fpsLastSampleTime = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point runtimeUpdateLastTime = std::chrono::steady_clock::now();
+    bool runtimeUpdateInitialized = false;
     OverlayResources overlayResources;
     std::vector<ViewportSlot> viewportSlots;
     bool useExplicitViewportSlots = false;

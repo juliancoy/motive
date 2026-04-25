@@ -13,6 +13,7 @@
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
+#include "input_router.h"
 #include "primitive.h"
 #include "model.h"
 
@@ -75,6 +76,55 @@ uint32_t pipelineIndexForCullMode(PrimitiveCullMode mode, bool cullingDisabled, 
     return static_cast<uint32_t>(mode);
 }
 } // namespace
+
+void Display::updateRuntimeControllers(float deltaTime)
+{
+    if (!engine)
+    {
+        return;
+    }
+
+    if (inputRouter)
+    {
+        Camera* activeCamera = getActiveCamera();
+        if (activeCamera)
+        {
+            const CameraMode mode = activeCamera->getMode();
+            const bool followMode = (mode == CameraMode::CharacterFollow) || (mode == CameraMode::OrbitFollow);
+            Model* followTarget = followMode ? activeCamera->getFollowTarget(engine->models) : nullptr;
+            inputRouter->setCharacterTarget(followTarget);
+            const glm::vec2 eulerRot = activeCamera->getEulerRotation();
+            const glm::vec3 cameraRotationVec3(eulerRot.x, eulerRot.y, 0.0f);
+            inputRouter->update(deltaTime, cameraRotationVec3, activeCamera->cameraPos);
+        }
+    }
+
+    std::vector<bool> refreshedFollowBounds;
+    if (engine)
+    {
+        refreshedFollowBounds.resize(engine->models.size(), false);
+    }
+
+    for (Camera* camera : cameras)
+    {
+        if (camera && camera->isFollowModeEnabled())
+        {
+            const int followSceneIndex = camera->getFollowSceneIndex();
+            if (engine &&
+                followSceneIndex >= 0 &&
+                followSceneIndex < static_cast<int>(engine->models.size()) &&
+                engine->models[static_cast<size_t>(followSceneIndex)] &&
+                !refreshedFollowBounds[static_cast<size_t>(followSceneIndex)])
+            {
+                // Ensure follow anchor uses latest animated+physics-adjusted bounds
+                // before camera follow computes target center this frame.
+                engine->models[static_cast<size_t>(followSceneIndex)]->recomputeBounds();
+                refreshedFollowBounds[static_cast<size_t>(followSceneIndex)] = true;
+            }
+            camera->updateFollow(deltaTime, engine->models);
+        }
+    }
+}
 
 void Display::render()
 {
@@ -159,6 +209,24 @@ void Display::render()
                 renderViews.push_back({activeCamera, activeCamera->centerpoint.x, activeCamera->centerpoint.y, activeCamera->width, activeCamera->height});
             }
         }
+    }
+
+    if (!embeddedMode)
+    {
+        const auto updateNow = std::chrono::steady_clock::now();
+        float runtimeDt = 0.0f;
+        if (!runtimeUpdateInitialized)
+        {
+            runtimeUpdateInitialized = true;
+            runtimeUpdateLastTime = updateNow;
+        }
+        else
+        {
+            runtimeDt = std::max(0.0f, std::chrono::duration<float>(updateNow - runtimeUpdateLastTime).count());
+            runtimeUpdateLastTime = updateNow;
+        }
+
+        updateRuntimeControllers(runtimeDt);
     }
 
     frameSyncState.waitForReusableCommandBuffer(engine->logicalDevice, [this](size_t index) {

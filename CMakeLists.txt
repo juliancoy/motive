@@ -185,7 +185,7 @@ set(MOTIVE_MAIN_SOURCES
     "${MOTIVE_ROOT}/motive2d.cpp"
     "${MOTIVE_ROOT}/encode.cpp"
     "${MOTIVE_ROOT}/asset_load_profile.cpp"
-    "${MOTIVE_ROOT}/motive_editor_main.cpp"
+    "${MOTIVE_ROOT}/main.cpp"
 )
 set(MOTIVE_EXCLUDED_ENGINE_SOURCES
     "${MOTIVE_ROOT}/brain_viewer_engine.cpp"
@@ -194,6 +194,19 @@ set(MOTIVE_EXCLUDED_ENGINE_SOURCES
     "${MOTIVE_ROOT}/display_old.h"
     "${MOTIVE_ROOT}/shell_old.cpp"
     "${MOTIVE_ROOT}/shell_old.h"
+    "${MOTIVE_ROOT}/motive3d_app.cpp"
+    "${MOTIVE_ROOT}/follow_target_tracker.cpp"
+    "${MOTIVE_ROOT}/camera.cpp"
+    "${MOTIVE_ROOT}/input_router.cpp"
+    "${MOTIVE_ROOT}/orbit_follow_rig.cpp"
+    "${MOTIVE_ROOT}/animation.cpp"
+    "${MOTIVE_ROOT}/fbx_import.cpp"
+    "${MOTIVE_ROOT}/gltf_import.cpp"
+    "${MOTIVE_ROOT}/model.cpp"
+    "${MOTIVE_ROOT}/model_import_shared.cpp"
+    "${MOTIVE_ROOT}/model_runtime.cpp"
+    "${MOTIVE_ROOT}/primitive.cpp"
+    "${MOTIVE_ROOT}/texture.cpp"
 )
 
 list(REMOVE_ITEM MOTIVE_ROOT_CPP ${MOTIVE_MAIN_SOURCES})
@@ -203,12 +216,40 @@ set(MOTIVE_ENGINE_SOURCES
     ${MOTIVE_ROOT_CPP}
     ${MOTIVE_COMMON_VV_CPP}
     ${MOTIVE_DECODER_VV_CPP}
-    "${MOTIVE_ROOT}/ufbx/ufbx.c"
 )
+
+set(MOTIVE_RUNTIME_CAMERA_SOURCES
+    "${MOTIVE_ROOT}/follow_target_tracker.cpp"
+    "${MOTIVE_ROOT}/camera.cpp"
+    "${MOTIVE_ROOT}/input_router.cpp"
+    "${MOTIVE_ROOT}/orbit_follow_rig.cpp"
+)
+
+set(MOTIVE_RUNTIME_SCENE_SOURCES
+    "${MOTIVE_ROOT}/animation.cpp"
+    "${MOTIVE_ROOT}/fbx_import.cpp"
+    "${MOTIVE_ROOT}/gltf_import.cpp"
+    "${MOTIVE_ROOT}/model.cpp"
+    "${MOTIVE_ROOT}/model_import_shared.cpp"
+    "${MOTIVE_ROOT}/model_runtime.cpp"
+    "${MOTIVE_ROOT}/primitive.cpp"
+    "${MOTIVE_ROOT}/texture.cpp"
+)
+
+add_library(motive_runtime_camera STATIC ${MOTIVE_RUNTIME_CAMERA_SOURCES})
+target_include_directories(motive_runtime_camera PUBLIC ${MOTIVE_INCLUDE_DIRS})
+target_link_libraries(motive_runtime_camera PUBLIC ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets)
+
+add_library(motive_vendor_ufbx STATIC "${MOTIVE_ROOT}/ufbx/ufbx.c")
+target_include_directories(motive_vendor_ufbx PUBLIC ${MOTIVE_INCLUDE_DIRS})
+
+add_library(motive_runtime_scene STATIC ${MOTIVE_RUNTIME_SCENE_SOURCES})
+target_include_directories(motive_runtime_scene PUBLIC ${MOTIVE_INCLUDE_DIRS})
+target_link_libraries(motive_runtime_scene PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets motive_runtime_camera)
 
 add_library(engine STATIC ${MOTIVE_ENGINE_SOURCES})
 target_include_directories(engine PUBLIC ${MOTIVE_INCLUDE_DIRS})
-target_link_libraries(engine PUBLIC ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(engine PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets motive_runtime_camera motive_runtime_scene)
 
 foreach(source_file IN LISTS MOTIVE_ENGINE_SOURCES)
     get_filename_component(source_name "${source_file}" NAME)
@@ -243,9 +284,12 @@ function(motive_add_app target source_file)
     add_dependencies(${target} compile_shaders)
 endfunction()
 
-motive_add_app(motive3d motive3d.cpp)
+motive_add_app(motive3d main.cpp)
+target_link_libraries(motive3d PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+motive_add_app(motive3d_runtime motive3d.cpp)
+target_sources(motive3d_runtime PRIVATE "${MOTIVE_ROOT}/motive3d_app.cpp")
 motive_add_app(motive2d motive2d.cpp)
 motive_add_app(encode encode.cpp)
-motive_add_app(motive_editor motive_editor_main.cpp)
+motive_add_app(motive_editor main.cpp)
 motive_add_app(asset_load_profile asset_load_profile.cpp)
 target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)

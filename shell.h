@@ -14,6 +14,7 @@
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QDoubleSpinBox>
+#include <QGroupBox>
 #include <QStringList>
 #include <QSplitter>
 #include <QUndoStack>
@@ -32,6 +33,9 @@ public:
     ViewportHostWidget* viewportHost() const;
     QJsonArray hierarchyJson() const;
     QJsonObject uiDebugJson() const;
+    QJsonObject inspectorDebugJson() const;
+    bool selectHierarchySceneItem(int sceneIndex);
+    bool selectHierarchyCamera(const QString& cameraId, int cameraIndex = -1);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -70,7 +74,16 @@ private:
     QWidget* m_leftPane = nullptr;
     QSplitter* m_splitter = nullptr;
     QTabWidget* m_rightTabs = nullptr;
+    QTabWidget* m_elementDetailTabs = nullptr;
     QTreeWidget* m_hierarchyTree = nullptr;
+    QGroupBox* m_summarySection = nullptr;
+    QGroupBox* m_materialSection = nullptr;
+    QGroupBox* m_animationSection = nullptr;
+    QGroupBox* m_cameraSection = nullptr;
+    QGroupBox* m_lightSection = nullptr;
+    QGroupBox* m_transformSection = nullptr;
+    QGroupBox* m_physicsSection = nullptr;
+    QGroupBox* m_runtimeSection = nullptr;
     QLabel* m_inspectorNameValue = nullptr;
     QLabel* m_inspectorPathValue = nullptr;
     QLabel* m_animationModeValue = nullptr;
@@ -81,6 +94,7 @@ private:
     QCheckBox* m_loadMeshConsolidationCheck = nullptr;
     QCheckBox* m_paintOverrideCheck = nullptr;
     QWidget* m_paintColorWidget = nullptr;
+    QWidget* m_paintColorContainer = nullptr;
     QWidget* m_animationControlsWidget = nullptr;
     QComboBox* m_animationClipCombo = nullptr;
     QCheckBox* m_animationPlayingCheck = nullptr;
@@ -97,11 +111,18 @@ private:
     QDoubleSpinBox* m_elementGravityZ = nullptr;
     QWidget* m_elementGravityWidget = nullptr;
     QDoubleSpinBox* m_characterTurnResponsivenessSpin = nullptr;
+    QLabel* m_objectFollowCamInfoValue = nullptr;
+    QLabel* m_objectKinematicInfoValue = nullptr;
+    QLabel* m_objectAnimationRuntimeInfoValue = nullptr;
     
     QWidget* m_lightTypeWidget = nullptr;
     QComboBox* m_lightTypeCombo = nullptr;
     QDoubleSpinBox* m_lightBrightnessSpin = nullptr;
     QWidget* m_lightColorWidget = nullptr;
+    QWidget* m_lightColorContainer = nullptr;
+    QWidget* m_translationWidget = nullptr;
+    QWidget* m_rotationWidget = nullptr;
+    QWidget* m_scaleWidget = nullptr;
     QDoubleSpinBox* m_inspectorTranslationX = nullptr;
     QDoubleSpinBox* m_inspectorTranslationY = nullptr;
     QDoubleSpinBox* m_inspectorTranslationZ = nullptr;

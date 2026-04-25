@@ -5,7 +5,7 @@
 #   --asan          Enable AddressSanitizer
 #   --no-validation Disable Vulkan validation layers
 #   --clean         Clean build directory first
-#   --full          Build runtime executables in addition to motive_editor
+#   --full          Build additional executables (motive3d_runtime, motive2d, encode)
 #   --jobs N        Number of parallel jobs (default: auto)
 #   --verbose       Verbose build output
 
@@ -68,7 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --asan          Enable AddressSanitizer (Debug build)"
             echo "  --no-validation Disable Vulkan validation layers"
             echo "  --clean         Clean build directory first"
-            echo "  --full          Build motive3d, motive2d, and encode in addition to motive_editor"
+            echo "  --full          Build motive3d, motive3d_runtime, motive2d, and encode"
             echo "  --jobs N        Number of parallel jobs (default: auto)"
             echo "  --verbose       Verbose build output"
             echo "  --help, -h      Show this help message"
@@ -147,9 +147,9 @@ echo ""
 echo -e "${BLUE}🔧 Building...${NC}"
 BUILD_ARGS=(--parallel "$JOBS")
 if [ "$FULL_BUILD" = "ON" ]; then
-    BUILD_ARGS+=(--target motive3d motive2d encode motive_editor)
+    BUILD_ARGS+=(--target motive3d motive3d_runtime motive2d encode)
 else
-    BUILD_ARGS+=(--target motive_editor)
+    BUILD_ARGS+=(--target motive3d)
 fi
 
 if [ "$VERBOSE" = "ON" ]; then
@@ -167,9 +167,9 @@ echo -e "${GREEN}✅ Build successful!${NC}"
 echo ""
 echo "Built targets:"
 if [ "$FULL_BUILD" = "ON" ]; then
-    TARGETS=(motive3d motive2d encode motive_editor)
+    TARGETS=(motive3d motive3d_runtime motive2d encode)
 else
-    TARGETS=(motive_editor)
+    TARGETS=(motive3d)
 fi
 for f in "${TARGETS[@]}"; do
     if [ -f "${BUILD_DIR}/$f" ]; then
@@ -182,11 +182,14 @@ echo ""
 if [ "$FULL_BUILD" = "ON" ]; then
     echo -e "${GREEN}🎉 All done! Run ./motive3d to start the application.${NC}"
     echo ""
-    echo "Runtime options:"
-    echo "  ./motive3d --parallel    Enable parallel scene loading"
-    echo "  ./motive3d --help        Show all runtime options"
-else
-    echo -e "${GREEN}🎉 All done! motive_editor is ready.${NC}"
+    echo "Shell app:"
+    echo "  ./motive3d"
     echo ""
-    echo "Use ./build.sh --full if you also want motive3d, motive2d, and encode."
+    echo "Standalone runtime options:"
+    echo "  ./motive3d_runtime --parallel    Enable parallel scene loading"
+    echo "  ./motive3d_runtime --help        Show all runtime options"
+else
+    echo -e "${GREEN}🎉 All done! motive3d is ready.${NC}"
+    echo ""
+    echo "Use ./build.sh --full if you also want motive3d_runtime, motive2d, and encode."
 fi

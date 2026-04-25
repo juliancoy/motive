@@ -105,7 +105,7 @@ public:
         bool keyD = false;
         
         // Animation state
-        enum class AnimState { Idle, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
+        enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
         AnimState currentAnimState = AnimState::Idle;
         float walkSpeedThreshold = 0.1f;
         float runSpeedThreshold = 4.0f;
@@ -134,6 +134,7 @@ public:
         std::string animJump = "jump";                  // or "jump_up", "jumping"
         std::string animFall = "fall";                  // or "falling", "fall_loop"
         std::string animLand = "land";                  // or "landing"
+        std::string animComeToRest = "stop";            // or "brake", "halt", "run_to_idle"
         
         // Crouching
         std::string animCrouchIdle = "crouch_idle";
@@ -169,6 +170,9 @@ public:
         // For smooth animation blending
         float currentAnimWeight = 0.0f;  // 0=idle, 1=walk
         float animBlendSpeed = 5.0f;     // How fast to blend between states
+        float comeToRestDuration = 0.20f;
+        float comeToRestTimer = 0.0f;
+        AnimState previousAnimState = AnimState::Idle;
     };
 
     Model(const std::string& gltfPath, Engine* engine, bool consolidateMeshes = true);
@@ -198,6 +202,7 @@ public:
     // Use this to configure which animations play for each movement direction
     void setCharacterAnimationNames(
         const std::string& idle = "",
+        const std::string& comeToRest = "",
         const std::string& walkForward = "",
         const std::string& walkBackward = "",
         const std::string& walkLeft = "",
@@ -221,9 +226,15 @@ public:
     float boundsRadius = 0.0f;
     glm::vec3 boundsMinWorld = glm::vec3(0.0f);
     glm::vec3 boundsMaxWorld = glm::vec3(0.0f);
+    // Stable follow-anchor reference captured from mesh-local bounds.
+    // Used for controllable characters to avoid animation AABB jitter/root-loop snaps.
+    glm::vec3 followAnchorLocalCenter = glm::vec3(0.0f);
+    bool followAnchorLocalCenterInitialized = false;
     bool meshConsolidationEnabled = true;
     std::vector<AnimationClipInfo> animationClips;
     std::unique_ptr<motive::animation::FbxRuntime> fbxAnimationRuntime;
+    bool animationPreprocessedFrameValid = false;
+    uint64_t animationPreprocessedFrameCounter = 0;
     
     // Character controller (for player-controlled models)
     CharacterController character;

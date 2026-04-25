@@ -1,11 +1,14 @@
 #include "shell.h"
 #include "host_widget.h"
+#include "camera_follow_settings.h"
 
 #include <QColor>
 #include <QDir>
 #include <QFileInfo>
 #include <QFrame>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPixmap>
 #include <QTreeWidget>
@@ -29,63 +32,113 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             label->setText(value);
         }
     };
+    const auto setElementDetailTab = [this](int index)
+    {
+        if (!m_elementDetailTabs || index < 0 || index >= m_elementDetailTabs->count())
+        {
+            return;
+        }
+        m_elementDetailTabs->setCurrentIndex(index);
+    };
     const auto setLightInspectorVisible = [this](bool visible)
     {
-        if (m_lightTypeCombo) m_lightTypeCombo->setVisible(visible);
-        if (m_lightBrightnessSpin) m_lightBrightnessSpin->setVisible(visible);
-        if (m_lightColorWidget && m_lightColorWidget->parentWidget()) m_lightColorWidget->parentWidget()->setVisible(visible);
+        if (m_lightSection) {
+            m_lightSection->setVisible(true);
+            m_lightSection->setEnabled(visible);
+        }
+        if (m_lightTypeCombo) {
+            m_lightTypeCombo->setVisible(true);
+            m_lightTypeCombo->setEnabled(visible);
+        }
+        if (m_lightBrightnessSpin) {
+            m_lightBrightnessSpin->setVisible(true);
+            m_lightBrightnessSpin->setEnabled(visible);
+        }
+        if (m_lightColorContainer) {
+            m_lightColorContainer->setVisible(true);
+            m_lightColorContainer->setEnabled(visible);
+        }
     };
     const auto setFollowTargetInspectorVisible = [this](bool visible, int currentTargetIndex = -1)
     {
-        if (m_followTargetCombo) {
-            m_followTargetCombo->setVisible(visible);
-            if (visible) {
-                // Repopulate the combo box with current scene items
-                m_followTargetCombo->blockSignals(true);
-                m_followTargetCombo->clear();
-                m_followTargetCombo->addItem(QStringLiteral("None (Free Camera)"), -1);
-                for (int i = 0; i < m_sceneItems.size(); ++i) {
-                    m_followTargetCombo->addItem(m_sceneItems[i].name, i);
-                }
-                // Select the current target
-                int index = m_followTargetCombo->findData(currentTargetIndex);
-                if (index >= 0) {
-                    m_followTargetCombo->setCurrentIndex(index);
-                }
-                m_followTargetCombo->blockSignals(false);
-            }
+        if (m_cameraSection) {
+            m_cameraSection->setVisible(true);
+            m_cameraSection->setEnabled(visible);
         }
-        if (m_followTargetLabel) m_followTargetLabel->setVisible(visible);
+        if (m_followTargetCombo) {
+            m_followTargetCombo->setVisible(true);
+            m_followTargetCombo->setEnabled(visible);
+            // Repopulate the combo box with current scene items
+            m_followTargetCombo->blockSignals(true);
+            m_followTargetCombo->clear();
+            m_followTargetCombo->addItem(QStringLiteral("None (Free Camera)"), -1);
+            for (int i = 0; i < m_sceneItems.size(); ++i) {
+                QString name = m_sceneItems[i].name;
+                if (name.isEmpty()) {
+                    name = QStringLiteral("Scene Item %1").arg(i);
+                }
+                m_followTargetCombo->addItem(name, i);
+            }
+            // Select the current target
+            int index = m_followTargetCombo->findData(currentTargetIndex);
+            if (index >= 0) {
+                m_followTargetCombo->setCurrentIndex(index);
+            }
+            m_followTargetCombo->blockSignals(false);
+        }
+        if (m_followTargetLabel) {
+            m_followTargetLabel->setVisible(true);
+            m_followTargetLabel->setEnabled(visible);
+        }
     };
     const auto setFollowParamsVisible = [this](bool visible)
     {
-        if (m_followParamsLabel) m_followParamsLabel->setVisible(visible);
-        if (m_followDistanceSpin) m_followDistanceSpin->setVisible(visible);
-        if (m_followYawSpin) m_followYawSpin->setVisible(visible);
-        if (m_followPitchSpin) m_followPitchSpin->setVisible(visible);
-        if (m_followSmoothSpin) m_followSmoothSpin->setVisible(visible);
+        if (m_followParamsLabel) {
+            m_followParamsLabel->setVisible(true);
+            m_followParamsLabel->setEnabled(visible);
+        }
+        if (m_followDistanceSpin) {
+            m_followDistanceSpin->setVisible(true);
+            m_followDistanceSpin->setEnabled(visible);
+        }
+        if (m_followYawSpin) {
+            m_followYawSpin->setVisible(true);
+            m_followYawSpin->setEnabled(visible);
+        }
+        if (m_followPitchSpin) {
+            m_followPitchSpin->setVisible(true);
+            m_followPitchSpin->setEnabled(visible);
+        }
+        if (m_followSmoothSpin) {
+            m_followSmoothSpin->setVisible(true);
+            m_followSmoothSpin->setEnabled(visible);
+        }
     };
     const auto setTransformInspectorVisible = [this](bool visible)
     {
-        // Find the label widget parent to hide the entire row
-        if (m_inspectorTranslationX && m_inspectorTranslationX->parentWidget()) {
-            QWidget* parent = m_inspectorTranslationX->parentWidget()->parentWidget();
-            if (parent) parent->setVisible(visible);
+        if (m_transformSection) {
+            m_transformSection->setVisible(true);
+            m_transformSection->setEnabled(visible);
         }
-        if (m_inspectorRotationX && m_inspectorRotationX->parentWidget()) {
-            QWidget* parent = m_inspectorRotationX->parentWidget()->parentWidget();
-            if (parent) parent->setVisible(visible);
+        if (m_translationWidget) {
+            m_translationWidget->setVisible(true);
+            m_translationWidget->setEnabled(visible);
         }
-        if (m_inspectorScaleX && m_inspectorScaleX->parentWidget()) {
-            QWidget* parent = m_inspectorScaleX->parentWidget()->parentWidget();
-            if (parent) parent->setVisible(visible);
+        if (m_rotationWidget) {
+            m_rotationWidget->setVisible(true);
+            m_rotationWidget->setEnabled(visible);
+        }
+        if (m_scaleWidget) {
+            m_scaleWidget->setVisible(true);
+            m_scaleWidget->setEnabled(visible);
         }
     };
     const auto setPrimitiveInspectorVisible = [this](bool visible, const QString& cullMode = QStringLiteral("back"))
     {
         if (m_primitiveCullModeCombo)
         {
-            m_primitiveCullModeCombo->setVisible(visible);
+            m_primitiveCullModeCombo->setVisible(true);
+            m_primitiveCullModeCombo->setEnabled(visible);
             if (visible)
             {
                 const int index = m_primitiveCullModeCombo->findData(cullMode);
@@ -97,22 +150,30 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         }
         if (m_primitiveForceAlphaButton)
         {
-            m_primitiveForceAlphaButton->setVisible(visible);
+            m_primitiveForceAlphaButton->setVisible(true);
+            m_primitiveForceAlphaButton->setEnabled(visible);
         }
         if (m_paintOverrideCheck)
         {
-            m_paintOverrideCheck->setVisible(visible);
+            m_paintOverrideCheck->setVisible(true);
+            m_paintOverrideCheck->setEnabled(visible);
         }
-        if (m_paintColorWidget && m_paintColorWidget->parentWidget())
+        if (m_paintColorContainer)
         {
-            m_paintColorWidget->parentWidget()->setVisible(visible);
+            m_paintColorContainer->setVisible(true);
+            m_paintColorContainer->setEnabled(visible);
         }
     };
     const auto setLoadInspectorVisible = [this](bool visible, bool meshConsolidationEnabled = true)
     {
+        if (m_materialSection) {
+            m_materialSection->setVisible(true);
+            m_materialSection->setEnabled(visible);
+        }
         if (m_loadMeshConsolidationCheck)
         {
-            m_loadMeshConsolidationCheck->setVisible(visible);
+            m_loadMeshConsolidationCheck->setVisible(true);
+            m_loadMeshConsolidationCheck->setEnabled(visible);
             if (visible)
             {
                 m_loadMeshConsolidationCheck->setChecked(meshConsolidationEnabled);
@@ -127,9 +188,15 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                               float speed = 1.0f,
                                               const QString& physicsCoupling = QStringLiteral("AnimationOnly"))
     {
+        if (m_animationSection)
+        {
+            m_animationSection->setVisible(true);
+            m_animationSection->setEnabled(visible);
+        }
         if (m_animationControlsWidget)
         {
-            m_animationControlsWidget->setVisible(visible);
+            m_animationControlsWidget->setVisible(true);
+            m_animationControlsWidget->setEnabled(visible);
         }
         if (!visible || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck || !m_animationSpeedSpin)
         {
@@ -169,9 +236,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     };
     const auto setGravityInspector = [this](bool visible, bool useGravity = true, const QVector3D& customGravity = QVector3D(0.0f, 0.0f, 0.0f))
     {
+        if (m_physicsSection) {
+            m_physicsSection->setVisible(true);
+            m_physicsSection->setEnabled(visible);
+        }
         if (m_elementUseGravityCheck)
         {
-            m_elementUseGravityCheck->setVisible(visible);
+            m_elementUseGravityCheck->setVisible(true);
+            m_elementUseGravityCheck->setEnabled(visible);
             if (visible)
             {
                 m_elementUseGravityCheck->blockSignals(true);
@@ -181,7 +253,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         }
         if (m_elementGravityWidget)
         {
-            m_elementGravityWidget->setVisible(visible);
+            m_elementGravityWidget->setVisible(true);
+            m_elementGravityWidget->setEnabled(visible);
             if (visible)
             {
                 if (m_elementGravityX)
@@ -211,13 +284,53 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         {
             return;
         }
-        m_characterTurnResponsivenessSpin->setVisible(visible);
+        m_characterTurnResponsivenessSpin->setVisible(true);
+        m_characterTurnResponsivenessSpin->setEnabled(visible);
         if (visible)
         {
             m_characterTurnResponsivenessSpin->blockSignals(true);
             m_characterTurnResponsivenessSpin->setValue(turnResponsiveness);
             m_characterTurnResponsivenessSpin->blockSignals(false);
         }
+    };
+    const auto setObjectRuntimeInspector = [this](bool visible,
+                                                  const QString& followCamInfo = QStringLiteral("-"),
+                                                  const QString& kinematicInfo = QStringLiteral("-"),
+                                                  const QString& animationInfo = QStringLiteral("-"))
+    {
+        if (m_runtimeSection) {
+            m_runtimeSection->setVisible(true);
+            m_runtimeSection->setEnabled(visible);
+        }
+        if (m_objectFollowCamInfoValue)
+        {
+            m_objectFollowCamInfoValue->setVisible(true);
+            m_objectFollowCamInfoValue->setEnabled(visible);
+            m_objectFollowCamInfoValue->setText(followCamInfo);
+        }
+        if (m_objectKinematicInfoValue)
+        {
+            m_objectKinematicInfoValue->setVisible(true);
+            m_objectKinematicInfoValue->setEnabled(visible);
+            m_objectKinematicInfoValue->setText(kinematicInfo);
+        }
+        if (m_objectAnimationRuntimeInfoValue)
+        {
+            m_objectAnimationRuntimeInfoValue->setVisible(true);
+            m_objectAnimationRuntimeInfoValue->setEnabled(visible);
+            m_objectAnimationRuntimeInfoValue->setText(animationInfo);
+        }
+    };
+    const auto vec3FromJson = [](const QJsonValue& value) -> QVector3D
+    {
+        const QJsonArray arr = value.toArray();
+        if (arr.size() < 3)
+        {
+            return QVector3D(0.0f, 0.0f, 0.0f);
+        }
+        return QVector3D(static_cast<float>(arr.at(0).toDouble()),
+                         static_cast<float>(arr.at(1).toDouble()),
+                         static_cast<float>(arr.at(2).toDouble()));
     };
     const auto setTexturePreview = [this](const QImage& image)
     {
@@ -276,7 +389,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             float followDistance = 5.0f;
             float followYaw = 0.0f;
             float followPitch = 20.0f;
-            float followSmooth = 5.0f;
+            float followSmooth = followcam::kDefaultSmoothSpeed;
             float nearClip = 0.1f;
             float farClip = 100.0f;
             
@@ -303,10 +416,12 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorPathValue, cameraPath);
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_boundsSizeValue, QStringLiteral("-"));
+            setElementDetailTab(3); // Camera
             
             // Show free fly checkbox for all cameras
             if (m_freeFlyCameraCheck) {
                 m_freeFlyCameraCheck->setVisible(true);
+                m_freeFlyCameraCheck->setEnabled(true);
                 bool freeFly = true;
                 if (cameraIndex >= 0 && cameraIndex < configs.size()) {
                     freeFly = configs[cameraIndex].freeFly;
@@ -319,19 +434,21 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             // Show near/far clip spinboxes for all cameras
             if (m_nearClipSpin) {
                 m_nearClipSpin->setVisible(true);
+                m_nearClipSpin->setEnabled(true);
                 m_nearClipSpin->blockSignals(true);
                 m_nearClipSpin->setValue(nearClip);
                 m_nearClipSpin->blockSignals(false);
             }
             if (m_farClipSpin) {
                 m_farClipSpin->setVisible(true);
+                m_farClipSpin->setEnabled(true);
                 m_farClipSpin->blockSignals(true);
                 m_farClipSpin->setValue(farClip);
                 m_farClipSpin->blockSignals(false);
             }
             
             // For free cameras: show transform, hide follow params
-            // For follow cameras: show follow params, disable transform
+            // For follow cameras: show follow params, hide transform (follow cameras don't have manual translation/rotation/scale)
             if (isFollowCamera) {
                 // Show follow params with current values
                 setFollowParamsVisible(true);
@@ -340,7 +457,12 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 if (m_followPitchSpin) m_followPitchSpin->setValue(followPitch);
                 if (m_followSmoothSpin) m_followSmoothSpin->setValue(followSmooth);
                 
-                // Disable transform for follow cameras (they're computed)
+                // Keep transform controls visible but disabled for follow cameras.
+                setTransformInspectorVisible(true);
+                if (m_lockScaleXYZCheck) {
+                    m_lockScaleXYZCheck->setVisible(true);
+                    m_lockScaleXYZCheck->setEnabled(false);
+                }
                 if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(false);
                 if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(false);
                 if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(false);
@@ -350,21 +472,27 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
                 if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
                 if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
-                if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
             } else {
-                // Free camera: hide follow params, enable transform
+                // Free camera: hide follow params, show transform (but hide scale - cameras don't have scale)
                 setFollowParamsVisible(false);
+                setTransformInspectorVisible(true);
                 
+                // Enable translation and rotation controls
                 if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(true);
                 if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(true);
                 if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(true);
                 if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(true);
                 if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(true);
                 if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(true);
-                if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(true);
-                if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(true);
-                if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(true);
-                if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
+                
+                // Disable scale controls for cameras (cameras don't have scale)
+                if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
+                if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
+                if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
+                if (m_lockScaleXYZCheck) {
+                    m_lockScaleXYZCheck->setVisible(true);
+                    m_lockScaleXYZCheck->setEnabled(false);
+                }
                 
                 QVector3D pos = m_viewportHost->cameraPosition();
                 QVector3D rot = m_viewportHost->cameraRotation();
@@ -374,11 +502,12 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                 if (m_inspectorRotationX) m_inspectorRotationX->setValue(rot.x());
                 if (m_inspectorRotationY) m_inspectorRotationY->setValue(rot.y());
                 if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(rot.z());
+                
+                // Set scale to 1.0 but disabled (cameras don't have scale)
+                if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
+                if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
+                if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
             }
-            
-            if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
-            if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
-            if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
             setLoadInspectorVisible(false);
             if (m_primitiveForceAlphaButton) m_primitiveForceAlphaButton->setChecked(false);
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
@@ -387,6 +516,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setAnimationInspector(false);
             setGravityInspector(false);
             setCharacterMotionInspector(false);
+            setObjectRuntimeInspector(false);
             setTexturePreview(QImage());
             
             // Show follow target selector for all cameras
@@ -401,6 +531,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_boundsSizeValue, QStringLiteral("-"));
+            setElementDetailTab(1); // Visual
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
             if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -419,10 +550,23 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setAnimationInspector(false);
             setGravityInspector(false);
             setCharacterMotionInspector(false);
-            if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
-            if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
-            if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
-            if (m_farClipSpin) m_farClipSpin->setVisible(false);
+            setObjectRuntimeInspector(false);
+            if (m_lockScaleXYZCheck) {
+                m_lockScaleXYZCheck->setVisible(true);
+                m_lockScaleXYZCheck->setEnabled(false);
+            }
+            if (m_freeFlyCameraCheck) {
+                m_freeFlyCameraCheck->setVisible(true);
+                m_freeFlyCameraCheck->setEnabled(false);
+            }
+            if (m_nearClipSpin) {
+                m_nearClipSpin->setVisible(true);
+                m_nearClipSpin->setEnabled(false);
+            }
+            if (m_farClipSpin) {
+                m_farClipSpin->setVisible(true);
+                m_farClipSpin->setEnabled(false);
+            }
             if (m_viewportHost)
             {
                 const auto light = m_viewportHost->sceneLight();
@@ -443,9 +587,18 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             return;
         }
         setFollowTargetInspectorVisible(false);
-        if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
-        if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
-        if (m_farClipSpin) m_farClipSpin->setVisible(false);
+        if (m_freeFlyCameraCheck) {
+            m_freeFlyCameraCheck->setVisible(true);
+            m_freeFlyCameraCheck->setEnabled(false);
+        }
+        if (m_nearClipSpin) {
+            m_nearClipSpin->setVisible(true);
+            m_nearClipSpin->setEnabled(false);
+        }
+        if (m_farClipSpin) {
+            m_farClipSpin->setVisible(true);
+            m_farClipSpin->setEnabled(false);
+        }
         setValue(m_inspectorNameValue, QStringLiteral("-"));
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
@@ -466,13 +619,18 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setLightInspectorVisible(false);
         setAnimationInspector(false);
         setCharacterMotionInspector(false);
-        if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(false);
+        setObjectRuntimeInspector(false);
+        if (m_lockScaleXYZCheck) {
+            m_lockScaleXYZCheck->setVisible(true);
+            m_lockScaleXYZCheck->setEnabled(false);
+        }
         setTexturePreview(QImage());
         m_updatingInspector = false;
         return;
     }
 
     const auto& item = m_sceneItems[row];
+    setElementDetailTab(0); // Overview
     setValue(m_inspectorNameValue, item.name);
     setValue(m_inspectorPathValue, QDir::toNativeSeparators(item.sourcePath));
     setValue(m_animationModeValue,
@@ -495,7 +653,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     if (m_inspectorScaleX) m_inspectorScaleX->setValue(item.scale.x());
     if (m_inspectorScaleY) m_inspectorScaleY->setValue(item.scale.y());
     if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(item.scale.z());
-    if (m_lockScaleXYZCheck) m_lockScaleXYZCheck->setVisible(true);
+    if (m_lockScaleXYZCheck) {
+        m_lockScaleXYZCheck->setVisible(true);
+        m_lockScaleXYZCheck->setEnabled(true);
+    }
     if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(item.paintOverrideEnabled);
     if (m_paintColorWidget)
     {
@@ -504,10 +665,16 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         m_paintColorWidget->setProperty("paintColor", color.name());
     }
     const QString suffix = QFileInfo(item.sourcePath).suffix().toLower();
-    setLoadInspectorVisible(suffix == QStringLiteral("gltf") || suffix == QStringLiteral("glb"),
-                            item.meshConsolidationEnabled);
-    setPrimitiveInspectorVisible(m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0,
+    const bool loadVisible = suffix == QStringLiteral("gltf") || suffix == QStringLiteral("glb");
+    const bool primitiveControlsVisible = m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0;
+    setLoadInspectorVisible(loadVisible, item.meshConsolidationEnabled);
+    setPrimitiveInspectorVisible(primitiveControlsVisible,
                                  m_viewportHost ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
+    if (m_materialSection)
+    {
+        m_materialSection->setVisible(true);
+        m_materialSection->setEnabled(loadVisible || primitiveControlsVisible);
+    }
     if (m_primitiveForceAlphaButton)
     {
         const bool forceAlphaOne = m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0
@@ -518,10 +685,16 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                                            : QStringLiteral("Set Alpha 1"));
     }
     setLightInspectorVisible(false);
-    setFollowTargetInspectorVisible(false);
-    if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setVisible(false);
-    if (m_nearClipSpin) m_nearClipSpin->setVisible(false);
-    if (m_farClipSpin) m_farClipSpin->setVisible(false);
+    setFollowTargetInspectorVisible(true, row);
+    if (m_freeFlyCameraCheck) {
+        m_freeFlyCameraCheck->setVisible(true);
+    }
+    if (m_nearClipSpin) {
+        m_nearClipSpin->setVisible(true);
+    }
+    if (m_farClipSpin) {
+        m_farClipSpin->setVisible(true);
+    }
     QStringList animationClips = m_viewportHost ? m_viewportHost->animationClipNames(row) : QStringList{};
     QString selectedClip = clipName;
     if (selectedClip.isEmpty())
@@ -537,6 +710,137 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                           item.animationPhysicsCoupling);
     setGravityInspector(true, item.useGravity, item.customGravity);
     setCharacterMotionInspector(true, item.characterTurnResponsiveness);
+    if (m_viewportHost)
+    {
+        QString followCamInfo = QStringLiteral("None");
+        bool hasObjectFollowCamera = false;
+        ViewportHostWidget::CameraConfig objectFollowConfig;
+        const int followCameraIndex = m_viewportHost->ensureFollowCamera(row, 5.0f, 0.0f, 20.0f);
+        const auto configs = m_viewportHost->cameraConfigs();
+        if (followCameraIndex >= 0 && followCameraIndex < configs.size())
+        {
+            const auto& cfg = configs[followCameraIndex];
+            if (cfg.isFollowCamera())
+            {
+                hasObjectFollowCamera = true;
+                objectFollowConfig = cfg;
+                const QString followCamName = cfg.name.isEmpty()
+                    ? QStringLiteral("Follow Cam (Scene %1)").arg(row)
+                    : cfg.name;
+                followCamInfo = QStringLiteral("%1\nDistance: %2  Yaw: %3  Pitch: %4  Damping: %5")
+                    .arg(followCamName)
+                    .arg(QString::number(cfg.followDistance, 'f', 2))
+                    .arg(QString::number(cfg.followYaw, 'f', 1))
+                    .arg(QString::number(cfg.followPitch, 'f', 1))
+                    .arg(QString::number(cfg.followSmoothSpeed, 'f', 2));
+            }
+        }
+        if (m_followTargetCombo)
+        {
+            m_followTargetCombo->setEnabled(true);
+        }
+        setFollowParamsVisible(true);
+        if (m_freeFlyCameraCheck)
+        {
+            m_freeFlyCameraCheck->setEnabled(true);
+        }
+        if (m_nearClipSpin)
+        {
+            m_nearClipSpin->setEnabled(true);
+        }
+        if (m_farClipSpin)
+        {
+            m_farClipSpin->setEnabled(true);
+        }
+        if (hasObjectFollowCamera)
+        {
+            if (m_followDistanceSpin) m_followDistanceSpin->setValue(objectFollowConfig.followDistance);
+            if (m_followYawSpin) m_followYawSpin->setValue(objectFollowConfig.followYaw);
+            if (m_followPitchSpin) m_followPitchSpin->setValue(objectFollowConfig.followPitch);
+            if (m_followSmoothSpin) m_followSmoothSpin->setValue(objectFollowConfig.followSmoothSpeed);
+            if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setChecked(objectFollowConfig.freeFly);
+            if (m_nearClipSpin) m_nearClipSpin->setValue(objectFollowConfig.nearClip);
+            if (m_farClipSpin) m_farClipSpin->setValue(objectFollowConfig.farClip);
+        }
+        else
+        {
+            if (m_followDistanceSpin) m_followDistanceSpin->setValue(5.0);
+            if (m_followYawSpin) m_followYawSpin->setValue(0.0);
+            if (m_followPitchSpin) m_followPitchSpin->setValue(20.0);
+            if (m_followSmoothSpin) m_followSmoothSpin->setValue(followcam::kDefaultSmoothSpeed);
+            if (m_freeFlyCameraCheck) m_freeFlyCameraCheck->setChecked(false);
+            if (m_nearClipSpin) m_nearClipSpin->setValue(0.1);
+            if (m_farClipSpin) m_farClipSpin->setValue(100.0);
+        }
+
+        QString kinematicInfo = QStringLiteral("Coupling: %1")
+            .arg(item.animationPhysicsCoupling.isEmpty()
+                     ? QStringLiteral("AnimationOnly")
+                     : item.animationPhysicsCoupling);
+        QString runtimeClip = selectedClip;
+        bool runtimePlaying = item.animationPlaying;
+        bool runtimeLoop = item.animationLoop;
+        double runtimeSpeed = item.animationSpeed;
+        QString animationRuntimeInfo = QStringLiteral("Configured Clip: %1 | Playing: %2 | Loop: %3 | Speed: %4")
+            .arg(runtimeClip.isEmpty() ? QStringLiteral("-") : runtimeClip)
+            .arg(runtimePlaying ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(runtimeLoop ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(QString::number(runtimeSpeed, 'f', 2));
+
+        const QJsonArray profile = m_viewportHost->sceneProfileJson();
+        if (row >= 0 && row < profile.size() && profile.at(row).isObject())
+        {
+            const QJsonObject runtime = profile.at(row).toObject();
+            const bool isControllable = runtime.value(QStringLiteral("isControllable")).toBool(false);
+            const bool isGrounded = runtime.value(QStringLiteral("isGrounded")).toBool(false);
+            const bool jumpRequested = runtime.value(QStringLiteral("jumpRequested")).toBool(false);
+            const QVector3D inputDir = vec3FromJson(runtime.value(QStringLiteral("inputDir")));
+            const QVector3D velocity = vec3FromJson(runtime.value(QStringLiteral("velocity")));
+            const QString currentAnimState = runtime.value(QStringLiteral("currentAnimState")).toString(QStringLiteral("Unknown"));
+            const double currentAnimWeight = runtime.value(QStringLiteral("currentAnimWeight")).toDouble(0.0);
+            const double currentAnimSpeed = runtime.value(QStringLiteral("currentAnimSpeed")).toDouble(0.0);
+            const QString runtimeActiveClip = runtime.value(QStringLiteral("runtimeActiveClip")).toString();
+            runtimeClip = runtimeActiveClip.isEmpty() ? runtimeClip : runtimeActiveClip;
+            runtimePlaying = runtime.value(QStringLiteral("runtimeAnimationPlaying")).toBool(runtimePlaying);
+            runtimeLoop = runtime.value(QStringLiteral("runtimeAnimationLoop")).toBool(runtimeLoop);
+            runtimeSpeed = runtime.value(QStringLiteral("runtimeAnimationSpeed")).toDouble(runtimeSpeed);
+
+            kinematicInfo = QStringLiteral(
+                                "Coupling: %1\n"
+                                "Controllable: %2  Grounded: %3  JumpReq: %4\n"
+                                "InputDir: (%5, %6, %7)\n"
+                                "Velocity: (%8, %9, %10)")
+                                .arg(item.animationPhysicsCoupling.isEmpty()
+                                         ? QStringLiteral("AnimationOnly")
+                                         : item.animationPhysicsCoupling)
+                                .arg(isControllable ? QStringLiteral("true") : QStringLiteral("false"))
+                                .arg(isGrounded ? QStringLiteral("true") : QStringLiteral("false"))
+                                .arg(jumpRequested ? QStringLiteral("true") : QStringLiteral("false"))
+                                .arg(QString::number(inputDir.x(), 'f', 2))
+                                .arg(QString::number(inputDir.y(), 'f', 2))
+                                .arg(QString::number(inputDir.z(), 'f', 2))
+                                .arg(QString::number(velocity.x(), 'f', 2))
+                                .arg(QString::number(velocity.y(), 'f', 2))
+                                .arg(QString::number(velocity.z(), 'f', 2));
+
+            animationRuntimeInfo = QStringLiteral(
+                                       "Configured Clip: %1 | Playing: %2 | Loop: %3 | Speed: %4\n"
+                                       "State: %5  RuntimeSpeed: %6  BlendWeight: %7")
+                                       .arg(runtimeClip.isEmpty() ? QStringLiteral("-") : runtimeClip)
+                                       .arg(runtimePlaying ? QStringLiteral("true") : QStringLiteral("false"))
+                                       .arg(runtimeLoop ? QStringLiteral("true") : QStringLiteral("false"))
+                                       .arg(QString::number(runtimeSpeed, 'f', 2))
+                                       .arg(currentAnimState)
+                                       .arg(QString::number(currentAnimSpeed, 'f', 2))
+                                       .arg(QString::number(currentAnimWeight, 'f', 2));
+        }
+
+        setObjectRuntimeInspector(true, followCamInfo, kinematicInfo, animationRuntimeInfo);
+    }
+    else
+    {
+        setObjectRuntimeInspector(false);
+    }
     if (m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0)
     {
         setTexturePreview(m_viewportHost->primitiveTexturePreview(row, meshIndex, primitiveIndex));

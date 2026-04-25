@@ -1,4 +1,5 @@
 #include "shell.h"
+#include "camera_follow_settings.h"
 
 #include <QFileInfo>
 #include <QJsonObject>
@@ -54,7 +55,8 @@ ViewportHostWidget::CameraConfig cameraConfigFromJson(const QJsonObject& obj)
     config.followDistance = static_cast<float>(obj.value(QStringLiteral("followDistance")).toDouble(5.0));
     config.followYaw = static_cast<float>(obj.value(QStringLiteral("followYaw")).toDouble(0.0));
     config.followPitch = static_cast<float>(obj.value(QStringLiteral("followPitch")).toDouble(20.0));
-    config.followSmoothSpeed = static_cast<float>(obj.value(QStringLiteral("followSmoothSpeed")).toDouble(5.0));
+    config.followSmoothSpeed = static_cast<float>(
+        obj.value(QStringLiteral("followSmoothSpeed")).toDouble(followcam::kDefaultSmoothSpeed));
     config.followTargetOffset = readVector3D(obj.value(QStringLiteral("followTargetOffset")), QVector3D(0.0f, 0.0f, 0.0f));
     config.freeFly = obj.value(QStringLiteral("freeFly")).toBool(true);
     config.nearClip = static_cast<float>(obj.value(QStringLiteral("nearClip")).toDouble(0.1));

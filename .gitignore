@@ -33,3 +33,4 @@ thirdpersonshooter
 .build_manifest.json
 build-windows
 .aider*
+build-tests

@@ -37,6 +37,7 @@ public:
         QString focusedViewportCameraId;
         QStringList viewportCameraIds;
         QJsonObject cameraTracking;
+        QJsonObject inspector;
     };
     
     struct PerformanceMetrics

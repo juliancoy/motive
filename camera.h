@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <vulkan/vulkan.h>
 #include <iostream>
 #include <memory>
@@ -9,7 +10,9 @@
 #include <vector>
 
 #include "camera_follow_settings.h"
+#include "camera_mode.h"
 #include "orbit_follow_rig.h"
+#include "follow_target_tracker.h"
 
 // Forward declarations
 class Engine;
@@ -50,11 +53,16 @@ public:
     glm::vec3 initialCameraPos;
     glm::vec2 initialCameraRotation;
     glm::vec3 cameraPos;
-    glm::vec2 cameraRotation;
     float moveSpeed = 0.01f;
+
+    glm::vec2 getEulerRotation() const;
+    void setEulerRotation(const glm::vec2& rotation);
+    glm::vec3 getForwardVector() const;
+    const glm::quat& getOrientation() const { return cameraOrientation; }
 
     // Input tracking
     bool rightMouseDown = false;
+    bool temporaryOrbitDrag = false;
     glm::vec2 lastMousePos = glm::vec2(0.0f);
     bool keysPressed[6] = {false}; // W,A,S,D,Q,E
 
@@ -89,10 +97,6 @@ public:
     float getPerspectiveFar() const { return perspFar; }
     void setControlsEnabled(bool enabled);
     
-    // Character controller target (WASD moves this model instead of camera)
-    void setCharacterTarget(Model* model);
-    Model* getCharacterTarget() const { return characterTarget; }
-    
     // Follow mode - camera tracks a target model by scene index
     // The camera stores the scene index and looks up the model each frame,
     // so it continues to work even if models are reloaded
@@ -102,6 +106,10 @@ public:
     const FollowSettings& getFollowSettings() const { return followOrbit.settings(); }
     void updateFollow(float deltaTime, const std::vector<std::unique_ptr<Model>>& models);  // Update camera position based on follow target
     bool isFollowModeEnabled() const { return followOrbit.isEnabled(); }
+    bool hasTrackedFollowTarget() const { return followTargetValidForView; }
+    const glm::vec3& getTrackedFollowTarget() const { return followTargetForView; }
+    const glm::vec3& getTrackedFollowTargetRaw() const { return followTargetRaw; }
+    const glm::vec3& getTrackedFollowTargetMotion() const { return followTargetMotion; }
     
     // Get the scene index this camera is following (returns -1 if not following)
     int getFollowSceneIndex() const { return followOrbit.sceneIndex(); }
@@ -112,9 +120,20 @@ public:
     void setCameraId(const std::string& id) { cameraId = id; }
     const std::string& getCameraId() const { return cameraId; }
     
-    // Free fly camera mode (WASD moves camera vs character)
-    void setFreeFlyCamera(bool freeFly) { freeFlyCamera = freeFly; }
-    bool isFreeFlyCamera() const { return freeFlyCamera; }
+    // Camera mode management
+    CameraMode getMode() const { return mode; }
+    void setMode(CameraMode newMode);
+    bool canEnterMode(CameraMode candidateMode) const;
+    
+    // Get the model being followed (if any)
+    Model* getFollowTarget(const std::vector<std::unique_ptr<Model>>& models) const;
+    
+    // Free fly camera mode (WASD moves camera vs character) - deprecated, use setMode instead
+    void setFreeFlyCamera(bool freeFly);
+    bool isFreeFlyCamera() const;
+    
+    // Controls enabled state
+    bool getControlsEnabled() const { return controlsEnabled; }
 
 private:
     Engine* engine;
@@ -139,16 +158,29 @@ private:
     float fullscreenPercentX = 1.0f;
     float fullscreenPercentY = 1.0f;
     
-    Model* characterTarget = nullptr;  // If set, WASD controls this character instead of camera
-    
     void addYawOffset(float deltaYaw);
     void addPitchOffset(float deltaPitch);
     void updateFollowOffsetFromCameraRotation();
+    const char* modeName(CameraMode value) const;
+    void syncOrientationFromEulerCacheIfNeeded();
+    void syncEulerCacheFromOrientation();
+    static glm::quat quaternionFromYawPitch(float yaw, float pitch);
+    static glm::vec2 yawPitchFromQuaternion(const glm::quat& orientation);
     
     std::string cameraName;  // For identifying cameras (e.g., "Follow Cam")
     std::string cameraId;
-    bool freeFlyCamera = true;  // Free fly mode: WASD moves camera (vs character follow mode)
+    CameraMode mode = CameraMode::FreeFly;  // Current camera mode
     FollowOrbit followOrbit;
+    OrbitRig orbitRig;
     bool followWarningActive = false;
     float followWarningCooldownSeconds = 0.0f;
+    bool followTargetValidForView = false;
+    glm::vec3 followTargetForView = glm::vec3(0.0f);
+    glm::vec3 followTargetRaw = glm::vec3(0.0f);
+    glm::vec3 followTargetMotion = glm::vec3(0.0f);
+    FollowTargetTracker followTargetTracker;
+    glm::quat cameraOrientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    // Euler cache (yaw, pitch in radians). Orientation is authoritative.
+    glm::vec2 cameraRotation = glm::vec2(0.0f);
+    glm::vec2 orientationSyncedEuler = glm::vec2(0.0f);
 };

@@ -29,7 +29,8 @@ QVector3D ViewportCameraController::cameraRotation() const
 {
     if (m_runtime.camera())
     {
-        return QVector3D(m_runtime.camera()->cameraRotation.y, m_runtime.camera()->cameraRotation.x, 0.0f);
+        const glm::vec2 rotation = m_runtime.camera()->getEulerRotation();
+        return QVector3D(rotation.y, rotation.x, 0.0f);
     }
     return QVector3D(0.0f, 0.0f, 0.0f);
 }
@@ -55,7 +56,7 @@ void ViewportCameraController::setCameraRotation(const QVector3D& rotation)
     {
         return;
     }
-    m_runtime.camera()->cameraRotation = glm::vec2(rotation.y(), rotation.x());
+    m_runtime.camera()->setEulerRotation(glm::vec2(rotation.y(), rotation.x()));
     m_runtime.camera()->update(0);
 }
 
@@ -111,7 +112,7 @@ void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index, Camer
     }
 
     const auto& model = m_runtime.engine()->models[static_cast<size_t>(index)];
-    const glm::vec3 front = detail::cameraForwardVector(camera->cameraRotation);
+    const glm::vec3 front = camera->getForwardVector();
     const float distance = 5.0f;
     const glm::vec3 desiredCenter = camera->cameraPos + front * distance;
     const glm::vec3 currentCenter = model->boundsCenter;
@@ -138,8 +139,8 @@ void ViewportCameraController::focusSceneItem(int index)
     const glm::vec3 toTarget = worldCenter - m_runtime.camera()->cameraPos;
     const glm::vec3 front = glm::length(toTarget) > 1e-6f
         ? glm::normalize(toTarget)
-        : detail::cameraForwardVector(m_runtime.camera()->cameraRotation);
-    m_runtime.camera()->cameraRotation = detail::cameraRotationForDirection(front);
+        : m_runtime.camera()->getForwardVector();
+    m_runtime.camera()->setEulerRotation(detail::cameraRotationForDirection(front));
     m_runtime.camera()->cameraPos = worldCenter - front * distance;
     m_runtime.camera()->update(0.0f);
 }

@@ -208,6 +208,7 @@ void Model::setAnimationPlaybackState(const std::string& clipName, bool playing,
 
 void Model::setCharacterAnimationNames(
     const std::string& idle,
+    const std::string& comeToRest,
     const std::string& walkForward,
     const std::string& walkBackward,
     const std::string& walkLeft,
@@ -216,6 +217,7 @@ void Model::setCharacterAnimationNames(
     const std::string& jump)
 {
     if (!idle.empty()) character.animIdle = idle;
+    if (!comeToRest.empty()) character.animComeToRest = comeToRest;
     if (!walkForward.empty()) character.animWalkForward = walkForward;
     if (!walkBackward.empty()) character.animWalkBackward = walkBackward;
     if (!walkLeft.empty()) character.animWalkLeft = walkLeft;
@@ -241,6 +243,7 @@ void Model::updateAnimation(double deltaSeconds)
     
     if (fbxAnimationRuntime && engine)
     {
+        bool preprocessedUpdated = false;
         // Apply mirroring if needed (by scaling root transform X by -1)
         if (character.isControllable && character.isUsingMirroredAnim)
         {
@@ -248,7 +251,7 @@ void Model::updateAnimation(double deltaSeconds)
             float originalSpeed = fbxAnimationRuntime->speed;
             
             // Update animation
-            motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+            preprocessedUpdated = motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
             
             // Apply mirroring to root transform
             // This effectively mirrors the animation along the Z axis
@@ -273,7 +276,13 @@ void Model::updateAnimation(double deltaSeconds)
         else
         {
             // Normal animation update
-            motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+            preprocessedUpdated = motive::animation::updateFbxAnimation(*this, *fbxAnimationRuntime, deltaSeconds);
+        }
+
+        if (preprocessedUpdated)
+        {
+            animationPreprocessedFrameValid = true;
+            ++animationPreprocessedFrameCounter;
         }
     }
 }
@@ -376,6 +385,11 @@ void Model::recomputeBounds()
     }
     glm::vec3 localCenter = (localMin + localMax) * 0.5f;
     float localRadius = glm::length(localMax - localMin) * 0.5f;
+    if (!followAnchorLocalCenterInitialized)
+    {
+        followAnchorLocalCenter = localCenter;
+        followAnchorLocalCenterInitialized = true;
+    }
 
     boundsCenter = glm::vec3(worldTransform * glm::vec4(localCenter, 1.0f));
 
@@ -443,10 +457,15 @@ void Model::setCharacterInput(const glm::vec3& moveDir)
 
 glm::vec3 Model::getFollowAnchorPosition() const
 {
-    // Use the current rendered bounds center for camera framing. Animated meshes
-    // update cpuVertices and recomputeBounds() each frame, so follow cameras orbit
-    // around the current per-frame bounding box center instead of the bind pose.
-    // Fall back to the transform origin during transient load states.
+    // Controllable characters: use stable world-space anchor derived from a
+    // normalized local center (single-owner worldTransform). This avoids
+    // per-frame animation AABB jitter and loop-end root snaps in follow camera.
+    if (character.isControllable && followAnchorLocalCenterInitialized)
+    {
+        return glm::vec3(worldTransform * glm::vec4(followAnchorLocalCenter, 1.0f));
+    }
+
+    // Non-controllable assets keep animation-adjusted extents for framing.
     if (boundsRadius > 0.0f)
     {
         return boundsCenter;
@@ -573,18 +592,53 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     CharacterController::AnimState targetState;
     const float horizontalSpeedForAnim = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
     
-    // Jump animation takes priority when not grounded
+    const bool hasMoveKeyIntent =
+        (character.keyW || character.keyA || character.keyS || character.keyD);
+
+    const auto isLocomotionState = [](CharacterController::AnimState state) -> bool {
+        return state == CharacterController::AnimState::WalkForward ||
+               state == CharacterController::AnimState::WalkBackward ||
+               state == CharacterController::AnimState::WalkLeft ||
+               state == CharacterController::AnimState::WalkRight ||
+               state == CharacterController::AnimState::Run;
+    };
+    const bool wasLocomotion = isLocomotionState(character.currentAnimState);
+
+    // Jump animation takes priority when not grounded.
     if (!character.isGrounded)
     {
+        character.comeToRestTimer = 0.0f;
         targetState = CharacterController::AnimState::Jump;
     }
-    else if (horizontalSpeedForAnim < character.walkSpeedThreshold)
+    else if (!hasMoveKeyIntent)
     {
-        targetState = CharacterController::AnimState::Idle;
+        // Trigger a short "come to rest" phase when transitioning out of locomotion.
+        if (wasLocomotion && character.comeToRestTimer <= 0.0f &&
+            horizontalSpeedForAnim > (character.walkSpeedThreshold * 0.5f))
+        {
+            character.comeToRestTimer = character.comeToRestDuration;
+        }
+
+        if (character.comeToRestTimer > 0.0f)
+        {
+            character.comeToRestTimer = std::max(0.0f, character.comeToRestTimer - dt);
+            targetState = CharacterController::AnimState::ComeToRest;
+        }
+        else
+        {
+            // Strict rule: no locomotion animation when no key is held.
+            targetState = CharacterController::AnimState::Idle;
+        }
     }
-    else if (horizontalSpeedForAnim < character.runSpeedThreshold)
+    else if (horizontalSpeedForAnim >= character.runSpeedThreshold)
     {
-        // Select directional walk animation based on which keys are pressed
+        character.comeToRestTimer = 0.0f;
+        targetState = CharacterController::AnimState::Run;
+    }
+    else
+    {
+        character.comeToRestTimer = 0.0f;
+        // Select directional walk animation based on which keys are pressed.
         if (character.keyW && !character.keyS)
             targetState = CharacterController::AnimState::WalkForward;
         else if (character.keyS && !character.keyW)
@@ -594,11 +648,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         else if (character.keyD && !character.keyA)
             targetState = CharacterController::AnimState::WalkRight;
         else
-            targetState = CharacterController::AnimState::WalkForward;  // Default
-    }
-    else
-    {
-        targetState = CharacterController::AnimState::Run;
+            targetState = CharacterController::AnimState::WalkForward;
     }
     
     // Smooth animation weight transition
@@ -607,6 +657,9 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     {
         case CharacterController::AnimState::Idle:
             targetWeight = 0.0f;
+            break;
+        case CharacterController::AnimState::ComeToRest:
+            targetWeight = 0.2f;
             break;
         case CharacterController::AnimState::WalkForward:
         case CharacterController::AnimState::WalkBackward:
@@ -622,8 +675,9 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             break;
     }
     
-    character.currentAnimWeight = glm::mix(character.currentAnimWeight, targetWeight, 
+    character.currentAnimWeight = glm::mix(character.currentAnimWeight, targetWeight,
                                            glm::min(character.animBlendSpeed * dt, 1.0f));
+    character.previousAnimState = character.currentAnimState;
     character.currentAnimState = targetState;
     
     // Auto-select animation clips based on state
@@ -656,6 +710,23 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                     "idle_loop", "idle_standing", "idle_stand",
                     "Idle", "IDLE", "idle"
                 });
+                break;
+
+            case CharacterController::AnimState::ComeToRest:
+                targetClip = findClip({
+                    character.animComeToRest,
+                    "run_to_idle", "walk_to_idle", "stop", "brake", "halt",
+                    "decelerate", "land_to_idle",
+                    "Stop", "STOP"
+                });
+                if (targetClip.empty())
+                {
+                    targetClip = findClip({
+                        character.animIdle,
+                        "idle_loop", "idle_standing", "idle_stand",
+                        "Idle", "IDLE", "idle"
+                    });
+                }
                 break;
                 
             case CharacterController::AnimState::WalkForward:
@@ -748,8 +819,12 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 break;
         }
         
-        // Final fallback to first clip if nothing found
-        if (targetClip.empty() && !animationClips.empty())
+        // Final fallback to first clip only for locomotion states.
+        // For Idle, do not fall back to arbitrary clips (often walk cycles).
+        if (targetClip.empty() &&
+            targetState != CharacterController::AnimState::Idle &&
+            targetState != CharacterController::AnimState::ComeToRest &&
+            !animationClips.empty())
         {
             targetClip = animationClips[0].name;
         }
@@ -768,6 +843,10 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 {
                     useProcedural = true;
                 }
+                break;
+
+            case CharacterController::AnimState::ComeToRest:
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
                 break;
                 
             case CharacterController::AnimState::WalkForward:
@@ -834,13 +913,20 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             }
             else
             {
-                // Just update speed if same clip
+                // Same clip: keep runtime explicitly in playing/looping character mode.
+                fbxAnimationRuntime->playing = true;
+                fbxAnimationRuntime->loop = true;
                 fbxAnimationRuntime->speed = targetSpeed;
             }
         }
         else if (useProcedural)
         {
             // Procedural idle - handled in updateAnimation
+            fbxAnimationRuntime->playing = false;
+        }
+        else if (targetState == CharacterController::AnimState::Idle && fbxAnimationRuntime)
+        {
+            // No valid idle clip: hold current pose instead of playing locomotion clips.
             fbxAnimationRuntime->playing = false;
         }
     }

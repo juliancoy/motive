@@ -57,8 +57,9 @@ public:
         float followDistance = 5.0f;
         float followYaw = 0.0f;
         float followPitch = 20.0f;
-        float followSmoothSpeed = 5.0f;
+        float followSmoothSpeed = 10.0f;
         QVector3D followTargetOffset = QVector3D(0.0f, 0.0f, 0.0f);
+        QString mode = QStringLiteral("FreeFly");
         bool freeFly = true;
         float nearClip = 0.1f;
         float farClip = 100.0f;
@@ -197,7 +198,9 @@ public:
 
     PerformanceMetrics performanceMetrics() const;
     void enableCharacterControl(int sceneIndex, bool enabled);
+    void selectCharacterControlOwner(int sceneIndex);
     bool isCharacterControlEnabled(int sceneIndex) const;
+    bool injectCharacterInput(int sceneIndex, bool keyW, bool keyA, bool keyS, bool keyD, bool jumpRequested, int durationMs);
     motive::IPhysicsBody* getPhysicsBodyForSceneItem(int sceneIndex) const;
     void setFreeFlyCameraEnabled(bool enabled);
     bool isFreeFlyCameraEnabled() const;
@@ -252,14 +255,12 @@ private:
     Camera* focusedViewportCamera() const;
     void setFocusedViewportIndex(int index);
     void setCharacterControlState(int sceneIndex, bool enabled, bool repositionForCharacterMode);
-    void updateCameraFollowCharacter(float dt);
-    void updateFollowCameras(float dt);
+    void ensureFollowCamerasForAllSceneItems();
 
     QTimer m_renderTimer;
     bool m_initialized = false;
     bool m_initScheduled = false;
     bool m_hasEmittedCameraState = false;
-    bool m_freeFlyCameraEnabled = true;
     QLabel* m_statusLabel = nullptr;
     QWidget* m_renderSurface = nullptr;
     QWidget* m_viewportSelectorPanel = nullptr;

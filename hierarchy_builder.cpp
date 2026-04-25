@@ -99,18 +99,16 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
         for (size_t i = 0; i < cameras.size(); ++i) {
             Camera* camera = cameras[i];
             if (!camera) continue;
-            
-            QString label = QString::fromStdString(camera->getCameraName());
-            if (label.isEmpty()) {
-                label = (i == 0) ? QStringLiteral("Camera") : QStringLiteral("Camera %1").arg(i);
+            const QString cameraName = QString::fromStdString(camera->getCameraName());
+            if (camera->isFollowModeEnabled() && camera->getFollowTargetIndex() >= 0) {
+                // Follow cameras are attached to scene items conceptually and should
+                // not appear as independent hierarchy root nodes.
+                continue;
             }
             
-            // Check if this is a follow camera
-            if (camera->isFollowModeEnabled() && camera->getFollowTargetIndex() >= 0) {
-                int followSceneIndex = camera->getFollowSceneIndex();
-                if (followSceneIndex >= 0) {
-                    label += QStringLiteral(" → Scene %1").arg(followSceneIndex);
-                }
+            QString label = cameraName;
+            if (label.isEmpty()) {
+                label = (i == 0) ? QStringLiteral("Camera") : QStringLiteral("Camera %1").arg(i);
             }
             
             items.push_back(ViewportHostWidget::HierarchyNode{
@@ -350,6 +348,30 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
         }
         return QStringLiteral("unknown");
     };
+    auto animStateName = [](Model::CharacterController::AnimState state) -> QString
+    {
+        using AnimState = Model::CharacterController::AnimState;
+        switch (state)
+        {
+        case AnimState::Idle:
+            return QStringLiteral("Idle");
+        case AnimState::ComeToRest:
+            return QStringLiteral("ComeToRest");
+        case AnimState::WalkForward:
+            return QStringLiteral("WalkForward");
+        case AnimState::WalkBackward:
+            return QStringLiteral("WalkBackward");
+        case AnimState::WalkLeft:
+            return QStringLiteral("WalkLeft");
+        case AnimState::WalkRight:
+            return QStringLiteral("WalkRight");
+        case AnimState::Run:
+            return QStringLiteral("Run");
+        case AnimState::Jump:
+            return QStringLiteral("Jump");
+        }
+        return QStringLiteral("Unknown");
+    };
 
     QJsonArray sceneItems;
     const auto& entries = m_sceneController.loadedEntries();
@@ -384,6 +406,87 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("boundsMax"), QJsonArray{model->boundsMaxWorld.x, model->boundsMaxWorld.y, model->boundsMaxWorld.z});
             const glm::vec3 boundsSize = glm::max(model->boundsMaxWorld - model->boundsMinWorld, glm::vec3(0.0f));
             sceneItem.insert(QStringLiteral("boundsSize"), QJsonArray{boundsSize.x, boundsSize.y, boundsSize.z});
+            const auto& character = model->character;
+            sceneItem.insert(QStringLiteral("isControllable"), character.isControllable);
+            sceneItem.insert(QStringLiteral("isGrounded"), character.isGrounded);
+            sceneItem.insert(QStringLiteral("jumpRequested"), character.jumpRequested);
+            sceneItem.insert(QStringLiteral("keyW"), character.keyW);
+            sceneItem.insert(QStringLiteral("keyA"), character.keyA);
+            sceneItem.insert(QStringLiteral("keyS"), character.keyS);
+            sceneItem.insert(QStringLiteral("keyD"), character.keyD);
+            sceneItem.insert(QStringLiteral("inputDir"), QJsonArray{character.inputDir.x, character.inputDir.y, character.inputDir.z});
+            sceneItem.insert(QStringLiteral("velocity"), QJsonArray{character.velocity.x, character.velocity.y, character.velocity.z});
+            sceneItem.insert(QStringLiteral("currentAnimState"), animStateName(character.currentAnimState));
+            sceneItem.insert(QStringLiteral("currentAnimWeight"), character.currentAnimWeight);
+            sceneItem.insert(QStringLiteral("currentAnimSpeed"), character.currentAnimSpeed);
+            sceneItem.insert(QStringLiteral("animationPreprocessedFrameValid"), model->animationPreprocessedFrameValid);
+            sceneItem.insert(QStringLiteral("animationPreprocessedFrameCounter"), static_cast<qint64>(model->animationPreprocessedFrameCounter));
+            sceneItem.insert(QStringLiteral("runtimeAnimationPlaying"), false);
+            sceneItem.insert(QStringLiteral("runtimeAnimationLoop"), false);
+            sceneItem.insert(QStringLiteral("runtimeAnimationSpeed"), character.currentAnimSpeed);
+            sceneItem.insert(QStringLiteral("runtimeActiveClip"), QString());
+
+            QString followAnchorMode = QStringLiteral("worldTransform");
+            bool followAnchorReferencesPreprocessedFrames = false;
+            if (character.isControllable && model->followAnchorLocalCenterInitialized)
+            {
+                followAnchorMode = QStringLiteral("stableLocalAnchor");
+            }
+            else if (model->boundsRadius > 0.0f)
+            {
+                followAnchorMode = QStringLiteral("preprocessedAnimatedBounds");
+                followAnchorReferencesPreprocessedFrames = true;
+            }
+            sceneItem.insert(QStringLiteral("followAnchorMode"), followAnchorMode);
+            sceneItem.insert(QStringLiteral("followAnchorReferencesPreprocessedFrames"), followAnchorReferencesPreprocessedFrames);
+            if (model->fbxAnimationRuntime)
+            {
+                sceneItem.insert(QStringLiteral("runtimeAnimationPlaying"), model->fbxAnimationRuntime->playing);
+                sceneItem.insert(QStringLiteral("runtimeAnimationLoop"), model->fbxAnimationRuntime->loop);
+                sceneItem.insert(QStringLiteral("runtimeAnimationSpeed"), model->fbxAnimationRuntime->speed);
+                QString runtimeClip;
+                const int activeClipIndex = model->fbxAnimationRuntime->activeClipIndex;
+                if (activeClipIndex >= 0 &&
+                    activeClipIndex < static_cast<int>(model->fbxAnimationRuntime->clips.size()))
+                {
+                    runtimeClip = QString::fromStdString(model->fbxAnimationRuntime->clips[activeClipIndex].name);
+                }
+                sceneItem.insert(QStringLiteral("runtimeActiveClip"), runtimeClip);
+            }
+
+            // Publish object-owned follow camera settings for REST/UI validation.
+            QJsonObject followCamera{
+                {QStringLiteral("exists"), false}
+            };
+            if (m_runtime.display())
+            {
+                for (Camera* camera : m_runtime.display()->cameras)
+                {
+                    if (!camera || !camera->isFollowModeEnabled())
+                    {
+                        continue;
+                    }
+                    if (camera->getFollowSceneIndex() != sceneIndex)
+                    {
+                        continue;
+                    }
+
+                    const FollowSettings& fs = camera->getFollowSettings();
+                    followCamera = QJsonObject{
+                        {QStringLiteral("exists"), true},
+                        {QStringLiteral("cameraId"), QString::fromStdString(camera->getCameraId())},
+                        {QStringLiteral("cameraName"), QString::fromStdString(camera->getCameraName())},
+                        {QStringLiteral("targetSceneIndex"), sceneIndex},
+                        {QStringLiteral("distance"), fs.distance},
+                        {QStringLiteral("yawDeg"), glm::degrees(fs.relativeYaw)},
+                        {QStringLiteral("pitchDeg"), glm::degrees(fs.relativePitch)},
+                        {QStringLiteral("smoothSpeed"), fs.smoothSpeed},
+                        {QStringLiteral("targetOffset"), QJsonArray{fs.targetOffset.x, fs.targetOffset.y, fs.targetOffset.z}}
+                    };
+                    break;
+                }
+            }
+            sceneItem.insert(QStringLiteral("followCamera"), followCamera);
 
             for (int meshIndex = 0; meshIndex < static_cast<int>(model->meshes.size()); ++meshIndex)
             {

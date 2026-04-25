@@ -44,6 +44,7 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     fpsFrameCounter = 0;
 
     inputRouter = std::make_unique<InputRouter>();
+    inputRouter->setDisplay(this);
 
     graphicsQueue = engine->graphicsQueue;
     graphicsPipelines.fill(VK_NULL_HANDLE);

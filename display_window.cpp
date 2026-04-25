@@ -189,9 +189,8 @@ void Display::handleKey(int key, int scancode, int action, int mods)
 
     if (inputRouter)
     {
-        const bool isFollowMode = camera->isFollowModeEnabled();
-        const bool hasCharacterTarget = (camera->getCharacterTarget() != nullptr);
-        
+        // InputRouter handles character input in CharacterFollow mode
+        // In FreeFly mode, camera handles its own movement
         inputRouter->handleKey(key, action);
     }
 

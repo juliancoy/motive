@@ -72,12 +72,48 @@ std::vector<Vertex> buildAnimatedVerticesFromFbxMesh(const ufbx_mesh* mesh, cons
             : (mesh->vertex_normal.exists
                 ? toGlmVec3(ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
                 : glm::vec3(0.0f, 1.0f, 0.0f));
-        vertex.texCoord = mesh->vertex_uv.exists
-            ? toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index))
-            : glm::vec2(0.0f);
+        if (mesh->vertex_uv.exists)
+        {
+            glm::vec2 uv = toGlmVec2(ufbx_get_vertex_vec2(&mesh->vertex_uv, index));
+            // Keep FBX runtime path consistent with import path: flip V.
+            uv.y = 1.0f - uv.y;
+            vertex.texCoord = uv;
+        }
+        else
+        {
+            vertex.texCoord = glm::vec2(0.0f);
+        }
         vertices[i] = vertex;
     }
     return vertices;
+}
+
+glm::vec3 normalizeControllableCharacterRootOffset(Model& model, std::vector<Vertex>& vertices)
+{
+    if (!model.character.isControllable || vertices.empty() || !model.followAnchorLocalCenterInitialized)
+    {
+        return glm::vec3(0.0f);
+    }
+
+    glm::vec3 minPos(std::numeric_limits<float>::max());
+    glm::vec3 maxPos(std::numeric_limits<float>::lowest());
+    for (const Vertex& v : vertices)
+    {
+        minPos = glm::min(minPos, v.pos);
+        maxPos = glm::max(maxPos, v.pos);
+    }
+    const glm::vec3 animatedCenter = (minPos + maxPos) * 0.5f;
+    const glm::vec3 centerDelta = animatedCenter - model.followAnchorLocalCenter;
+    if (glm::length(centerDelta) <= 1e-6f)
+    {
+        return glm::vec3(0.0f);
+    }
+
+    for (Vertex& v : vertices)
+    {
+        v.pos -= centerDelta;
+    }
+    return centerDelta;
 }
 
 double initialPlaybackTime(const motive::animation::FbxClipRuntime& clip, bool playing)
@@ -93,10 +129,11 @@ double initialPlaybackTime(const motive::animation::FbxClipRuntime& clip, bool p
         return clip.timeBegin;
     }
 
-    // Many authored FBX clips include a bind/rest pose sample at the exact start.
-    // Prime playback one frame forward so the first visible frame is the animated pose.
+    // Many authored FBX clips include several bind/rest samples at clip start.
+    // Prime playback forward so the first visible frame is an animated pose.
     const double frameStep = 1.0 / 30.0;
-    return std::min(clip.timeBegin + std::min(frameStep, clipDuration), clip.timeEnd);
+    const double primeOffset = std::min(0.10, clipDuration);
+    return std::min(clip.timeBegin + std::max(frameStep, primeOffset), clip.timeEnd);
 }
 
 }  // namespace
@@ -227,26 +264,13 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
         }
     }
 
-    // Check if any mesh needs CPU skinning (skinned vertex positions).
-    // GPU skinning only needs joint matrices, which don't require evaluate_skinning=true.
-    bool needsCpuSkinning = false;
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
-    for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
-    {
-        const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
-        if (meshIndex < model.meshes.size() && !model.meshes[meshIndex].primitives.empty())
-        {
-            const Primitive* primitive = model.meshes[meshIndex].primitives.front().get();
-            if (primitive && !primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
-            {
-                needsCpuSkinning = true;
-                break;
-            }
-        }
-    }
 
     ufbx_evaluate_opts evalOpts = {};
-    evalOpts.evaluate_skinning = needsCpuSkinning;  // Skip expensive topology sort for GPU skinning
+    // Follow/orbit targeting and culling depend on model boundsCenter, which is
+    // derived from primitive CPU vertices. Those vertices must represent animated
+    // skinning every frame, including when rendering uses GPU skinning.
+    evalOpts.evaluate_skinning = true;
     ufbx_error error;
     ufbx_scene* evaluatedScene = ufbx_evaluate_scene(runtime.scene, clip.anim, runtime.timeSeconds, &evalOpts, &error);
     if (!evaluatedScene)
@@ -273,6 +297,7 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
         // Build animated vertices for bounds computation (needed even with GPU skinning)
         std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
         
+        const glm::vec3 centerDelta = normalizeControllableCharacterRootOffset(model, vertices);
         if (primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
         {
             const ufbx_skin_deformer* skin = binding.skinDeformerIndex < evaluatedMesh->skin_deformers.count
@@ -293,6 +318,14 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
                         continue;
                     }
                     jointMatrices.push_back(invGeometryToWorld * toGlmMat4(cluster->geometry_to_world));
+                }
+                if (glm::length(centerDelta) > 1e-6f)
+                {
+                    const glm::mat4 anchorFix = glm::translate(glm::mat4(1.0f), -centerDelta);
+                    for (glm::mat4& m : jointMatrices)
+                    {
+                        m = anchorFix * m;
+                    }
                 }
                 primitive->updateSkinningMatrices(jointMatrices);
                 // Still update CPU vertices for bounds computation, even with GPU skinning
