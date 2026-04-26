@@ -84,6 +84,7 @@ private:
     QGroupBox* m_cameraSection = nullptr;
     QGroupBox* m_lightSection = nullptr;
     QGroupBox* m_transformSection = nullptr;
+    QGroupBox* m_placementSection = nullptr;
     QGroupBox* m_physicsSection = nullptr;
     QGroupBox* m_runtimeSection = nullptr;
     QGroupBox* m_motionDebugOverlaySection = nullptr;
@@ -92,6 +93,9 @@ private:
     QLabel* m_animationModeValue = nullptr;
     QLabel* m_cameraTypeValue = nullptr;
     QLabel* m_boundsSizeValue = nullptr;
+    QLabel* m_boundsCenterValue = nullptr;
+    QLabel* m_boundsMinValue = nullptr;
+    QLabel* m_boundsMaxValue = nullptr;
     QLabel* m_inspectorTexturePreview = nullptr;
     QComboBox* m_primitiveCullModeCombo = nullptr;
     QPushButton* m_primitiveForceAlphaButton = nullptr;
@@ -146,6 +150,10 @@ private:
     QDoubleSpinBox* m_inspectorScaleY = nullptr;
     QDoubleSpinBox* m_inspectorScaleZ = nullptr;
     QCheckBox* m_lockScaleXYZCheck = nullptr;
+    QComboBox* m_placementTargetCombo = nullptr;
+    QComboBox* m_placementLandmarkCombo = nullptr;
+    QPushButton* m_placementApplyButton = nullptr;
+    QLabel* m_placementLandmarksValue = nullptr;
 
     // Camera follow target selector
     QComboBox* m_followTargetCombo = nullptr;

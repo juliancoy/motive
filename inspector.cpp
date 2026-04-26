@@ -13,6 +13,7 @@
 #include <QPixmap>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVariant>
 
 #include <algorithm>
 
@@ -33,6 +34,127 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         {
             label->setText(value);
         }
+    };
+    const auto setBoundsSummary = [this, &setValue](int sceneIndex)
+    {
+        if (!m_viewportHost || sceneIndex < 0 || sceneIndex >= m_sceneItems.size())
+        {
+            setValue(m_boundsSizeValue, QStringLiteral("-"));
+            setValue(m_boundsCenterValue, QStringLiteral("-"));
+            setValue(m_boundsMinValue, QStringLiteral("-"));
+            setValue(m_boundsMaxValue, QStringLiteral("-"));
+            return;
+        }
+
+        const QVector3D size = m_viewportHost->sceneItemBoundsSize(sceneIndex);
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(sceneIndex);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(sceneIndex);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(sceneIndex);
+        setValue(m_boundsSizeValue, QStringLiteral("%1 x %2 x %3")
+                 .arg(QString::number(size.x(), 'f', 3))
+                 .arg(QString::number(size.y(), 'f', 3))
+                 .arg(QString::number(size.z(), 'f', 3)));
+        setValue(m_boundsCenterValue, QStringLiteral("%1, %2, %3")
+                 .arg(QString::number(center.x(), 'f', 3))
+                 .arg(QString::number(center.y(), 'f', 3))
+                 .arg(QString::number(center.z(), 'f', 3)));
+        setValue(m_boundsMinValue, QStringLiteral("%1, %2, %3")
+                 .arg(QString::number(minPoint.x(), 'f', 3))
+                 .arg(QString::number(minPoint.y(), 'f', 3))
+                 .arg(QString::number(minPoint.z(), 'f', 3)));
+        setValue(m_boundsMaxValue, QStringLiteral("%1, %2, %3")
+                 .arg(QString::number(maxPoint.x(), 'f', 3))
+                 .arg(QString::number(maxPoint.y(), 'f', 3))
+                 .arg(QString::number(maxPoint.z(), 'f', 3)));
+    };
+    const auto setPlacementInspector = [this](int sourceSceneIndex)
+    {
+        if (!m_placementSection || !m_placementTargetCombo || !m_placementApplyButton || !m_placementLandmarksValue)
+        {
+            return;
+        }
+
+        const bool validSource = m_viewportHost &&
+            sourceSceneIndex >= 0 &&
+            sourceSceneIndex < m_sceneItems.size();
+
+        m_placementSection->setVisible(true);
+        m_placementSection->setEnabled(validSource);
+        m_placementTargetCombo->setEnabled(validSource);
+        if (m_placementLandmarkCombo)
+        {
+            m_placementLandmarkCombo->setEnabled(validSource);
+        }
+        m_placementApplyButton->setEnabled(validSource);
+
+        if (!validSource)
+        {
+            m_placementTargetCombo->clear();
+            m_placementLandmarksValue->setText(QStringLiteral("-"));
+            return;
+        }
+
+        const QVariant previousTargetData = m_placementTargetCombo->currentData();
+        const int previousTargetIndex = previousTargetData.isValid() ? previousTargetData.toInt() : -1;
+        m_placementTargetCombo->blockSignals(true);
+        m_placementTargetCombo->clear();
+        for (int i = 0; i < m_sceneItems.size(); ++i)
+        {
+            if (i == sourceSceneIndex)
+            {
+                continue;
+            }
+            QString label = m_sceneItems[i].name;
+            if (label.isEmpty())
+            {
+                label = QStringLiteral("Scene Item %1").arg(i);
+            }
+            m_placementTargetCombo->addItem(label, i);
+        }
+        int targetIndex = m_placementTargetCombo->findData(previousTargetIndex);
+        if (targetIndex < 0)
+        {
+            targetIndex = 0;
+        }
+        if (targetIndex >= 0)
+        {
+            m_placementTargetCombo->setCurrentIndex(targetIndex);
+        }
+        m_placementTargetCombo->blockSignals(false);
+
+        const QVariant selectedTargetData = m_placementTargetCombo->currentData();
+        const int selectedTarget = selectedTargetData.isValid() ? selectedTargetData.toInt() : -1;
+        if (selectedTarget < 0 || selectedTarget >= m_sceneItems.size())
+        {
+            m_placementLandmarksValue->setText(QStringLiteral("-"));
+            m_placementApplyButton->setEnabled(false);
+            return;
+        }
+
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(selectedTarget);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(selectedTarget);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(selectedTarget);
+        const QVector3D groundCenter(center.x(), minPoint.y(), center.z());
+        const QVector3D groundNW(minPoint.x(), minPoint.y(), minPoint.z());
+        const QVector3D groundNE(maxPoint.x(), minPoint.y(), minPoint.z());
+        const QVector3D groundSW(minPoint.x(), minPoint.y(), maxPoint.z());
+        const QVector3D groundSE(maxPoint.x(), minPoint.y(), maxPoint.z());
+        auto fmt = [](const QVector3D& v) -> QString
+        {
+            return QStringLiteral("(%1, %2, %3)")
+                .arg(QString::number(v.x(), 'f', 3))
+                .arg(QString::number(v.y(), 'f', 3))
+                .arg(QString::number(v.z(), 'f', 3));
+        };
+
+        QString landmarksText;
+        landmarksText += QStringLiteral("Center: %1\n").arg(fmt(center));
+        landmarksText += QStringLiteral("Ground Center: %1\n").arg(fmt(groundCenter));
+        landmarksText += QStringLiteral("Ground NW: %1\n").arg(fmt(groundNW));
+        landmarksText += QStringLiteral("Ground NE: %1\n").arg(fmt(groundNE));
+        landmarksText += QStringLiteral("Ground SW: %1\n").arg(fmt(groundSW));
+        landmarksText += QStringLiteral("Ground SE: %1").arg(fmt(groundSE));
+        m_placementLandmarksValue->setText(landmarksText);
     };
     const auto setElementDetailTab = [this](int index)
     {
@@ -494,8 +616,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_cameraTypeValue, isFollowCamera ? QStringLiteral("Follow Camera")
                                                        : QStringLiteral("Free Camera"));
-            setValue(m_boundsSizeValue, QStringLiteral("-"));
+            setBoundsSummary(-1);
             setElementDetailTab(3); // Camera
+            setPlacementInspector(-1);
             
             // Show free fly checkbox for all cameras
             if (m_freeFlyCameraCheck) {
@@ -632,8 +755,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_cameraTypeValue, QStringLiteral("-"));
-            setValue(m_boundsSizeValue, QStringLiteral("-"));
+            setBoundsSummary(-1);
             setElementDetailTab(1); // Visual
+            setPlacementInspector(-1);
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
             if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -722,7 +846,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setValue(m_inspectorPathValue, QStringLiteral("-"));
         setValue(m_animationModeValue, QStringLiteral("-"));
         setValue(m_cameraTypeValue, QStringLiteral("-"));
-        setValue(m_boundsSizeValue, QStringLiteral("-"));
+        setBoundsSummary(-1);
+        setPlacementInspector(-1);
         if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
         if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
         if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
@@ -757,14 +882,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     setValue(m_animationModeValue,
              m_viewportHost ? m_viewportHost->animationExecutionMode(row, meshIndex, primitiveIndex)
                             : QStringLiteral("-"));
-    if (m_boundsSizeValue && m_viewportHost)
-    {
-        const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
-        setValue(m_boundsSizeValue, QStringLiteral("%1 x %2 x %3")
-                 .arg(QString::number(bounds.x(), 'f', 3))
-                 .arg(QString::number(bounds.y(), 'f', 3))
-                 .arg(QString::number(bounds.z(), 'f', 3)));
-    }
+    setBoundsSummary(row);
+    setPlacementInspector(row);
     if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(item.translation.x());
     if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(item.translation.y());
     if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(item.translation.z());

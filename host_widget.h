@@ -163,6 +163,9 @@ public:
     QJsonObject motionDebugSummaryJson() const;
     void resetMotionDebug();
     QVector3D sceneItemBoundsSize(int sceneIndex) const;
+    QVector3D sceneItemBoundsCenter(int sceneIndex) const;
+    QVector3D sceneItemBoundsMin(int sceneIndex) const;
+    QVector3D sceneItemBoundsMax(int sceneIndex) const;
     QImage primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const;
     QString animationExecutionMode(int sceneIndex, int meshIndex = -1, int primitiveIndex = -1) const;
     QString primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const;

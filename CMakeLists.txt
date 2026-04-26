@@ -27,8 +27,11 @@ set(MOTIVE_SHADER_DIR "${MOTIVE_ROOT}/shaders")
 
 find_package(Threads REQUIRED)
 find_package(OpenMP QUIET COMPONENTS CXX)
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 find_program(GLSLANG_VALIDATOR NAMES glslangValidator REQUIRED)
+
+set(MOTIVE_AUTH_API_BASE_URL "https://jsynth.us/api" CACHE STRING "Authentication API base URL used by the editor login dialog")
+add_compile_definitions("MOTIVE_AUTH_API_BASE_URL=\"${MOTIVE_AUTH_API_BASE_URL}\"")
 
 function(motive_find_library out_var)
     set(options REQUIRED)
@@ -239,18 +242,18 @@ set(MOTIVE_RUNTIME_SCENE_SOURCES
 
 add_library(motive_runtime_camera STATIC ${MOTIVE_RUNTIME_CAMERA_SOURCES})
 target_include_directories(motive_runtime_camera PUBLIC ${MOTIVE_INCLUDE_DIRS})
-target_link_libraries(motive_runtime_camera PUBLIC ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(motive_runtime_camera PUBLIC ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 
 add_library(motive_vendor_ufbx STATIC "${MOTIVE_ROOT}/ufbx/ufbx.c")
 target_include_directories(motive_vendor_ufbx PUBLIC ${MOTIVE_INCLUDE_DIRS})
 
 add_library(motive_runtime_scene STATIC ${MOTIVE_RUNTIME_SCENE_SOURCES})
 target_include_directories(motive_runtime_scene PUBLIC ${MOTIVE_INCLUDE_DIRS})
-target_link_libraries(motive_runtime_scene PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets motive_runtime_camera)
+target_link_libraries(motive_runtime_scene PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network motive_runtime_camera)
 
 add_library(engine STATIC ${MOTIVE_ENGINE_SOURCES})
 target_include_directories(engine PUBLIC ${MOTIVE_INCLUDE_DIRS})
-target_link_libraries(engine PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets motive_runtime_camera motive_runtime_scene)
+target_link_libraries(engine PUBLIC motive_vendor_ufbx ${MOTIVE_COMMON_LINK_LIBS} Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network motive_runtime_camera motive_runtime_scene)
 
 foreach(source_file IN LISTS MOTIVE_ENGINE_SOURCES)
     get_filename_component(source_name "${source_file}" NAME)
@@ -286,14 +289,14 @@ function(motive_add_app target source_file)
 endfunction()
 
 motive_add_app(motive3d main.cpp)
-target_link_libraries(motive3d PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(motive3d PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 motive_add_app(motive3d_runtime motive3d.cpp)
 target_sources(motive3d_runtime PRIVATE "${MOTIVE_ROOT}/motive3d_app.cpp")
 motive_add_app(motive2d motive2d.cpp)
 motive_add_app(encode encode.cpp)
 motive_add_app(motive_editor main.cpp)
 motive_add_app(asset_load_profile asset_load_profile.cpp)
-target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 
 if(MOTIVE_ENABLE_TESTS)
     enable_testing()

@@ -2,6 +2,7 @@
 #include "asset_browser_widget.h"
 #include "control_command_service.h"
 #include "control_server.h"
+#include "login_dialog.h"
 #include "profile_data_service.h"
 #include "shell.h"
 
@@ -37,7 +38,16 @@ int runMotiveEditorApp(int argc, char** argv)
         QStringList{QStringLiteral("control-port")},
         QStringLiteral("Control server port."),
         QStringLiteral("port"));
+    QCommandLineOption authApiOption(
+        QStringList{QStringLiteral("auth-api")},
+        QStringLiteral("Authentication API base URL."),
+        QStringLiteral("url"));
+    QCommandLineOption guestModeOption(
+        QStringList{QStringLiteral("guest-mode")},
+        QStringLiteral("Start directly in guest mode (skip login prompt)."));
     parser.addOption(controlPortOption);
+    parser.addOption(authApiOption);
+    parser.addOption(guestModeOption);
     parser.process(app);
 
     bool portOk = false;
@@ -59,6 +69,46 @@ int runMotiveEditorApp(int argc, char** argv)
         {
             controlPort = static_cast<quint16>(parsed);
         }
+    }
+
+    const QString configuredAuthApi =
+        parser.isSet(authApiOption)
+            ? parser.value(authApiOption).trimmed()
+            : qEnvironmentVariable("MOTIVE_AUTH_API_BASE_URL").trimmed();
+    QString authApiBaseUrl = configuredAuthApi;
+    if (authApiBaseUrl.isEmpty())
+    {
+        authApiBaseUrl = QStringLiteral(MOTIVE_AUTH_API_BASE_URL).trimmed();
+    }
+    const bool forceGuestMode = parser.isSet(guestModeOption);
+
+    if (!forceGuestMode && !authApiBaseUrl.isEmpty())
+    {
+        if (LoginDialog::storedToken().isEmpty())
+        {
+            LoginDialog loginDialog(authApiBaseUrl);
+            const int loginResult = loginDialog.exec();
+            if (loginResult == QDialog::Accepted)
+            {
+                qInfo() << "[AUTH] Signed in as" << (loginDialog.email().isEmpty() ? QStringLiteral("(unknown)") : loginDialog.email());
+            }
+            else
+            {
+                qInfo() << "[AUTH] Guest mode selected.";
+            }
+        }
+        else
+        {
+            qInfo() << "[AUTH] Using stored credentials for" << LoginDialog::storedEmail();
+        }
+    }
+    else if (forceGuestMode)
+    {
+        qInfo() << "[AUTH] Guest mode forced by --guest-mode.";
+    }
+    else
+    {
+        qInfo() << "[AUTH] No auth API base configured; defaulting to guest mode.";
     }
 
     MainWindowShell window;

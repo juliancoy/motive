@@ -1190,6 +1190,54 @@ QVector3D ViewportHostWidget::sceneItemBoundsSize(int sceneIndex) const
     return QVector3D(size.x, size.y, size.z);
 }
 
+QVector3D ViewportHostWidget::sceneItemBoundsCenter(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    if (!model)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    return QVector3D(model->boundsCenter.x, model->boundsCenter.y, model->boundsCenter.z);
+}
+
+QVector3D ViewportHostWidget::sceneItemBoundsMin(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    if (!model)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    return QVector3D(model->boundsMinWorld.x, model->boundsMinWorld.y, model->boundsMinWorld.z);
+}
+
+QVector3D ViewportHostWidget::sceneItemBoundsMax(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    if (!model)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    return QVector3D(model->boundsMaxWorld.x, model->boundsMaxWorld.y, model->boundsMaxWorld.z);
+}
+
 QString ViewportHostWidget::animationExecutionMode(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
     if (!m_runtime->engine() || sceneIndex < 0 || sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) || !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])

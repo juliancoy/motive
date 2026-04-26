@@ -37,6 +37,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVariant>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -581,6 +582,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_animationModeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_cameraTypeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_boundsSizeValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_boundsCenterValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_boundsMinValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_boundsMaxValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_inspectorTexturePreview = new QLabel(QStringLiteral("No texture"), inspectorPanel);
     m_inspectorTexturePreview->setMinimumSize(96, 96);
     m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
@@ -770,6 +774,18 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     scaleLayout->addWidget(m_inspectorScaleZ);
     scaleLayout->addWidget(m_lockScaleXYZCheck);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_placementTargetCombo = new QComboBox(inspectorPanel);
+    m_placementLandmarkCombo = new QComboBox(inspectorPanel);
+    m_placementLandmarkCombo->addItem(QStringLiteral("Ground Center"), QStringLiteral("ground_center"));
+    m_placementLandmarkCombo->addItem(QStringLiteral("Scene Center"), QStringLiteral("center"));
+    m_placementLandmarkCombo->addItem(QStringLiteral("Ground NW Corner"), QStringLiteral("ground_nw"));
+    m_placementLandmarkCombo->addItem(QStringLiteral("Ground NE Corner"), QStringLiteral("ground_ne"));
+    m_placementLandmarkCombo->addItem(QStringLiteral("Ground SW Corner"), QStringLiteral("ground_sw"));
+    m_placementLandmarkCombo->addItem(QStringLiteral("Ground SE Corner"), QStringLiteral("ground_se"));
+    m_placementApplyButton = new QPushButton(QStringLiteral("Stand In Target Scene"), inspectorPanel);
+    m_placementLandmarksValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_placementLandmarksValue->setWordWrap(true);
     
     // Per-object Gravity controls
     m_elementUseGravityCheck = new QCheckBox(QStringLiteral("Use World Gravity"), inspectorPanel);
@@ -844,6 +860,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     summaryLayout->addRow(QStringLiteral("Source"), m_inspectorPathValue);
     summaryLayout->addRow(QStringLiteral("Animation Path"), m_animationModeValue);
     summaryLayout->addRow(QStringLiteral("Bounds Size"), m_boundsSizeValue);
+    summaryLayout->addRow(QStringLiteral("Bounds Center"), m_boundsCenterValue);
+    summaryLayout->addRow(QStringLiteral("Bounds Min"), m_boundsMinValue);
+    summaryLayout->addRow(QStringLiteral("Bounds Max"), m_boundsMaxValue);
     summaryLayout->addRow(QStringLiteral("Texture"), m_inspectorTexturePreview);
 
     m_materialSection = new QGroupBox(QStringLiteral("Material & Mesh"), visualTab);
@@ -892,6 +911,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     transformLayout->addRow(QStringLiteral("Rotation"), m_rotationWidget);
     transformLayout->addRow(QStringLiteral("Scale"), m_scaleWidget);
 
+    m_placementSection = new QGroupBox(QStringLiteral("Placement"), overviewTab);
+    auto* placementLayout = new QFormLayout(m_placementSection);
+    placementLayout->addRow(QStringLiteral("Target Scene"), m_placementTargetCombo);
+    placementLayout->addRow(QStringLiteral("Landmark"), m_placementLandmarkCombo);
+    placementLayout->addRow(QStringLiteral("Landmarks"), m_placementLandmarksValue);
+    placementLayout->addRow(QStringLiteral("Action"), m_placementApplyButton);
+
     m_physicsSection = new QGroupBox(QStringLiteral("Physics & Motion"), motionTab);
     auto* physicsLayout = new QFormLayout(m_physicsSection);
     physicsLayout->addRow(QStringLiteral("WASD Enablement"), m_freeFlyCameraCheck);
@@ -916,6 +942,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     overviewLayout->addWidget(m_summarySection);
     overviewLayout->addWidget(m_transformSection);
+    overviewLayout->addWidget(m_placementSection);
     overviewLayout->addStretch(1);
 
     visualLayout->addWidget(m_materialSection);
@@ -1542,6 +1569,182 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         return current->data(0, Qt::UserRole).toInt();
     };
 
+    auto placementLandmarkPoint = [this](int targetSceneIndex, const QString& landmarkId, QVector3D& point) -> bool
+    {
+        if (!m_viewportHost || targetSceneIndex < 0 || targetSceneIndex >= m_sceneItems.size())
+        {
+            return false;
+        }
+
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(targetSceneIndex);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(targetSceneIndex);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(targetSceneIndex);
+        const float groundY = minPoint.y();
+
+        if (landmarkId == QStringLiteral("center"))
+        {
+            point = center;
+            return true;
+        }
+        if (landmarkId == QStringLiteral("ground_nw"))
+        {
+            point = QVector3D(minPoint.x(), groundY, minPoint.z());
+            return true;
+        }
+        if (landmarkId == QStringLiteral("ground_ne"))
+        {
+            point = QVector3D(maxPoint.x(), groundY, minPoint.z());
+            return true;
+        }
+        if (landmarkId == QStringLiteral("ground_sw"))
+        {
+            point = QVector3D(minPoint.x(), groundY, maxPoint.z());
+            return true;
+        }
+        if (landmarkId == QStringLiteral("ground_se"))
+        {
+            point = QVector3D(maxPoint.x(), groundY, maxPoint.z());
+            return true;
+        }
+
+        point = QVector3D(center.x(), groundY, center.z());
+        return true;
+    };
+
+    auto refreshPlacementInspector = [this, selectedSceneItemIndex]() {
+        if (!m_placementSection || !m_placementTargetCombo || !m_placementApplyButton || !m_placementLandmarksValue)
+        {
+            return;
+        }
+
+        const int sourceSceneIndex = selectedSceneItemIndex();
+        const bool validSource = sourceSceneIndex >= 0 && sourceSceneIndex < m_sceneItems.size() && m_viewportHost;
+
+        m_placementSection->setVisible(true);
+        m_placementSection->setEnabled(validSource);
+        m_placementTargetCombo->setEnabled(validSource);
+        if (m_placementLandmarkCombo)
+        {
+            m_placementLandmarkCombo->setEnabled(validSource);
+        }
+        m_placementApplyButton->setEnabled(validSource);
+
+        if (!validSource)
+        {
+            m_placementTargetCombo->clear();
+            m_placementLandmarksValue->setText(QStringLiteral("-"));
+            return;
+        }
+
+        const QVariant previousTargetData = m_placementTargetCombo->currentData();
+        const int previousTargetIndex = previousTargetData.isValid() ? previousTargetData.toInt() : -1;
+        m_placementTargetCombo->blockSignals(true);
+        m_placementTargetCombo->clear();
+        for (int i = 0; i < m_sceneItems.size(); ++i)
+        {
+            if (i == sourceSceneIndex)
+            {
+                continue;
+            }
+            QString label = m_sceneItems[i].name;
+            if (label.isEmpty())
+            {
+                label = QStringLiteral("Scene Item %1").arg(i);
+            }
+            m_placementTargetCombo->addItem(label, i);
+        }
+        int targetComboIndex = m_placementTargetCombo->findData(previousTargetIndex);
+        if (targetComboIndex < 0)
+        {
+            targetComboIndex = 0;
+        }
+        if (targetComboIndex >= 0)
+        {
+            m_placementTargetCombo->setCurrentIndex(targetComboIndex);
+        }
+        m_placementTargetCombo->blockSignals(false);
+
+        const QVariant targetSceneData = m_placementTargetCombo->currentData();
+        const int targetSceneIndex = targetSceneData.isValid() ? targetSceneData.toInt() : -1;
+        if (targetSceneIndex < 0 || targetSceneIndex >= m_sceneItems.size())
+        {
+            m_placementLandmarksValue->setText(QStringLiteral("-"));
+            m_placementApplyButton->setEnabled(false);
+            return;
+        }
+
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(targetSceneIndex);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(targetSceneIndex);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(targetSceneIndex);
+        const QVector3D groundCenter(center.x(), minPoint.y(), center.z());
+        const QVector3D groundNW(minPoint.x(), minPoint.y(), minPoint.z());
+        const QVector3D groundNE(maxPoint.x(), minPoint.y(), minPoint.z());
+        const QVector3D groundSW(minPoint.x(), minPoint.y(), maxPoint.z());
+        const QVector3D groundSE(maxPoint.x(), minPoint.y(), maxPoint.z());
+        auto fmt = [](const QVector3D& v) -> QString
+        {
+            return QStringLiteral("(%1, %2, %3)")
+                .arg(QString::number(v.x(), 'f', 3))
+                .arg(QString::number(v.y(), 'f', 3))
+                .arg(QString::number(v.z(), 'f', 3));
+        };
+
+        QString landmarksText;
+        landmarksText += QStringLiteral("Center: %1\n").arg(fmt(center));
+        landmarksText += QStringLiteral("Ground Center: %1\n").arg(fmt(groundCenter));
+        landmarksText += QStringLiteral("Ground NW: %1\n").arg(fmt(groundNW));
+        landmarksText += QStringLiteral("Ground NE: %1\n").arg(fmt(groundNE));
+        landmarksText += QStringLiteral("Ground SW: %1\n").arg(fmt(groundSW));
+        landmarksText += QStringLiteral("Ground SE: %1").arg(fmt(groundSE));
+        m_placementLandmarksValue->setText(landmarksText);
+    };
+
+    connect(m_placementTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [refreshPlacementInspector](int) {
+        refreshPlacementInspector();
+    });
+    connect(m_placementApplyButton, &QPushButton::clicked, this, [this, selectedSceneItemIndex, placementLandmarkPoint, refreshPlacementInspector]() {
+        if (!m_viewportHost || !m_placementTargetCombo || !m_placementLandmarkCombo)
+        {
+            return;
+        }
+
+        const int sourceSceneIndex = selectedSceneItemIndex();
+        const QVariant targetSceneData = m_placementTargetCombo->currentData();
+        const int targetSceneIndex = targetSceneData.isValid() ? targetSceneData.toInt() : -1;
+        if (sourceSceneIndex < 0 || targetSceneIndex < 0 || sourceSceneIndex >= m_sceneItems.size() ||
+            targetSceneIndex >= m_sceneItems.size() || sourceSceneIndex == targetSceneIndex)
+        {
+            return;
+        }
+
+        QVector3D targetPoint;
+        if (!placementLandmarkPoint(targetSceneIndex, m_placementLandmarkCombo->currentData().toString(), targetPoint))
+        {
+            return;
+        }
+
+        const QVector3D sourceCenter = m_viewportHost->sceneItemBoundsCenter(sourceSceneIndex);
+        const QVector3D sourceMin = m_viewportHost->sceneItemBoundsMin(sourceSceneIndex);
+        const QVector3D translation = m_sceneItems[sourceSceneIndex].translation;
+        const QVector3D rotation = m_sceneItems[sourceSceneIndex].rotation;
+        const QVector3D scale = m_sceneItems[sourceSceneIndex].scale;
+
+        const QVector3D delta(targetPoint.x() - sourceCenter.x(),
+                              targetPoint.y() - sourceMin.y(),
+                              targetPoint.z() - sourceCenter.z());
+        const QVector3D newTranslation = translation + delta;
+
+        m_viewportHost->updateSceneItemTransform(sourceSceneIndex, newTranslation, rotation, scale);
+        m_sceneItems[sourceSceneIndex].translation = newTranslation;
+        saveProjectState();
+
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+        refreshPlacementInspector();
+    });
+
     connect(m_takeWasdControlButton, &QPushButton::clicked, this, [this, ensureFollowCameraIndexForScene, selectedSceneItemIndex]() {
         if (!m_viewportHost)
         {
@@ -1610,8 +1813,45 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_wasdRoutingCombo, &QComboBox::currentIndexChanged, this, [applyWASDRoutingMode](int) { applyWASDRoutingMode(); });
     connect(m_freeFlyCameraCheck, &QCheckBox::toggled, this, [applyFreeFlyMode](bool) { applyFreeFlyMode(); });
 
+    const auto updateBoundsSummary = [this](int sceneIndex)
+    {
+        if (!m_boundsSizeValue || !m_boundsCenterValue || !m_boundsMinValue || !m_boundsMaxValue || !m_viewportHost)
+        {
+            return;
+        }
+        if (sceneIndex < 0 || sceneIndex >= m_sceneItems.size())
+        {
+            m_boundsSizeValue->setText(QStringLiteral("-"));
+            m_boundsCenterValue->setText(QStringLiteral("-"));
+            m_boundsMinValue->setText(QStringLiteral("-"));
+            m_boundsMaxValue->setText(QStringLiteral("-"));
+            return;
+        }
+
+        const QVector3D size = m_viewportHost->sceneItemBoundsSize(sceneIndex);
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(sceneIndex);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(sceneIndex);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(sceneIndex);
+        m_boundsSizeValue->setText(QStringLiteral("%1 x %2 x %3")
+            .arg(QString::number(size.x(), 'f', 3))
+            .arg(QString::number(size.y(), 'f', 3))
+            .arg(QString::number(size.z(), 'f', 3)));
+        m_boundsCenterValue->setText(QStringLiteral("%1, %2, %3")
+            .arg(QString::number(center.x(), 'f', 3))
+            .arg(QString::number(center.y(), 'f', 3))
+            .arg(QString::number(center.z(), 'f', 3)));
+        m_boundsMinValue->setText(QStringLiteral("%1, %2, %3")
+            .arg(QString::number(minPoint.x(), 'f', 3))
+            .arg(QString::number(minPoint.y(), 'f', 3))
+            .arg(QString::number(minPoint.z(), 'f', 3)));
+        m_boundsMaxValue->setText(QStringLiteral("%1, %2, %3")
+            .arg(QString::number(maxPoint.x(), 'f', 3))
+            .arg(QString::number(maxPoint.y(), 'f', 3))
+            .arg(QString::number(maxPoint.z(), 'f', 3)));
+    };
+
     // Connect spin box value changes to update scene items
-    auto updateTransform = [this]() {
+    auto updateTransform = [this, updateBoundsSummary]() {
         if (m_updatingInspector) return;
         QTreeWidgetItem* current = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
         const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
@@ -1661,14 +1901,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_sceneItems[row].translation = translation;
             m_sceneItems[row].rotation = rotation;
             m_sceneItems[row].scale = scale;
-            if (m_boundsSizeValue && m_viewportHost)
-            {
-                const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
-                m_boundsSizeValue->setText(QStringLiteral("%1 x %2 x %3")
-                    .arg(QString::number(bounds.x(), 'f', 3))
-                    .arg(QString::number(bounds.y(), 'f', 3))
-                    .arg(QString::number(bounds.z(), 'f', 3)));
-            }
+            updateBoundsSummary(row);
             saveProjectState();
         }
     };
@@ -1685,22 +1918,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     auto* boundsRefreshTimer = new QTimer(this);
     boundsRefreshTimer->setInterval(150);
-    connect(boundsRefreshTimer, &QTimer::timeout, this, [this]() {
-        if (!m_boundsSizeValue || !m_viewportHost || !m_hierarchyTree)
+    connect(boundsRefreshTimer, &QTimer::timeout, this, [this, updateBoundsSummary]() {
+        if (!m_hierarchyTree)
         {
             return;
         }
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
-        if (row < 0 || row >= m_sceneItems.size())
-        {
-            return;
-        }
-        const QVector3D bounds = m_viewportHost->sceneItemBoundsSize(row);
-        m_boundsSizeValue->setText(QStringLiteral("%1 x %2 x %3")
-            .arg(QString::number(bounds.x(), 'f', 3))
-            .arg(QString::number(bounds.y(), 'f', 3))
-            .arg(QString::number(bounds.z(), 'f', 3)));
+        updateBoundsSummary(row);
     });
     boundsRefreshTimer->start();
 
@@ -1929,6 +2154,40 @@ QJsonObject MainWindowShell::inspectorDebugJson() const
     payload.insert(QStringLiteral("followYaw"), m_followYawSpin ? m_followYawSpin->value() : 0.0);
     payload.insert(QStringLiteral("followPitch"), m_followPitchSpin ? m_followPitchSpin->value() : 0.0);
     payload.insert(QStringLiteral("followSmooth"), m_followSmoothSpin ? m_followSmoothSpin->value() : 0.0);
+    payload.insert(QStringLiteral("boundsSizeText"), m_boundsSizeValue ? m_boundsSizeValue->text() : QString());
+    payload.insert(QStringLiteral("boundsCenterText"), m_boundsCenterValue ? m_boundsCenterValue->text() : QString());
+    payload.insert(QStringLiteral("boundsMinText"), m_boundsMinValue ? m_boundsMinValue->text() : QString());
+    payload.insert(QStringLiteral("boundsMaxText"), m_boundsMaxValue ? m_boundsMaxValue->text() : QString());
+    int placementTargetSceneIndex = -1;
+    if (m_placementTargetCombo)
+    {
+        const QVariant placementTargetData = m_placementTargetCombo->currentData();
+        if (placementTargetData.isValid())
+        {
+            placementTargetSceneIndex = placementTargetData.toInt();
+        }
+    }
+    payload.insert(QStringLiteral("placementTargetSceneIndex"), placementTargetSceneIndex);
+    payload.insert(QStringLiteral("placementTargetSceneName"), m_placementTargetCombo ? m_placementTargetCombo->currentText() : QString());
+    payload.insert(QStringLiteral("placementLandmarkId"), m_placementLandmarkCombo ? m_placementLandmarkCombo->currentData().toString() : QString());
+    payload.insert(QStringLiteral("placementLandmarkName"), m_placementLandmarkCombo ? m_placementLandmarkCombo->currentText() : QString());
+    payload.insert(QStringLiteral("placementLandmarksText"), m_placementLandmarksValue ? m_placementLandmarksValue->text() : QString());
+
+    const int selectedSceneIndex = current ? current->data(0, Qt::UserRole).toInt() : -1;
+    if (m_viewportHost && selectedSceneIndex >= 0 && selectedSceneIndex < m_sceneItems.size())
+    {
+        const QVector3D size = m_viewportHost->sceneItemBoundsSize(selectedSceneIndex);
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(selectedSceneIndex);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(selectedSceneIndex);
+        const QVector3D maxPoint = m_viewportHost->sceneItemBoundsMax(selectedSceneIndex);
+
+        payload.insert(QStringLiteral("bounds"), QJsonObject{
+            {QStringLiteral("size"), QJsonArray{size.x(), size.y(), size.z()}},
+            {QStringLiteral("center"), QJsonArray{center.x(), center.y(), center.z()}},
+            {QStringLiteral("min"), QJsonArray{minPoint.x(), minPoint.y(), minPoint.z()}},
+            {QStringLiteral("max"), QJsonArray{maxPoint.x(), maxPoint.y(), maxPoint.z()}}
+        });
+    }
 
     QJsonArray hierarchyState;
     if (m_hierarchyTree)
@@ -2037,6 +2296,15 @@ QJsonObject MainWindowShell::uiDebugJson() const
     QJsonObject inspectorWidgets;
     inspectorWidgets.insert(QStringLiteral("cameraSection"), widgetMetrics(m_cameraSection));
     inspectorWidgets.insert(QStringLiteral("cameraTypeValue"), widgetMetrics(m_cameraTypeValue));
+    inspectorWidgets.insert(QStringLiteral("boundsSizeValue"), widgetMetrics(m_boundsSizeValue));
+    inspectorWidgets.insert(QStringLiteral("boundsCenterValue"), widgetMetrics(m_boundsCenterValue));
+    inspectorWidgets.insert(QStringLiteral("boundsMinValue"), widgetMetrics(m_boundsMinValue));
+    inspectorWidgets.insert(QStringLiteral("boundsMaxValue"), widgetMetrics(m_boundsMaxValue));
+    inspectorWidgets.insert(QStringLiteral("placementSection"), widgetMetrics(m_placementSection));
+    inspectorWidgets.insert(QStringLiteral("placementTargetCombo"), widgetMetrics(m_placementTargetCombo));
+    inspectorWidgets.insert(QStringLiteral("placementLandmarkCombo"), widgetMetrics(m_placementLandmarkCombo));
+    inspectorWidgets.insert(QStringLiteral("placementApplyButton"), widgetMetrics(m_placementApplyButton));
+    inspectorWidgets.insert(QStringLiteral("placementLandmarksValue"), widgetMetrics(m_placementLandmarksValue));
     inspectorWidgets.insert(QStringLiteral("transformSection"), widgetMetrics(m_transformSection));
     inspectorWidgets.insert(QStringLiteral("materialSection"), widgetMetrics(m_materialSection));
     inspectorWidgets.insert(QStringLiteral("animationSection"), widgetMetrics(m_animationSection));
