@@ -183,6 +183,10 @@ public:
         float jumpPhaseTimer = 0.0f;
         bool wasGroundedLastFrame = true;
         AnimState previousAnimState = AnimState::Idle;
+        bool hadMoveKeyIntentLastFrame = false;
+        bool pendingRestPointLatch = false;
+        bool enableRestPointOnMoveRelease = true;
+        float restPointNormalizedOnMoveRelease = 1.0f;
     };
 
     Model(const std::string& gltfPath, Engine* engine, bool consolidateMeshes = true);
@@ -198,6 +202,9 @@ public:
     void setSceneTransform(const glm::vec3& translation, const glm::vec3& rotationDegrees, const glm::vec3& scaleFactors);
     void setPaintOverride(bool enabled, const glm::vec3& color);
     void setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed);
+    void setAnimationProcessingOptions(bool centroidNormalizationEnabled,
+                                       float trimStartNormalized,
+                                       float trimEndNormalized);
     void updateAnimation(double deltaSeconds);
     void recomputeBounds();
     

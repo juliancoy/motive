@@ -28,9 +28,14 @@ public:
     void setSceneItemMeshConsolidationEnabled(int index, bool enabled);
     void updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color);
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
+    void updateSceneItemAnimationProcessing(int index,
+                                            bool centroidNormalizationEnabled,
+                                            float trimStartNormalized,
+                                            float trimEndNormalized);
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
+    void updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized);
     void updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance);
     void updateSceneItemFocusCameraOffset(int index, const QVector3D& focusCameraOffset, bool valid);
     void renameSceneItem(int index, const QString& name);

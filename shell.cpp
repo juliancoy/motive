@@ -39,6 +39,9 @@
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
+
 namespace motive::ui {
 namespace {
 
@@ -482,11 +485,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_viewportHost->setSceneChangedCallback([this](const QList<ViewportHostWidget::SceneItem>& items)
     {
         refreshHierarchy(items);
+        updateWasdRoutingStatus();
         saveProjectState();
     });
     m_viewportHost->setCameraChangedCallback([this]()
     {
         updateCameraSettingsPanel();
+        updateWasdRoutingStatus();
         if (m_hierarchyTree && m_hierarchyTree->currentItem())
         {
             int row = m_hierarchyTree->currentItem()->data(0, Qt::UserRole).toInt();
@@ -501,6 +506,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     {
         if (!m_hierarchyTree || cameraId.isEmpty())
         {
+            updateWasdRoutingStatus();
             return;
         }
 
@@ -526,15 +532,26 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
         if (!targetItem)
         {
+            updateWasdRoutingStatus();
             return;
         }
 
-        if (m_hierarchyTree->currentItem() != targetItem)
+        QTreeWidgetItem* currentItem = m_hierarchyTree->currentItem();
+        const int currentType = currentItem ? currentItem->data(0, Qt::UserRole + 3).toInt() : -1;
+        const bool currentIsCamera =
+            currentType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera);
+        const bool shouldSyncSelectionToFocusedCamera =
+            !currentItem || currentIsCamera;
+
+        if (shouldSyncSelectionToFocusedCamera && currentItem != targetItem)
         {
             QSignalBlocker blocker(m_hierarchyTree);
             m_hierarchyTree->setCurrentItem(targetItem);
+            currentItem = targetItem;
         }
-        updateInspectorForSelection(targetItem);
+
+        updateInspectorForSelection(currentItem);
+        updateWasdRoutingStatus();
     });
     m_assetBrowser->setRootPathChangedCallback([this](const QString& rootPath)
     {
@@ -595,6 +612,17 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_animationPlayingCheck = new QCheckBox(QStringLiteral("Playing"), m_animationControlsWidget);
     m_animationLoopCheck = new QCheckBox(QStringLiteral("Loop"), m_animationControlsWidget);
     m_animationSpeedSpin = createSpinBox(m_animationControlsWidget, 0.0, 10.0, 0.01);
+    m_animationCentroidNormalizeCheck = new QCheckBox(QStringLiteral("Centroid Normalization"), m_animationControlsWidget);
+    m_animationCentroidNormalizeCheck->setToolTip(
+        QStringLiteral("Keep animated mesh centered around the stable follow anchor to reduce root jitter."));
+    m_animationTrimStartSpin = createSpinBox(m_animationControlsWidget, 0.0, 1.0, 0.01);
+    m_animationTrimStartSpin->setValue(0.0);
+    m_animationTrimStartSpin->setToolTip(
+        QStringLiteral("Normalized clip start [0..1]. Values are relative to the active animation clip duration."));
+    m_animationTrimEndSpin = createSpinBox(m_animationControlsWidget, 0.0, 1.0, 0.01);
+    m_animationTrimEndSpin->setValue(1.0);
+    m_animationTrimEndSpin->setToolTip(
+        QStringLiteral("Normalized clip end [0..1]. Values are relative to the active animation clip duration."));
     auto* animationFlagsWidget = new QWidget(m_animationControlsWidget);
     auto* animationFlagsLayout = new QHBoxLayout(animationFlagsWidget);
     animationFlagsLayout->setContentsMargins(0, 0, 0, 0);
@@ -621,6 +649,17 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     animationControlsLayout->addWidget(m_animationClipCombo);
     animationControlsLayout->addWidget(animationFlagsWidget);
     animationControlsLayout->addWidget(animationSpeedWidget);
+    animationControlsLayout->addWidget(m_animationCentroidNormalizeCheck);
+    auto* animationTrimWidget = new QWidget(m_animationControlsWidget);
+    auto* animationTrimLayout = new QHBoxLayout(animationTrimWidget);
+    animationTrimLayout->setContentsMargins(0, 0, 0, 0);
+    animationTrimLayout->addWidget(new QLabel(QStringLiteral("Trim"), animationTrimWidget));
+    animationTrimLayout->addWidget(new QLabel(QStringLiteral("Start"), animationTrimWidget));
+    animationTrimLayout->addWidget(m_animationTrimStartSpin);
+    animationTrimLayout->addWidget(new QLabel(QStringLiteral("End"), animationTrimWidget));
+    animationTrimLayout->addWidget(m_animationTrimEndSpin);
+    animationTrimLayout->addStretch(1);
+    animationControlsLayout->addWidget(animationTrimWidget);
     animationControlsLayout->addWidget(new QLabel(QStringLiteral("Physics Coupling:"), m_animationControlsWidget));
     animationControlsLayout->addWidget(m_animationPhysicsCouplingCombo);
 
@@ -656,6 +695,12 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_freeFlyCameraCheck = new QCheckBox(QStringLiteral("Free fly mode (WASD moves camera)"), inspectorPanel);
     m_freeFlyCameraCheck->setChecked(true);
     m_freeFlyCameraCheck->setToolTip(QStringLiteral("When enabled, WASD moves the camera. When disabled, WASD controls the character and right-drag orbits."));
+    m_wasdRoutingStatusValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_wasdRoutingStatusValue->setWordWrap(true);
+    m_takeWasdControlButton = new QPushButton(QStringLiteral("Take WASD Control"), inspectorPanel);
+    m_takeWasdControlButton->setToolTip(QStringLiteral("Assign WASD to the selected character and switch to follow control."));
+    m_resetControlRoutingButton = new QPushButton(QStringLiteral("Reset Control Routing"), inspectorPanel);
+    m_resetControlRoutingButton->setToolTip(QStringLiteral("Fallback: route WASD back to free-fly camera and clear controllable owner."));
     m_invertHorizontalDragCheck = new QCheckBox(QStringLiteral("Invert horizontal right-drag"), inspectorPanel);
     m_invertHorizontalDragCheck->setChecked(false);
     m_invertHorizontalDragCheck->setToolTip(QStringLiteral("Invert left/right camera rotation while right-dragging."));
@@ -783,6 +828,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     cameraTabLayout->setContentsMargins(6, 6, 6, 6);
     cameraTabLayout->setSpacing(8);
 
+    auto* animationTab = new QWidget(m_elementDetailTabs);
+    auto* animationTabLayout = new QVBoxLayout(animationTab);
+    animationTabLayout->setContentsMargins(6, 6, 6, 6);
+    animationTabLayout->setSpacing(8);
+
     auto* runtimeTab = new QWidget(m_elementDetailTabs);
     auto* runtimeTabLayout = new QVBoxLayout(runtimeTab);
     runtimeTabLayout->setContentsMargins(6, 6, 6, 6);
@@ -804,17 +854,25 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     materialLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
     materialLayout->addRow(QStringLiteral("Paint Color"), m_paintColorContainer);
 
-    m_animationSection = new QGroupBox(QStringLiteral("Animation"), motionTab);
+    m_animationSection = new QGroupBox(QStringLiteral("Animation"), animationTab);
     auto* animationLayout = new QFormLayout(m_animationSection);
     animationLayout->addRow(QStringLiteral("Controls"), m_animationControlsWidget);
 
     m_cameraSection = new QGroupBox(QStringLiteral("Camera"), cameraTab);
     auto* cameraLayout = new QFormLayout(m_cameraSection);
     cameraLayout->addRow(QStringLiteral("Camera Type"), m_cameraTypeValue);
+    cameraLayout->addRow(QStringLiteral("WASD Status"), m_wasdRoutingStatusValue);
     cameraLayout->addRow(QStringLiteral("WASD Routing"), m_wasdRoutingCombo);
     cameraLayout->addRow(QStringLiteral("Drag"), m_invertHorizontalDragCheck);
     cameraLayout->addRow(QStringLiteral("Near Clip"), m_nearClipSpin);
     cameraLayout->addRow(QStringLiteral("Far Clip"), m_farClipSpin);
+    auto* cameraActionWidget = new QWidget(m_cameraSection);
+    auto* cameraActionLayout = new QHBoxLayout(cameraActionWidget);
+    cameraActionLayout->setContentsMargins(0, 0, 0, 0);
+    cameraActionLayout->addWidget(m_takeWasdControlButton);
+    cameraActionLayout->addWidget(m_resetControlRoutingButton);
+    cameraActionLayout->addStretch(1);
+    cameraLayout->addRow(QStringLiteral("Control Actions"), cameraActionWidget);
     cameraLayout->addRow(QStringLiteral("Follow Target"), m_followTargetCombo);
     cameraLayout->addRow(m_followParamsLabel);
     cameraLayout->addRow(QStringLiteral("Distance"), m_followDistanceSpin);
@@ -864,12 +922,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     visualLayout->addWidget(m_lightSection);
     visualLayout->addStretch(1);
 
-    motionLayout->addWidget(m_animationSection);
     motionLayout->addWidget(m_physicsSection);
     motionLayout->addStretch(1);
 
     cameraTabLayout->addWidget(m_cameraSection);
     cameraTabLayout->addStretch(1);
+
+    animationTabLayout->addWidget(m_animationSection);
+    animationTabLayout->addStretch(1);
 
     runtimeTabLayout->addWidget(m_runtimeSection);
     runtimeTabLayout->addWidget(m_motionDebugOverlaySection);
@@ -879,6 +939,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_elementDetailTabs->addTab(visualTab, QStringLiteral("Visual"));
     m_elementDetailTabs->addTab(motionTab, QStringLiteral("Motion"));
     m_elementDetailTabs->addTab(cameraTab, QStringLiteral("Camera"));
+    m_elementDetailTabs->addTab(animationTab, QStringLiteral("Animation"));
     m_elementDetailTabs->addTab(runtimeTab, QStringLiteral("Runtime"));
 
     inspectorLayout->addWidget(m_elementDetailTabs);
@@ -923,6 +984,25 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
         }
         return -1;
+    };
+    auto ensureFollowCameraIndexForScene = [this, findFollowCameraIndexForScene](int sceneIndex) -> int
+    {
+        if (!m_viewportHost || sceneIndex < 0)
+        {
+            return -1;
+        }
+
+        int cameraIndex = findFollowCameraIndexForScene(sceneIndex);
+        if (cameraIndex >= 0)
+        {
+            return cameraIndex;
+        }
+
+        const float distance = m_followDistanceSpin ? static_cast<float>(m_followDistanceSpin->value()) : 5.0f;
+        const float yaw = m_followYawSpin ? static_cast<float>(m_followYawSpin->value()) : 0.0f;
+        const float pitch = m_followPitchSpin ? static_cast<float>(m_followPitchSpin->value()) : 20.0f;
+        cameraIndex = m_viewportHost->ensureFollowCamera(sceneIndex, distance, yaw, pitch);
+        return cameraIndex;
     };
 
     connect(m_hierarchyTree, &QTreeWidget::currentItemChanged, this, [this, resolveCameraIndexFromTreeItem](QTreeWidgetItem* current)
@@ -985,25 +1065,49 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
         }
         updateInspectorForSelection(current);
+        updateWasdRoutingStatus();
     });
 
     auto applyAnimationInspector = [this]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
-        if (row < 0 || row >= m_sceneItems.size() || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck || !m_animationSpeedSpin)
+        if (row < 0 || row >= m_sceneItems.size() || !m_animationClipCombo || !m_animationPlayingCheck ||
+            !m_animationLoopCheck || !m_animationSpeedSpin || !m_animationCentroidNormalizeCheck ||
+            !m_animationTrimStartSpin || !m_animationTrimEndSpin)
         {
             return;
         }
+
+        const float trimStart = static_cast<float>(m_animationTrimStartSpin->value());
+        const float trimEnd = static_cast<float>(m_animationTrimEndSpin->value());
+        const float normalizedTrimStart = std::min(trimStart, trimEnd);
+        const float normalizedTrimEnd = std::max(trimStart, trimEnd);
+        if (std::abs(normalizedTrimStart - trimStart) > 1e-6f || std::abs(normalizedTrimEnd - trimEnd) > 1e-6f)
+        {
+            QSignalBlocker startBlocker(m_animationTrimStartSpin);
+            QSignalBlocker endBlocker(m_animationTrimEndSpin);
+            m_animationTrimStartSpin->setValue(normalizedTrimStart);
+            m_animationTrimEndSpin->setValue(normalizedTrimEnd);
+        }
+
         m_viewportHost->updateSceneItemAnimationState(row,
                                                       m_animationClipCombo->currentData().toString(),
                                                       m_animationPlayingCheck->isChecked(),
                                                       m_animationLoopCheck->isChecked(),
                                                       static_cast<float>(m_animationSpeedSpin->value()));
+        m_viewportHost->updateSceneItemAnimationProcessing(
+            row,
+            m_animationCentroidNormalizeCheck->isChecked(),
+            normalizedTrimStart,
+            normalizedTrimEnd);
         m_sceneItems[row].activeAnimationClip = m_animationClipCombo->currentData().toString();
         m_sceneItems[row].animationPlaying = m_animationPlayingCheck->isChecked();
         m_sceneItems[row].animationLoop = m_animationLoopCheck->isChecked();
         m_sceneItems[row].animationSpeed = static_cast<float>(m_animationSpeedSpin->value());
+        m_sceneItems[row].animationCentroidNormalization = m_animationCentroidNormalizeCheck->isChecked();
+        m_sceneItems[row].animationTrimStartNormalized = normalizedTrimStart;
+        m_sceneItems[row].animationTrimEndNormalized = normalizedTrimEnd;
         if (m_animationPhysicsCouplingCombo) {
             m_sceneItems[row].animationPhysicsCoupling = m_animationPhysicsCouplingCombo->currentData().toString();
             m_viewportHost->updateSceneItemAnimationPhysicsCoupling(row, m_animationPhysicsCouplingCombo->currentData().toString());
@@ -1014,6 +1118,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_animationPlayingCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
     connect(m_animationLoopCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
     connect(m_animationSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
+    connect(m_animationCentroidNormalizeCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
+    connect(m_animationTrimStartSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
+    connect(m_animationTrimEndSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
     connect(m_animationPhysicsCouplingCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
     
     // Connect per-object gravity controls
@@ -1265,7 +1372,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
 
     // Connect follow parameter spin boxes to update camera config
-    auto applyFollowParams = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene]() {
+    auto applyFollowParams = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene, ensureFollowCameraIndexForScene]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
@@ -1278,9 +1385,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         
-        const int cameraIndex = isCameraNode
+        int cameraIndex = isCameraNode
             ? resolveCameraIndexFromTreeItem(current)
             : findFollowCameraIndexForScene(sceneIndex);
+        if (isSceneItemNode && cameraIndex < 0)
+        {
+            cameraIndex = ensureFollowCameraIndexForScene(sceneIndex);
+        }
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;
@@ -1311,7 +1422,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     };
     
     // Explicit WASD routing mode selector.
-    auto applyWASDRoutingMode = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene]() {
+    auto applyWASDRoutingMode = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene, ensureFollowCameraIndexForScene]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_wasdRoutingCombo) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
@@ -1324,9 +1435,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
 
-        const int cameraIndex = isCameraNode
+        int cameraIndex = isCameraNode
             ? resolveCameraIndexFromTreeItem(current)
             : findFollowCameraIndexForScene(sceneIndex);
+        if (isSceneItemNode && cameraIndex < 0)
+        {
+            cameraIndex = ensureFollowCameraIndexForScene(sceneIndex);
+        }
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;
@@ -1349,7 +1464,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     };
 
     // Handler for free fly checkbox (applies to any camera, not just follow cameras)
-    auto applyFreeFlyMode = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene]() {
+    auto applyFreeFlyMode = [this, resolveCameraIndexFromTreeItem, findFollowCameraIndexForScene, ensureFollowCameraIndexForScene]() {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_freeFlyCameraCheck) return;
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         if (!current) return;
@@ -1362,9 +1477,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         
-        const int cameraIndex = isCameraNode
+        int cameraIndex = isCameraNode
             ? resolveCameraIndexFromTreeItem(current)
             : findFollowCameraIndexForScene(sceneIndex);
+        if (isSceneItemNode && cameraIndex < 0)
+        {
+            cameraIndex = ensureFollowCameraIndexForScene(sceneIndex);
+        }
         auto configs = m_viewportHost->cameraConfigs();
         if (cameraIndex < 0 || cameraIndex >= configs.size()) {
             return;
@@ -1403,6 +1522,83 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         m_viewportHost->updateCameraConfig(cameraIndex, config);
         saveProjectState();
     };
+
+    auto selectedSceneItemIndex = [this]() -> int
+    {
+        if (!m_hierarchyTree)
+        {
+            return -1;
+        }
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        if (!current)
+        {
+            return -1;
+        }
+        const int nodeType = current->data(0, Qt::UserRole + 3).toInt();
+        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem))
+        {
+            return -1;
+        }
+        return current->data(0, Qt::UserRole).toInt();
+    };
+
+    connect(m_takeWasdControlButton, &QPushButton::clicked, this, [this, ensureFollowCameraIndexForScene, selectedSceneItemIndex]() {
+        if (!m_viewportHost)
+        {
+            return;
+        }
+        const int sceneIndex = selectedSceneItemIndex();
+        if (sceneIndex < 0)
+        {
+            return;
+        }
+
+        m_viewportHost->enableCharacterControl(sceneIndex, true);
+        const int cameraIndex = ensureFollowCameraIndexForScene(sceneIndex);
+        if (cameraIndex >= 0)
+        {
+            auto configs = m_viewportHost->cameraConfigs();
+            if (cameraIndex < configs.size())
+            {
+                auto config = configs[cameraIndex];
+                config.type = ViewportHostWidget::CameraConfig::Type::Follow;
+                config.followTargetIndex = sceneIndex;
+                config.mode = QStringLiteral("CharacterFollow");
+                config.freeFly = false;
+                m_viewportHost->updateCameraConfig(cameraIndex, config);
+                m_viewportHost->setActiveCamera(cameraIndex);
+            }
+        }
+        m_viewportHost->setFreeFlyCameraEnabled(false);
+        saveProjectState();
+        updateWasdRoutingStatus();
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+    });
+
+    connect(m_resetControlRoutingButton, &QPushButton::clicked, this, [this]() {
+        if (!m_viewportHost)
+        {
+            return;
+        }
+        const auto items = m_viewportHost->sceneItems();
+        for (int i = 0; i < items.size(); ++i)
+        {
+            if (m_viewportHost->isCharacterControlEnabled(i))
+            {
+                m_viewportHost->enableCharacterControl(i, false);
+            }
+        }
+        m_viewportHost->setFreeFlyCameraEnabled(true);
+        saveProjectState();
+        updateWasdRoutingStatus();
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+    });
     
     connect(m_followDistanceSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
     connect(m_followYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyFollowParams](double) { applyFollowParams(); });
@@ -1516,6 +1712,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     
     restoreSessionState();
     refreshWindowTitle();
+    updateWasdRoutingStatus();
     maybePromptForGltfConversion(m_assetBrowser ? m_assetBrowser->rootPath() : m_projectSession.currentProjectRoot());
 
     QTimer::singleShot(0, this, [this]()
@@ -1536,6 +1733,88 @@ AssetBrowserWidget* MainWindowShell::assetBrowser() const
 ViewportHostWidget* MainWindowShell::viewportHost() const
 {
     return m_viewportHost;
+}
+
+void MainWindowShell::updateWasdRoutingStatus()
+{
+    if (!m_wasdRoutingStatusValue || !m_viewportHost)
+    {
+        return;
+    }
+
+    const auto configs = m_viewportHost->cameraConfigs();
+    const QString focusedCameraId = m_viewportHost->focusedViewportCameraId();
+    int focusedIndex = -1;
+    for (int i = 0; i < configs.size(); ++i)
+    {
+        if (configs[i].id == focusedCameraId)
+        {
+            focusedIndex = i;
+            break;
+        }
+    }
+    if (focusedIndex < 0 && !configs.isEmpty())
+    {
+        focusedIndex = m_viewportHost->activeCameraIndex();
+    }
+    if (focusedIndex < 0 || focusedIndex >= configs.size())
+    {
+        m_wasdRoutingStatusValue->setText(QStringLiteral("WASD status unavailable"));
+        return;
+    }
+
+    const auto& config = configs[focusedIndex];
+    const QString cameraName = config.name.isEmpty() ? QStringLiteral("Camera %1").arg(focusedIndex) : config.name;
+    QString status;
+    if (config.mode.compare(QStringLiteral("CharacterFollow"), Qt::CaseInsensitive) == 0)
+    {
+        QString targetName = QStringLiteral("Scene %1").arg(config.followTargetIndex);
+        const auto items = m_viewportHost->sceneItems();
+        if (config.followTargetIndex >= 0 && config.followTargetIndex < items.size())
+        {
+            targetName = items[config.followTargetIndex].name;
+        }
+        status = QStringLiteral("WASD -> Character (%1) via %2").arg(targetName, cameraName);
+    }
+    else if (config.mode.compare(QStringLiteral("OrbitFollow"), Qt::CaseInsensitive) == 0)
+    {
+        QString targetName = QStringLiteral("Scene %1").arg(config.followTargetIndex);
+        const auto items = m_viewportHost->sceneItems();
+        if (config.followTargetIndex >= 0 && config.followTargetIndex < items.size())
+        {
+            targetName = items[config.followTargetIndex].name;
+        }
+        status = QStringLiteral("WASD -> Orbit Follow (%1) via %2").arg(targetName, cameraName);
+    }
+    else if (config.mode.compare(QStringLiteral("Fixed"), Qt::CaseInsensitive) == 0)
+    {
+        status = QStringLiteral("WASD -> Disabled (%1)").arg(cameraName);
+    }
+    else
+    {
+        status = QStringLiteral("WASD -> Camera Move (%1)").arg(cameraName);
+    }
+
+    int controlOwner = -1;
+    const auto items = m_viewportHost->sceneItems();
+    for (int i = 0; i < items.size(); ++i)
+    {
+        if (m_viewportHost->isCharacterControlEnabled(i))
+        {
+            controlOwner = i;
+            break;
+        }
+    }
+    if (controlOwner >= 0 && controlOwner < items.size())
+    {
+        status += QStringLiteral("\nControl Owner: %1").arg(items[controlOwner].name);
+    }
+    else
+    {
+        status += QStringLiteral("\nControl Owner: none");
+    }
+
+    m_wasdRoutingStatusValue->setText(status);
 }
 
 QJsonArray MainWindowShell::hierarchyJson() const
@@ -1570,6 +1849,7 @@ bool MainWindowShell::selectHierarchySceneItem(int sceneIndex)
         m_hierarchyTree->setCurrentItem(item);
         item->setSelected(true);
         updateInspectorForSelection(item);
+        updateWasdRoutingStatus();
         return true;
     }
     return false;
@@ -1601,6 +1881,7 @@ bool MainWindowShell::selectHierarchyCamera(const QString& cameraId, int cameraI
             m_hierarchyTree->setCurrentItem(item);
             item->setSelected(true);
             updateInspectorForSelection(item);
+            updateWasdRoutingStatus();
             return true;
         }
 
@@ -1609,6 +1890,7 @@ bool MainWindowShell::selectHierarchyCamera(const QString& cameraId, int cameraI
             m_hierarchyTree->setCurrentItem(item);
             item->setSelected(true);
             updateInspectorForSelection(item);
+            updateWasdRoutingStatus();
             return true;
         }
     }
@@ -1633,6 +1915,7 @@ QJsonObject MainWindowShell::inspectorDebugJson() const
     payload.insert(QStringLiteral("followCamInfoText"), m_objectFollowCamInfoValue ? m_objectFollowCamInfoValue->text() : QString());
     payload.insert(QStringLiteral("kinematicInfoText"), m_objectKinematicInfoValue ? m_objectKinematicInfoValue->text() : QString());
     payload.insert(QStringLiteral("animationRuntimeInfoText"), m_objectAnimationRuntimeInfoValue ? m_objectAnimationRuntimeInfoValue->text() : QString());
+    payload.insert(QStringLiteral("wasdRoutingStatusText"), m_wasdRoutingStatusValue ? m_wasdRoutingStatusValue->text() : QString());
 
     payload.insert(QStringLiteral("followDistanceVisible"), m_followDistanceSpin ? !m_followDistanceSpin->isHidden() : false);
     payload.insert(QStringLiteral("followYawVisible"), m_followYawSpin ? !m_followYawSpin->isHidden() : false);
@@ -1767,6 +2050,9 @@ QJsonObject MainWindowShell::uiDebugJson() const
     inspectorWidgets.insert(QStringLiteral("followSmoothSpin"), widgetMetrics(m_followSmoothSpin));
     inspectorWidgets.insert(QStringLiteral("wasdRoutingCombo"), widgetMetrics(m_wasdRoutingCombo));
     inspectorWidgets.insert(QStringLiteral("freeFlyCameraCheck"), widgetMetrics(m_freeFlyCameraCheck));
+    inspectorWidgets.insert(QStringLiteral("wasdRoutingStatusValue"), widgetMetrics(m_wasdRoutingStatusValue));
+    inspectorWidgets.insert(QStringLiteral("takeWasdControlButton"), widgetMetrics(m_takeWasdControlButton));
+    inspectorWidgets.insert(QStringLiteral("resetControlRoutingButton"), widgetMetrics(m_resetControlRoutingButton));
     inspectorWidgets.insert(QStringLiteral("nearClipSpin"), widgetMetrics(m_nearClipSpin));
     inspectorWidgets.insert(QStringLiteral("farClipSpin"), widgetMetrics(m_farClipSpin));
 

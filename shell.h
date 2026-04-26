@@ -62,6 +62,7 @@ private:
     void setupCameraSettingsPanel();
     void updateCameraSettingsPanel();
     void applyCameraSettings();
+    void updateWasdRoutingStatus();
     QJsonArray sceneItemsToJson(const QList<ViewportHostWidget::SceneItem>& items) const;
     QList<ViewportHostWidget::SceneItem> sceneItemsFromJson(const QJsonArray& items) const;
     QJsonArray cameraConfigsToJson(const QList<ViewportHostWidget::CameraConfig>& configs) const;
@@ -103,6 +104,9 @@ private:
     QCheckBox* m_animationPlayingCheck = nullptr;
     QCheckBox* m_animationLoopCheck = nullptr;
     QDoubleSpinBox* m_animationSpeedSpin = nullptr;
+    QCheckBox* m_animationCentroidNormalizeCheck = nullptr;
+    QDoubleSpinBox* m_animationTrimStartSpin = nullptr;
+    QDoubleSpinBox* m_animationTrimEndSpin = nullptr;
     
     // Animation-Physics Coupling
     QComboBox* m_animationPhysicsCouplingCombo = nullptr;
@@ -164,6 +168,9 @@ private:
     QLabel* m_validationRestartLabel = nullptr;
     QComboBox* m_wasdRoutingCombo = nullptr;
     QCheckBox* m_freeFlyCameraCheck = nullptr;
+    QLabel* m_wasdRoutingStatusValue = nullptr;
+    QPushButton* m_takeWasdControlButton = nullptr;
+    QPushButton* m_resetControlRoutingButton = nullptr;
     QCheckBox* m_invertHorizontalDragCheck = nullptr;
     QWidget* m_bgColorWidget = nullptr;
 

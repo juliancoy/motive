@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 SwapchainManager::SwapchainManager() = default;
 
@@ -596,8 +597,45 @@ void SwapchainManager::cleanupSwapchainResources()
     }
 
     VkDevice device = engine_->logicalDevice;
+    VkQueue graphicsQueue = engine_->getGraphicsQueue();
 
-    vkDeviceWaitIdle(device);
+    // Make teardown explicit: wait all known frame fences before touching swapchain-bound resources.
+    std::vector<VkFence> fencesToWait;
+    fencesToWait.reserve(inFlightFences_.size() + imagesInFlight_.size());
+    for (VkFence fence : inFlightFences_)
+    {
+        if (fence != VK_NULL_HANDLE)
+        {
+            fencesToWait.push_back(fence);
+        }
+    }
+    for (VkFence fence : imagesInFlight_)
+    {
+        if (fence != VK_NULL_HANDLE)
+        {
+            fencesToWait.push_back(fence);
+        }
+    }
+    if (!fencesToWait.empty())
+    {
+        vkWaitForFences(device,
+                        static_cast<uint32_t>(fencesToWait.size()),
+                        fencesToWait.data(),
+                        VK_TRUE,
+                        UINT64_MAX);
+    }
+
+    if (graphicsQueue != VK_NULL_HANDLE)
+    {
+        vkQueueWaitIdle(graphicsQueue);
+    }
+
+    const VkResult idleResult = vkDeviceWaitIdle(device);
+    if (idleResult != VK_SUCCESS)
+    {
+        std::cerr << "[SwapchainManager] vkDeviceWaitIdle failed during cleanup: "
+                  << static_cast<int>(idleResult) << std::endl;
+    }
 
     // Reset command pool before destroying framebuffers
     if (cmdPool_ != VK_NULL_HANDLE)

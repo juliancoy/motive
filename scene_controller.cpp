@@ -9,9 +9,29 @@
 
 #include <QDebug>
 #include <QFileInfo>
+#include <algorithm>
 #include <vulkan/vulkan.h>
 
 namespace motive::ui {
+
+namespace {
+
+void applyAnimationSettingsToModel(const ViewportHostWidget::SceneItem& entry, Model& model)
+{
+    model.setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
+                                    entry.animationPlaying,
+                                    entry.animationLoop,
+                                    entry.animationSpeed);
+    model.setAnimationProcessingOptions(entry.animationCentroidNormalization,
+                                        entry.animationTrimStartNormalized,
+                                        entry.animationTrimEndNormalized);
+    model.setAnimationPhysicsCoupling(entry.animationPhysicsCoupling.toStdString());
+    model.character.enableRestPointOnMoveRelease = entry.characterRestPointOnReleaseEnabled;
+    model.character.restPointNormalizedOnMoveRelease =
+        std::clamp(entry.characterRestPointOnReleaseNormalized, 0.0f, 1.0f);
+}
+
+}
 
 ViewportSceneController::ViewportSceneController(ViewportRuntime& runtime)
     : m_runtime(runtime)
@@ -43,6 +63,9 @@ void ViewportSceneController::loadAssetFromPath(const QString& path)
         QString(),
         true,
         true,
+        1.0f,
+        true,
+        0.0f,
         1.0f,
         true,
         QStringLiteral("AnimationOnly"),  // animationPhysicsCoupling
@@ -109,6 +132,9 @@ void ViewportSceneController::addAssetToScene(const QString& path)
             true,
             true,
             1.0f,
+            true,
+            0.0f,
+            1.0f,
             true
         };
         ViewportAssetLoader::loadModelIntoEngine(m_runtime, entry);
@@ -119,6 +145,10 @@ void ViewportSceneController::addAssetToScene(const QString& path)
             {
                 entry.activeAnimationClip = QString::fromStdString(clips.front().name);
             }
+        }
+        if (!m_runtime.engine()->models.empty() && m_runtime.engine()->models.back())
+        {
+            applyAnimationSettingsToModel(entry, *m_runtime.engine()->models.back());
         }
         m_sceneEntries.push_back(entry);
     }
@@ -245,6 +275,10 @@ void ViewportSceneController::setSceneItemMeshConsolidationEnabled(int index, bo
                     m_sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
                 }
             }
+            if (m_runtime.engine()->models[static_cast<size_t>(index)])
+            {
+                applyAnimationSettingsToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
+            }
         }
         catch (const std::exception& ex)
         {
@@ -287,6 +321,33 @@ void ViewportSceneController::updateSceneItemAnimationState(int index, const QSt
         m_runtime.engine()->models[static_cast<size_t>(index)])
     {
         m_runtime.engine()->models[static_cast<size_t>(index)]->setAnimationPlaybackState(activeClip.toStdString(), playing, loop, speed);
+    }
+}
+
+void ViewportSceneController::updateSceneItemAnimationProcessing(int index,
+                                                                 bool centroidNormalizationEnabled,
+                                                                 float trimStartNormalized,
+                                                                 float trimEndNormalized)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    const float trimStart = std::clamp(trimStartNormalized, 0.0f, 1.0f);
+    const float trimEnd = std::clamp(trimEndNormalized, 0.0f, 1.0f);
+    m_sceneEntries[index].animationCentroidNormalization = centroidNormalizationEnabled;
+    m_sceneEntries[index].animationTrimStartNormalized = std::min(trimStart, trimEnd);
+    m_sceneEntries[index].animationTrimEndNormalized = std::max(trimStart, trimEnd);
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        m_runtime.engine()->models[static_cast<size_t>(index)]->setAnimationProcessingOptions(
+            m_sceneEntries[index].animationCentroidNormalization,
+            m_sceneEntries[index].animationTrimStartNormalized,
+            m_sceneEntries[index].animationTrimEndNormalized);
     }
 }
 
@@ -353,6 +414,27 @@ void ViewportSceneController::updateSceneItemCharacterTurnResponsiveness(int ind
     }
 }
 
+void ViewportSceneController::updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    const float clamped = std::clamp(normalized, 0.0f, 1.0f);
+    m_sceneEntries[index].characterRestPointOnReleaseEnabled = enabled;
+    m_sceneEntries[index].characterRestPointOnReleaseNormalized = clamped;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        auto& character = m_runtime.engine()->models[static_cast<size_t>(index)]->character;
+        character.enableRestPointOnMoveRelease = enabled;
+        character.restPointNormalizedOnMoveRelease = clamped;
+    }
+}
+
 void ViewportSceneController::updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance)
 {
     if (index < 0 || index >= m_sceneEntries.size())
@@ -415,6 +497,10 @@ void ViewportSceneController::setSceneItemVisible(int index, bool visible)
                 {
                     m_sceneEntries[index].activeAnimationClip = QString::fromStdString(clips.front().name);
                 }
+            }
+            if (m_runtime.engine()->models[static_cast<size_t>(index)])
+            {
+                applyAnimationSettingsToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
             }
         }
         catch (const std::exception& ex)
@@ -572,13 +658,13 @@ void ViewportSceneController::restorePendingEntries()
                         entry.activeAnimationClip = QString::fromStdString(clips.front().name);
                     }
                 }
-                
-                // Apply physics coupling mode if not the default
-                if (!entry.animationPhysicsCoupling.isEmpty() && entry.animationPhysicsCoupling != QStringLiteral("AnimationOnly"))
+                if (m_runtime.engine() &&
+                    sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
+                    m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
                 {
-                    updateSceneItemAnimationPhysicsCoupling(sceneIndex, entry.animationPhysicsCoupling);
+                    applyAnimationSettingsToModel(entry, *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
                 }
-                
+
                 m_sceneEntries.push_back(entry);
             }
             catch (const std::exception& ex)

@@ -2952,6 +2952,18 @@ void ViewportHostWidget::updateSceneItemAnimationState(int index, const QString&
     notifySceneChanged();
 }
 
+void ViewportHostWidget::updateSceneItemAnimationProcessing(int index,
+                                                            bool centroidNormalizationEnabled,
+                                                            float trimStartNormalized,
+                                                            float trimEndNormalized)
+{
+    m_sceneController->updateSceneItemAnimationProcessing(index,
+                                                          centroidNormalizationEnabled,
+                                                          trimStartNormalized,
+                                                          trimEndNormalized);
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode)
 {
     if (!m_sceneController)
@@ -2983,6 +2995,12 @@ void ViewportHostWidget::updateSceneItemPhysicsGravity(int index, bool useGravit
 void ViewportHostWidget::updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness)
 {
     m_sceneController->updateSceneItemCharacterTurnResponsiveness(index, responsiveness);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized)
+{
+    m_sceneController->updateSceneItemCharacterRestPointOnRelease(index, enabled, normalized);
     notifySceneChanged();
 }
 

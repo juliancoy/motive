@@ -7,6 +7,144 @@
 #include <QVector3D>
 
 namespace motive::ui {
+namespace {
+
+struct AnimationMutation
+{
+    QString clip;
+    bool playing = true;
+    bool loop = true;
+    float speed = 1.0f;
+    bool centroidNormalization = true;
+    float trimStartNormalized = 0.0f;
+    float trimEndNormalized = 1.0f;
+    bool hasPlaybackMutation = false;
+    bool hasProcessingMutation = false;
+};
+
+AnimationMutation parseAnimationMutation(const QJsonObject& body,
+                                         const ViewportHostWidget::SceneItem& current)
+{
+    AnimationMutation mutation;
+    mutation.clip = current.activeAnimationClip;
+    mutation.playing = current.animationPlaying;
+    mutation.loop = current.animationLoop;
+    mutation.speed = current.animationSpeed;
+    mutation.centroidNormalization = current.animationCentroidNormalization;
+    mutation.trimStartNormalized = current.animationTrimStartNormalized;
+    mutation.trimEndNormalized = current.animationTrimEndNormalized;
+
+    if (body.contains(QStringLiteral("activeAnimationClip")))
+    {
+        mutation.clip = body.value(QStringLiteral("activeAnimationClip")).toString(mutation.clip);
+        mutation.hasPlaybackMutation = true;
+    }
+    else if (body.contains(QStringLiteral("clip")))
+    {
+        mutation.clip = body.value(QStringLiteral("clip")).toString(mutation.clip);
+        mutation.hasPlaybackMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationPlaying")))
+    {
+        mutation.playing = body.value(QStringLiteral("animationPlaying")).toBool(mutation.playing);
+        mutation.hasPlaybackMutation = true;
+    }
+    else if (body.contains(QStringLiteral("playing")))
+    {
+        mutation.playing = body.value(QStringLiteral("playing")).toBool(mutation.playing);
+        mutation.hasPlaybackMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationLoop")))
+    {
+        mutation.loop = body.value(QStringLiteral("animationLoop")).toBool(mutation.loop);
+        mutation.hasPlaybackMutation = true;
+    }
+    else if (body.contains(QStringLiteral("loop")))
+    {
+        mutation.loop = body.value(QStringLiteral("loop")).toBool(mutation.loop);
+        mutation.hasPlaybackMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationSpeed")))
+    {
+        mutation.speed = static_cast<float>(body.value(QStringLiteral("animationSpeed")).toDouble(mutation.speed));
+        mutation.hasPlaybackMutation = true;
+    }
+    else if (body.contains(QStringLiteral("speed")))
+    {
+        mutation.speed = static_cast<float>(body.value(QStringLiteral("speed")).toDouble(mutation.speed));
+        mutation.hasPlaybackMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationCentroidNormalization")))
+    {
+        mutation.centroidNormalization =
+            body.value(QStringLiteral("animationCentroidNormalization")).toBool(mutation.centroidNormalization);
+        mutation.hasProcessingMutation = true;
+    }
+    else if (body.contains(QStringLiteral("centroidNormalization")))
+    {
+        mutation.centroidNormalization =
+            body.value(QStringLiteral("centroidNormalization")).toBool(mutation.centroidNormalization);
+        mutation.hasProcessingMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationTrimStartNormalized")))
+    {
+        mutation.trimStartNormalized = static_cast<float>(
+            body.value(QStringLiteral("animationTrimStartNormalized")).toDouble(mutation.trimStartNormalized));
+        mutation.hasProcessingMutation = true;
+    }
+    else if (body.contains(QStringLiteral("trimStartNormalized")))
+    {
+        mutation.trimStartNormalized = static_cast<float>(
+            body.value(QStringLiteral("trimStartNormalized")).toDouble(mutation.trimStartNormalized));
+        mutation.hasProcessingMutation = true;
+    }
+
+    if (body.contains(QStringLiteral("animationTrimEndNormalized")))
+    {
+        mutation.trimEndNormalized = static_cast<float>(
+            body.value(QStringLiteral("animationTrimEndNormalized")).toDouble(mutation.trimEndNormalized));
+        mutation.hasProcessingMutation = true;
+    }
+    else if (body.contains(QStringLiteral("trimEndNormalized")))
+    {
+        mutation.trimEndNormalized = static_cast<float>(
+            body.value(QStringLiteral("trimEndNormalized")).toDouble(mutation.trimEndNormalized));
+        mutation.hasProcessingMutation = true;
+    }
+
+    return mutation;
+}
+
+void applyAnimationMutation(ViewportHostWidget* viewport,
+                            int sceneIndex,
+                            const AnimationMutation& mutation,
+                            bool forceApply)
+{
+    if (!viewport)
+    {
+        return;
+    }
+
+    if (forceApply || mutation.hasPlaybackMutation)
+    {
+        viewport->updateSceneItemAnimationState(
+            sceneIndex, mutation.clip, mutation.playing, mutation.loop, mutation.speed);
+    }
+    if (forceApply || mutation.hasProcessingMutation)
+    {
+        viewport->updateSceneItemAnimationProcessing(sceneIndex,
+                                                     mutation.centroidNormalization,
+                                                     mutation.trimStartNormalized,
+                                                     mutation.trimEndNormalized);
+    }
+}
+
+}  // namespace
 
 bool ControlCommandService::handlePrimitive(const QJsonObject& body, QJsonObject& result) const
 {
@@ -55,9 +193,127 @@ bool ControlCommandService::handleSceneItem(const QJsonObject& body, QJsonObject
         result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex out of range"));
         return false;
     }
+
+    if (body.contains(QStringLiteral("translation")) ||
+        body.contains(QStringLiteral("translationX")) ||
+        body.contains(QStringLiteral("translationY")) ||
+        body.contains(QStringLiteral("translationZ")) ||
+        body.contains(QStringLiteral("rotation")) ||
+        body.contains(QStringLiteral("rotationX")) ||
+        body.contains(QStringLiteral("rotationY")) ||
+        body.contains(QStringLiteral("rotationZ")) ||
+        body.contains(QStringLiteral("scale")) ||
+        body.contains(QStringLiteral("scaleX")) ||
+        body.contains(QStringLiteral("scaleY")) ||
+        body.contains(QStringLiteral("scaleZ")))
+    {
+        QVector3D translation = items[sceneIndex].translation;
+        QVector3D rotation = items[sceneIndex].rotation;
+        QVector3D scale = items[sceneIndex].scale;
+
+        if (body.contains(QStringLiteral("translation")))
+        {
+            const QJsonArray value = body.value(QStringLiteral("translation")).toArray();
+            if (value.size() == 3)
+            {
+                translation = QVector3D(
+                    static_cast<float>(value.at(0).toDouble(translation.x())),
+                    static_cast<float>(value.at(1).toDouble(translation.y())),
+                    static_cast<float>(value.at(2).toDouble(translation.z())));
+            }
+        }
+        if (body.contains(QStringLiteral("rotation")))
+        {
+            const QJsonArray value = body.value(QStringLiteral("rotation")).toArray();
+            if (value.size() == 3)
+            {
+                rotation = QVector3D(
+                    static_cast<float>(value.at(0).toDouble(rotation.x())),
+                    static_cast<float>(value.at(1).toDouble(rotation.y())),
+                    static_cast<float>(value.at(2).toDouble(rotation.z())));
+            }
+        }
+        if (body.contains(QStringLiteral("scale")))
+        {
+            const QJsonArray value = body.value(QStringLiteral("scale")).toArray();
+            if (value.size() == 3)
+            {
+                scale = QVector3D(
+                    static_cast<float>(value.at(0).toDouble(scale.x())),
+                    static_cast<float>(value.at(1).toDouble(scale.y())),
+                    static_cast<float>(value.at(2).toDouble(scale.z())));
+            }
+        }
+
+        if (body.contains(QStringLiteral("translationX")))
+        {
+            translation.setX(static_cast<float>(body.value(QStringLiteral("translationX")).toDouble(translation.x())));
+        }
+        if (body.contains(QStringLiteral("translationY")))
+        {
+            translation.setY(static_cast<float>(body.value(QStringLiteral("translationY")).toDouble(translation.y())));
+        }
+        if (body.contains(QStringLiteral("translationZ")))
+        {
+            translation.setZ(static_cast<float>(body.value(QStringLiteral("translationZ")).toDouble(translation.z())));
+        }
+        if (body.contains(QStringLiteral("rotationX")))
+        {
+            rotation.setX(static_cast<float>(body.value(QStringLiteral("rotationX")).toDouble(rotation.x())));
+        }
+        if (body.contains(QStringLiteral("rotationY")))
+        {
+            rotation.setY(static_cast<float>(body.value(QStringLiteral("rotationY")).toDouble(rotation.y())));
+        }
+        if (body.contains(QStringLiteral("rotationZ")))
+        {
+            rotation.setZ(static_cast<float>(body.value(QStringLiteral("rotationZ")).toDouble(rotation.z())));
+        }
+        if (body.contains(QStringLiteral("scaleX")))
+        {
+            scale.setX(static_cast<float>(body.value(QStringLiteral("scaleX")).toDouble(scale.x())));
+        }
+        if (body.contains(QStringLiteral("scaleY")))
+        {
+            scale.setY(static_cast<float>(body.value(QStringLiteral("scaleY")).toDouble(scale.y())));
+        }
+        if (body.contains(QStringLiteral("scaleZ")))
+        {
+            scale.setZ(static_cast<float>(body.value(QStringLiteral("scaleZ")).toDouble(scale.z())));
+        }
+
+        viewport->updateSceneItemTransform(sceneIndex, translation, rotation, scale);
+    }
+
     if (body.contains(QStringLiteral("visible")))
     {
         viewport->setSceneItemVisible(sceneIndex, body.value(QStringLiteral("visible")).toBool(true));
+    }
+    if (body.contains(QStringLiteral("controllable")))
+    {
+        viewport->enableCharacterControl(sceneIndex, body.value(QStringLiteral("controllable")).toBool(false));
+    }
+    if (body.contains(QStringLiteral("freeFly")))
+    {
+        viewport->setFreeFlyCameraEnabled(body.value(QStringLiteral("freeFly")).toBool(true));
+    }
+    const AnimationMutation animationMutation = parseAnimationMutation(body, items[sceneIndex]);
+    applyAnimationMutation(viewport, sceneIndex, animationMutation, false);
+    if (body.contains(QStringLiteral("characterRestPointOnReleaseEnabled")) ||
+        body.contains(QStringLiteral("characterRestPointOnReleaseNormalized")))
+    {
+        bool enabled = items[sceneIndex].characterRestPointOnReleaseEnabled;
+        float normalized = items[sceneIndex].characterRestPointOnReleaseNormalized;
+        if (body.contains(QStringLiteral("characterRestPointOnReleaseEnabled")))
+        {
+            enabled = body.value(QStringLiteral("characterRestPointOnReleaseEnabled")).toBool(enabled);
+        }
+        if (body.contains(QStringLiteral("characterRestPointOnReleaseNormalized")))
+        {
+            normalized = static_cast<float>(
+                body.value(QStringLiteral("characterRestPointOnReleaseNormalized")).toDouble(normalized));
+        }
+        viewport->updateSceneItemCharacterRestPointOnRelease(sceneIndex, enabled, normalized);
     }
     if (body.value(QStringLiteral("setFocusPointFromCamera")).toBool(false))
     {
@@ -111,10 +367,24 @@ bool ControlCommandService::handleSceneItem(const QJsonObject& body, QJsonObject
     if (sceneIndex >= 0 && sceneIndex < refreshedItems.size())
     {
         const auto& item = refreshedItems[sceneIndex];
+        result.insert(QStringLiteral("translation"), QJsonArray{item.translation.x(), item.translation.y(), item.translation.z()});
+        result.insert(QStringLiteral("rotation"), QJsonArray{item.rotation.x(), item.rotation.y(), item.rotation.z()});
+        result.insert(QStringLiteral("scale"), QJsonArray{item.scale.x(), item.scale.y(), item.scale.z()});
         result.insert(QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()});
         result.insert(QStringLiteral("focusDistance"), item.focusDistance);
         result.insert(QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()});
         result.insert(QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid);
+        result.insert(QStringLiteral("activeAnimationClip"), item.activeAnimationClip);
+        result.insert(QStringLiteral("animationPlaying"), item.animationPlaying);
+        result.insert(QStringLiteral("animationLoop"), item.animationLoop);
+        result.insert(QStringLiteral("animationSpeed"), item.animationSpeed);
+        result.insert(QStringLiteral("animationCentroidNormalization"), item.animationCentroidNormalization);
+        result.insert(QStringLiteral("animationTrimStartNormalized"), item.animationTrimStartNormalized);
+        result.insert(QStringLiteral("animationTrimEndNormalized"), item.animationTrimEndNormalized);
+        result.insert(QStringLiteral("characterRestPointOnReleaseEnabled"), item.characterRestPointOnReleaseEnabled);
+        result.insert(QStringLiteral("characterRestPointOnReleaseNormalized"), item.characterRestPointOnReleaseNormalized);
+        result.insert(QStringLiteral("isControllable"), viewport->isCharacterControlEnabled(sceneIndex));
+        result.insert(QStringLiteral("freeFly"), viewport->isFreeFlyCameraEnabled());
     }
     return true;
 }
@@ -136,29 +406,8 @@ bool ControlCommandService::handleAnimation(const QJsonObject& body, QJsonObject
         return false;
     }
 
-    QString clip = items[sceneIndex].activeAnimationClip;
-    bool playing = items[sceneIndex].animationPlaying;
-    bool loop = items[sceneIndex].animationLoop;
-    float speed = items[sceneIndex].animationSpeed;
-
-    if (body.contains(QStringLiteral("clip")))
-    {
-        clip = body.value(QStringLiteral("clip")).toString(clip);
-    }
-    if (body.contains(QStringLiteral("playing")))
-    {
-        playing = body.value(QStringLiteral("playing")).toBool(playing);
-    }
-    if (body.contains(QStringLiteral("loop")))
-    {
-        loop = body.value(QStringLiteral("loop")).toBool(loop);
-    }
-    if (body.contains(QStringLiteral("speed")))
-    {
-        speed = static_cast<float>(body.value(QStringLiteral("speed")).toDouble(speed));
-    }
-
-    viewport->updateSceneItemAnimationState(sceneIndex, clip, playing, loop, speed);
+    const AnimationMutation animationMutation = parseAnimationMutation(body, items[sceneIndex]);
+    applyAnimationMutation(viewport, sceneIndex, animationMutation, true);
 
     if (body.value(QStringLiteral("select")).toBool(false))
     {
@@ -171,10 +420,28 @@ bool ControlCommandService::handleAnimation(const QJsonObject& body, QJsonObject
         result.insert(QStringLiteral("scene"), profile.at(sceneIndex).toObject());
     }
     result.insert(QStringLiteral("sceneIndex"), sceneIndex);
-    result.insert(QStringLiteral("clip"), clip);
-    result.insert(QStringLiteral("playing"), playing);
-    result.insert(QStringLiteral("loop"), loop);
-    result.insert(QStringLiteral("speed"), speed);
+    const auto refreshedItems = viewport->sceneItems();
+    if (sceneIndex >= 0 && sceneIndex < refreshedItems.size())
+    {
+        const auto& item = refreshedItems[sceneIndex];
+        result.insert(QStringLiteral("clip"), item.activeAnimationClip);
+        result.insert(QStringLiteral("playing"), item.animationPlaying);
+        result.insert(QStringLiteral("loop"), item.animationLoop);
+        result.insert(QStringLiteral("speed"), item.animationSpeed);
+        result.insert(QStringLiteral("centroidNormalization"), item.animationCentroidNormalization);
+        result.insert(QStringLiteral("trimStartNormalized"), item.animationTrimStartNormalized);
+        result.insert(QStringLiteral("trimEndNormalized"), item.animationTrimEndNormalized);
+    }
+    else
+    {
+        result.insert(QStringLiteral("clip"), animationMutation.clip);
+        result.insert(QStringLiteral("playing"), animationMutation.playing);
+        result.insert(QStringLiteral("loop"), animationMutation.loop);
+        result.insert(QStringLiteral("speed"), animationMutation.speed);
+        result.insert(QStringLiteral("centroidNormalization"), animationMutation.centroidNormalization);
+        result.insert(QStringLiteral("trimStartNormalized"), animationMutation.trimStartNormalized);
+        result.insert(QStringLiteral("trimEndNormalized"), animationMutation.trimEndNormalized);
+    }
     return true;
 }
 

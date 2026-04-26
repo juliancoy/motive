@@ -59,6 +59,9 @@ All app executables are linked through `engine` in `CMakeLists.txt`.
   - `GET /profile/motion_state`
   - `GET /profile/input_state`
   - `GET /profile/hierarchy_state`
+- Hierarchy route:
+  - `GET /hierarchy` returns hierarchy tree plus settings snapshot (`sceneItems`, camera list/tracking, motion overlay, performance).
+  - `POST /hierarchy` applies hierarchy-linked updates via command forwarding (`scene_item`, `camera`, `animation`, `character`, `physics_coupling`, `physics_gravity`, `selection`, `rebuild`, `reset`).
 - Motion debug endpoints:
   - `GET /debug/motion/frame`
   - `GET /debug/motion/summary`

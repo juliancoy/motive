@@ -85,6 +85,9 @@ public:
         bool animationPlaying = true;
         bool animationLoop = true;
         float animationSpeed = 1.0f;
+        bool animationCentroidNormalization = true;
+        float animationTrimStartNormalized = 0.0f;
+        float animationTrimEndNormalized = 1.0f;
         bool visible = true;
         QString animationPhysicsCoupling = QStringLiteral("AnimationOnly");
         bool useGravity = true;
@@ -95,6 +98,8 @@ public:
         float focusDistance = 0.0f; // <= 0 uses automatic framing distance
         QVector3D focusCameraOffset = QVector3D(0.0f, 0.0f, 0.0f);
         bool focusCameraOffsetValid = false;
+        bool characterRestPointOnReleaseEnabled = true;
+        float characterRestPointOnReleaseNormalized = 1.0f;
     };
 
     struct SceneLight
@@ -185,9 +190,14 @@ public:
     void setSceneItemMeshConsolidationEnabled(int index, bool enabled);
     void updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color);
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
+    void updateSceneItemAnimationProcessing(int index,
+                                            bool centroidNormalizationEnabled,
+                                            float trimStartNormalized,
+                                            float trimEndNormalized);
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
+    void updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized);
     void updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance);
     void captureSceneItemFocusFromCurrentCamera(int index);
     void renameSceneItem(int index, const QString& name);

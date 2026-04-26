@@ -30,6 +30,7 @@ QString reasonPhrase(int statusCode)
     switch (statusCode)
     {
     case 200: return QStringLiteral("OK");
+    case 400: return QStringLiteral("Bad Request");
     case 404: return QStringLiteral("Not Found");
     case 405: return QStringLiteral("Method Not Allowed");
     case 500: return QStringLiteral("Internal Server Error");
@@ -367,6 +368,156 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         const QByteArray bodyBytes = headerEnd >= 0 ? request.mid(headerEnd + 4) : QByteArray{};
         const QJsonDocument bodyDoc = QJsonDocument::fromJson(bodyBytes);
         const QJsonObject body = bodyDoc.isObject() ? bodyDoc.object() : QJsonObject{};
+        if (path == "/hierarchy")
+        {
+            QString command = body.value(QStringLiteral("command")).toString().trimmed();
+            if (command.isEmpty())
+            {
+                command = body.value(QStringLiteral("target")).toString().trimmed();
+            }
+            command = command.toLower();
+
+            if (command == QStringLiteral("scene-item"))
+            {
+                command = QStringLiteral("scene_item");
+            }
+            else if (command == QStringLiteral("physics-coupling"))
+            {
+                command = QStringLiteral("physics_coupling");
+            }
+            else if (command == QStringLiteral("physics-gravity"))
+            {
+                command = QStringLiteral("physics_gravity");
+            }
+            else if (command == QStringLiteral("debug-motion"))
+            {
+                command = QStringLiteral("debug_motion");
+            }
+            else if (command == QStringLiteral("debug-motion-overlay"))
+            {
+                command = QStringLiteral("motion_debug_overlay");
+            }
+
+            QJsonObject params = body;
+            const QJsonValue paramsValue = body.value(QStringLiteral("params"));
+            if (paramsValue.isObject())
+            {
+                params = paramsValue.toObject();
+            }
+
+            if (command.isEmpty())
+            {
+                if (params.contains(QStringLiteral("clip")) ||
+                    params.contains(QStringLiteral("playing")) ||
+                    params.contains(QStringLiteral("loop")) ||
+                    params.contains(QStringLiteral("speed")))
+                {
+                    command = QStringLiteral("animation");
+                }
+                else if (params.contains(QStringLiteral("useGravity")) ||
+                         params.contains(QStringLiteral("gravityX")) ||
+                         params.contains(QStringLiteral("gravityY")) ||
+                         params.contains(QStringLiteral("gravityZ")))
+                {
+                    command = QStringLiteral("physics_gravity");
+                }
+                else if (params.contains(QStringLiteral("controllable")) ||
+                         params.contains(QStringLiteral("pattern")) ||
+                         params.contains(QStringLiteral("keyW")) ||
+                         params.contains(QStringLiteral("keyA")) ||
+                         params.contains(QStringLiteral("keyS")) ||
+                         params.contains(QStringLiteral("keyD")) ||
+                         params.contains(QStringLiteral("jump")) ||
+                         params.contains(QStringLiteral("move")))
+                {
+                    command = QStringLiteral("character");
+                }
+                else if (params.contains(QStringLiteral("setActive")) ||
+                         params.contains(QStringLiteral("setActiveId")) ||
+                         params.contains(QStringLiteral("createFollow")) ||
+                         params.contains(QStringLiteral("createFollowName")) ||
+                         params.contains(QStringLiteral("updateCamera")) ||
+                         params.contains(QStringLiteral("updateCameraId")) ||
+                         params.contains(QStringLiteral("setMode")) ||
+                         params.contains(QStringLiteral("setModeId")) ||
+                         params.contains(QStringLiteral("navigate")) ||
+                         params.contains(QStringLiteral("navigateId")) ||
+                         params.contains(QStringLiteral("freeFly")))
+                {
+                    command = QStringLiteral("camera");
+                }
+                else if (params.contains(QStringLiteral("sceneIndex")) &&
+                         (params.contains(QStringLiteral("visible")) ||
+                          params.contains(QStringLiteral("focus")) ||
+                          params.contains(QStringLiteral("focusDistance")) ||
+                          params.contains(QStringLiteral("focusPointOffset")) ||
+                          params.contains(QStringLiteral("focusOffsetX")) ||
+                          params.contains(QStringLiteral("focusOffsetY")) ||
+                          params.contains(QStringLiteral("focusOffsetZ")) ||
+                          params.contains(QStringLiteral("setFocusPointFromCamera")) ||
+                          params.contains(QStringLiteral("translation")) ||
+                          params.contains(QStringLiteral("translationX")) ||
+                          params.contains(QStringLiteral("translationY")) ||
+                          params.contains(QStringLiteral("translationZ")) ||
+                          params.contains(QStringLiteral("rotation")) ||
+                          params.contains(QStringLiteral("rotationX")) ||
+                          params.contains(QStringLiteral("rotationY")) ||
+                          params.contains(QStringLiteral("rotationZ")) ||
+                          params.contains(QStringLiteral("scale")) ||
+                          params.contains(QStringLiteral("scaleX")) ||
+                          params.contains(QStringLiteral("scaleY")) ||
+                          params.contains(QStringLiteral("scaleZ"))))
+                {
+                    command = QStringLiteral("scene_item");
+                }
+                else if (params.contains(QStringLiteral("sceneIndex")) &&
+                         params.contains(QStringLiteral("mode")))
+                {
+                    command = QStringLiteral("physics_coupling");
+                }
+                else if (params.contains(QStringLiteral("sceneIndex")) ||
+                         params.contains(QStringLiteral("cameraId")) ||
+                         params.contains(QStringLiteral("cameraIndex")))
+                {
+                    command = QStringLiteral("selection");
+                }
+            }
+
+            static const QStringList kAllowedCommands{
+                QStringLiteral("selection"),
+                QStringLiteral("scene_item"),
+                QStringLiteral("camera"),
+                QStringLiteral("animation"),
+                QStringLiteral("character"),
+                QStringLiteral("physics_coupling"),
+                QStringLiteral("physics_gravity"),
+                QStringLiteral("debug_motion"),
+                QStringLiteral("motion_debug_overlay"),
+                QStringLiteral("rebuild"),
+                QStringLiteral("reset")
+            };
+
+            if (!kAllowedCommands.contains(command))
+            {
+                return jsonResponse(400, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("hierarchy update requires a valid command/target")}
+                }));
+            }
+
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, command, params, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("hierarchy update failed")},
+                    {QStringLiteral("command"), command}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            result.insert(QStringLiteral("command"), command);
+            return jsonResponse(200, compactJson(result));
+        }
         if (path == "/controls/primitive")
         {
             QJsonObject result;
@@ -722,10 +873,45 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
     if (path == "/hierarchy")
     {
         const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonArray sceneItemsArray;
+        for (const auto& sceneItem : data.sceneItems)
+        {
+            sceneItemsArray.append(sceneItem);
+        }
+
+        QJsonObject cameraResult;
+        const bool haveCameraSettings = invokeCommandHandler(
+            m_commandHandler,
+            QStringLiteral("camera"),
+            QJsonObject{{QStringLiteral("list"), true}},
+            cameraResult);
+
+        QJsonObject settings;
+        settings.insert(QStringLiteral("sceneItems"), sceneItemsArray);
+        settings.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
+        settings.insert(QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay);
+        settings.insert(QStringLiteral("performance"), QJsonObject{
+            {QStringLiteral("fps"), static_cast<double>(data.currentFps)},
+            {QStringLiteral("renderIntervalMs"), data.renderIntervalMs},
+            {QStringLiteral("renderTimerActive"), data.renderTimerActive},
+            {QStringLiteral("viewportWidth"), data.viewportWidth},
+            {QStringLiteral("viewportHeight"), data.viewportHeight}
+        });
+        if (haveCameraSettings)
+        {
+            settings.insert(QStringLiteral("cameras"), cameraResult.value(QStringLiteral("cameras")));
+            settings.insert(QStringLiteral("activeCamera"), cameraResult.value(QStringLiteral("activeCamera")));
+            settings.insert(QStringLiteral("activeCameraId"), cameraResult.value(QStringLiteral("activeCameraId")));
+        }
+
         QJsonObject payload;
         payload.insert(QStringLiteral("ok"), true);
         payload.insert(QStringLiteral("rootPath"), data.rootPath);
         payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
+        payload.insert(QStringLiteral("sceneItems"), sceneItemsArray);
+        payload.insert(QStringLiteral("settings"), settings);
+        payload.insert(QStringLiteral("hierarchyPostUsage"),
+                       QStringLiteral("POST /hierarchy with {command|target, params?} to modify hierarchy-linked settings"));
         return jsonResponse(200, compactJson(payload));
     }
 

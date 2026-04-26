@@ -36,6 +36,8 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
     if (previousItem)
     {
         QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        QTreeWidgetItem* cameraIdMatch = nullptr;
+        QTreeWidgetItem* sceneItemMatch = nullptr;
         QTreeWidgetItem* fallbackRowMatch = nullptr;
         for (QTreeWidgetItem* item : matches)
         {
@@ -47,6 +49,20 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
             {
                 fallbackRowMatch = item;
             }
+            if (!sceneItemMatch &&
+                previousType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem) &&
+                item->data(0, Qt::UserRole + 3).toInt() == previousType)
+            {
+                sceneItemMatch = item;
+            }
+            if (!cameraIdMatch &&
+                previousType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera) &&
+                !previousCameraId.isEmpty() &&
+                item->data(0, Qt::UserRole + 3).toInt() == previousType &&
+                item->data(0, Qt::UserRole + 6).toString() == previousCameraId)
+            {
+                cameraIdMatch = item;
+            }
             if (item->data(0, Qt::UserRole + 1).toInt() == previousMeshIndex &&
                 item->data(0, Qt::UserRole + 2).toInt() == previousPrimitiveIndex &&
                 item->data(0, Qt::UserRole + 3).toInt() == previousType &&
@@ -57,6 +73,16 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
                 m_hierarchyTree->setCurrentItem(item);
                 return;
             }
+        }
+        if (cameraIdMatch)
+        {
+            m_hierarchyTree->setCurrentItem(cameraIdMatch);
+            return;
+        }
+        if (sceneItemMatch)
+        {
+            m_hierarchyTree->setCurrentItem(sceneItemMatch);
+            return;
         }
         if (fallbackRowMatch)
         {

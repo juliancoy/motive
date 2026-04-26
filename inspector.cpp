@@ -14,6 +14,8 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
+#include <algorithm>
+
 namespace motive::ui {
 
 void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
@@ -186,7 +188,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                               bool playing = true,
                                               bool loop = true,
                                               float speed = 1.0f,
-                                              const QString& physicsCoupling = QStringLiteral("AnimationOnly"))
+                                              const QString& physicsCoupling = QStringLiteral("AnimationOnly"),
+                                              bool centroidNormalization = true,
+                                              float trimStartNormalized = 0.0f,
+                                              float trimEndNormalized = 1.0f)
     {
         if (m_animationSection)
         {
@@ -198,7 +203,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             m_animationControlsWidget->setVisible(true);
             m_animationControlsWidget->setEnabled(visible);
         }
-        if (!visible || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck || !m_animationSpeedSpin)
+        if (!visible || !m_animationClipCombo || !m_animationPlayingCheck || !m_animationLoopCheck ||
+            !m_animationSpeedSpin || !m_animationCentroidNormalizeCheck || !m_animationTrimStartSpin ||
+            !m_animationTrimEndSpin)
         {
             return;
         }
@@ -221,6 +228,17 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         m_animationPlayingCheck->setChecked(playing);
         m_animationLoopCheck->setChecked(loop);
         m_animationSpeedSpin->setValue(speed);
+        m_animationCentroidNormalizeCheck->blockSignals(true);
+        m_animationCentroidNormalizeCheck->setChecked(centroidNormalization);
+        m_animationCentroidNormalizeCheck->blockSignals(false);
+        const float trimStart = std::clamp(trimStartNormalized, 0.0f, 1.0f);
+        const float trimEnd = std::clamp(trimEndNormalized, 0.0f, 1.0f);
+        m_animationTrimStartSpin->blockSignals(true);
+        m_animationTrimEndSpin->blockSignals(true);
+        m_animationTrimStartSpin->setValue(std::min(trimStart, trimEnd));
+        m_animationTrimEndSpin->setValue(std::max(trimStart, trimEnd));
+        m_animationTrimStartSpin->blockSignals(false);
+        m_animationTrimEndSpin->blockSignals(false);
         
         // Set physics coupling
         if (m_animationPhysicsCouplingCombo)
@@ -848,7 +866,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                           item.animationPlaying,
                           item.animationLoop,
                           item.animationSpeed,
-                          item.animationPhysicsCoupling);
+                          item.animationPhysicsCoupling,
+                          item.animationCentroidNormalization,
+                          item.animationTrimStartNormalized,
+                          item.animationTrimEndNormalized);
     setGravityInspector(true, item.useGravity, item.customGravity);
     setCharacterMotionInspector(true, item.characterTurnResponsiveness);
     if (m_viewportHost)
@@ -871,26 +892,26 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         {
             m_followTargetCombo->setEnabled(true);
         }
-        setFollowParamsVisible(hasObjectFollowCamera);
+        setFollowParamsVisible(true);
         if (m_freeFlyCameraCheck)
         {
-            m_freeFlyCameraCheck->setEnabled(hasObjectFollowCamera);
+            m_freeFlyCameraCheck->setEnabled(true);
         }
         if (m_wasdRoutingCombo)
         {
-            m_wasdRoutingCombo->setEnabled(hasObjectFollowCamera);
+            m_wasdRoutingCombo->setEnabled(true);
         }
         if (m_invertHorizontalDragCheck)
         {
-            m_invertHorizontalDragCheck->setEnabled(hasObjectFollowCamera);
+            m_invertHorizontalDragCheck->setEnabled(true);
         }
         if (m_nearClipSpin)
         {
-            m_nearClipSpin->setEnabled(hasObjectFollowCamera);
+            m_nearClipSpin->setEnabled(true);
         }
         if (m_farClipSpin)
         {
-            m_farClipSpin->setEnabled(hasObjectFollowCamera);
+            m_farClipSpin->setEnabled(true);
         }
         if (hasObjectFollowCamera)
         {
@@ -952,6 +973,12 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             const double currentAnimWeight = runtime.value(QStringLiteral("currentAnimWeight")).toDouble(0.0);
             const double currentAnimSpeed = runtime.value(QStringLiteral("currentAnimSpeed")).toDouble(0.0);
             const QString runtimeActiveClip = runtime.value(QStringLiteral("runtimeActiveClip")).toString();
+            const bool runtimeCentroidNormalization = runtime.value(QStringLiteral("runtimeAnimationCentroidNormalization"))
+                                                          .toBool(item.animationCentroidNormalization);
+            const double runtimeTrimStart = runtime.value(QStringLiteral("runtimeAnimationTrimStartNormalized"))
+                                                .toDouble(item.animationTrimStartNormalized);
+            const double runtimeTrimEnd = runtime.value(QStringLiteral("runtimeAnimationTrimEndNormalized"))
+                                              .toDouble(item.animationTrimEndNormalized);
             runtimeClip = runtimeActiveClip.isEmpty() ? runtimeClip : runtimeActiveClip;
             runtimePlaying = runtime.value(QStringLiteral("runtimeAnimationPlaying")).toBool(runtimePlaying);
             runtimeLoop = runtime.value(QStringLiteral("runtimeAnimationLoop")).toBool(runtimeLoop);
@@ -977,14 +1004,18 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
 
             animationRuntimeInfo = QStringLiteral(
                                        "Configured Clip: %1 | Playing: %2 | Loop: %3 | Speed: %4\n"
-                                       "State: %5  RuntimeSpeed: %6  BlendWeight: %7")
+                                       "State: %5  RuntimeSpeed: %6  BlendWeight: %7\n"
+                                       "CentroidNormalization: %8  Trim: [%9, %10]")
                                        .arg(runtimeClip.isEmpty() ? QStringLiteral("-") : runtimeClip)
                                        .arg(runtimePlaying ? QStringLiteral("true") : QStringLiteral("false"))
                                        .arg(runtimeLoop ? QStringLiteral("true") : QStringLiteral("false"))
                                        .arg(QString::number(runtimeSpeed, 'f', 2))
                                        .arg(currentAnimState)
                                        .arg(QString::number(currentAnimSpeed, 'f', 2))
-                                       .arg(QString::number(currentAnimWeight, 'f', 2));
+                                       .arg(QString::number(currentAnimWeight, 'f', 2))
+                                       .arg(runtimeCentroidNormalization ? QStringLiteral("true") : QStringLiteral("false"))
+                                       .arg(QString::number(runtimeTrimStart, 'f', 2))
+                                       .arg(QString::number(runtimeTrimEnd, 'f', 2));
         }
 
         setObjectRuntimeInspector(true, followCamInfo, kinematicInfo, animationRuntimeInfo);

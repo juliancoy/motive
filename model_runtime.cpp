@@ -206,6 +206,19 @@ void Model::setAnimationPlaybackState(const std::string& clipName, bool playing,
     }
 }
 
+void Model::setAnimationProcessingOptions(bool centroidNormalizationEnabled,
+                                          float trimStartNormalized,
+                                          float trimEndNormalized)
+{
+    if (fbxAnimationRuntime)
+    {
+        motive::animation::setFbxPlaybackOptions(*fbxAnimationRuntime,
+                                                 centroidNormalizationEnabled,
+                                                 trimStartNormalized,
+                                                 trimEndNormalized);
+    }
+}
+
 void Model::setCharacterAnimationNames(
     const std::string& idle,
     const std::string& comeToRest,
@@ -596,6 +609,17 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     
     const bool hasMoveKeyIntent =
         (character.keyW || character.keyA || character.keyS || character.keyD);
+    const bool justReleasedMoveKeyIntent = !hasMoveKeyIntent && character.hadMoveKeyIntentLastFrame;
+    character.hadMoveKeyIntentLastFrame = hasMoveKeyIntent;
+
+    if (justReleasedMoveKeyIntent && character.enableRestPointOnMoveRelease)
+    {
+        character.pendingRestPointLatch = true;
+    }
+    if (hasMoveKeyIntent)
+    {
+        character.pendingRestPointLatch = false;
+    }
     if (hasMoveKeyIntent)
     {
         character.moveIntentGraceTimer = character.moveIntentGraceDuration;
@@ -669,6 +693,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     if (character.jumpPhase != CharacterController::JumpPhase::None)
     {
         character.comeToRestTimer = 0.0f;
+        character.pendingRestPointLatch = false;
         targetState = CharacterController::AnimState::Jump;
     }
     else if (!hasMoveKeyIntent)
@@ -746,6 +771,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     {
         std::string targetClip;
         bool targetLoop = true;
+        bool supportsReleaseRestLatch = false;
         
         // Helper to find clip by substring
         auto findClip = [&](const std::vector<std::string>& searchTerms) -> std::string {
@@ -795,6 +821,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                         targetClip.find("Idle") != std::string::npos ||
                         targetClip.find("IDLE") != std::string::npos;
                     targetLoop = isIdleFallback;
+                    supportsReleaseRestLatch = !isIdleFallback;
                 }
                 break;
                 
@@ -982,6 +1009,19 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         character.currentAnimSpeed = targetSpeed;
         character.isUsingMirroredAnim = useMirroring;
         character.isUsingProceduralAnim = useProcedural;
+
+        if (character.pendingRestPointLatch &&
+            (targetState != CharacterController::AnimState::ComeToRest || !supportsReleaseRestLatch))
+        {
+            character.pendingRestPointLatch = false;
+        }
+
+        if (character.pendingRestPointLatch &&
+            targetState == CharacterController::AnimState::ComeToRest &&
+            supportsReleaseRestLatch)
+        {
+            targetLoop = false;
+        }
         
         // Switch animation if needed (only on state change)
         if (!targetClip.empty() && fbxAnimationRuntime)
@@ -1023,6 +1063,41 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         {
             // No valid idle clip: hold current pose instead of playing locomotion clips.
             fbxAnimationRuntime->playing = false;
+        }
+
+        if (character.pendingRestPointLatch &&
+            supportsReleaseRestLatch &&
+            targetState == CharacterController::AnimState::ComeToRest &&
+            fbxAnimationRuntime)
+        {
+            const int activeClipIndex = fbxAnimationRuntime->activeClipIndex;
+            if (activeClipIndex >= 0 &&
+                activeClipIndex < static_cast<int>(fbxAnimationRuntime->clips.size()))
+            {
+                const auto& activeClip = fbxAnimationRuntime->clips[activeClipIndex];
+                if (activeClip.name == targetClip)
+                {
+                    const double clipDuration = std::max(activeClip.timeEnd - activeClip.timeBegin, 0.0);
+                    if (clipDuration > 0.0)
+                    {
+                        const double restNormalized = std::clamp(
+                            static_cast<double>(character.restPointNormalizedOnMoveRelease), 0.0, 1.0);
+                        const double restTime = activeClip.timeBegin + (restNormalized * clipDuration);
+                        if (fbxAnimationRuntime->timeSeconds >= restTime - 1e-6)
+                        {
+                            fbxAnimationRuntime->timeSeconds = restTime;
+                            fbxAnimationRuntime->playing = false;
+                            fbxAnimationRuntime->loop = false;
+                            character.pendingRestPointLatch = false;
+                            character.comeToRestTimer = 0.0f;
+                        }
+                    }
+                    else
+                    {
+                        character.pendingRestPointLatch = false;
+                    }
+                }
+            }
         }
     }
 }

@@ -44,6 +44,9 @@ struct FbxRuntime
     bool playing = true;
     bool loop = true;
     float speed = 1.0f;
+    bool centroidNormalizationEnabled = true;
+    float trimStartNormalized = 0.0f;
+    float trimEndNormalized = 1.0f;
 };
 
 std::unique_ptr<FbxRuntime> createFbxRuntime(ufbx_scene* scene);
@@ -55,6 +58,10 @@ void addFbxMeshBinding(FbxRuntime& runtime,
                        std::vector<glm::uvec4> jointIndices,
                        std::vector<glm::vec4> jointWeights);
 void setFbxPlaybackState(FbxRuntime& runtime, const std::string& clipName, bool playing, bool loop, float speed);
+void setFbxPlaybackOptions(FbxRuntime& runtime,
+                           bool centroidNormalizationEnabled,
+                           float trimStartNormalized,
+                           float trimEndNormalized);
 bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds);
 
 }  // namespace motive::animation

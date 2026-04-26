@@ -628,6 +628,7 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
 
     // Get current velocity
     glm::vec3 velocity = physicsBody->getLinearVelocity();
+    character.velocity = velocity;
     
     // Check if grounded using raycast
     glm::vec3 position = getCharacterPosition();
@@ -727,5 +728,90 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
         worldTransform[1] = glm::vec4(up * scaleY, 0.0f);
         worldTransform[2] = glm::vec4(forward * scaleZ, 0.0f);
         syncWorldTransformToPrimitives();
+    }
+
+    // Physics-driven controllable characters still need explicit animation-state updates.
+    // The non-physics character path already does this, but this physics overload previously
+    // skipped it, which caused "rotate only" behavior with no walk playback.
+    if (animated && !animationClips.empty())
+    {
+        const bool movingIntent = character.keyW || character.keyA || character.keyS || character.keyD;
+        const float planarSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
+
+        auto findClip = [&](const std::vector<std::string>& searchTerms) -> std::string {
+            for (const auto& term : searchTerms)
+            {
+                if (term.empty()) continue;
+                for (const auto& clip : animationClips)
+                {
+                    if (clip.name.find(term) != std::string::npos)
+                    {
+                        return clip.name;
+                    }
+                }
+            }
+            return std::string();
+        };
+
+        CharacterController::AnimState targetState = CharacterController::AnimState::Idle;
+        if (movingIntent)
+        {
+            if (character.keyW && !character.keyS) targetState = CharacterController::AnimState::WalkForward;
+            else if (character.keyS && !character.keyW) targetState = CharacterController::AnimState::WalkBackward;
+            else if (character.keyA && !character.keyD) targetState = CharacterController::AnimState::WalkLeft;
+            else if (character.keyD && !character.keyA) targetState = CharacterController::AnimState::WalkRight;
+            else targetState = CharacterController::AnimState::WalkForward;
+
+            if (planarSpeed >= character.runSpeedThreshold)
+            {
+                targetState = CharacterController::AnimState::Run;
+            }
+        }
+        character.currentAnimState = targetState;
+
+        std::string targetClip;
+        float targetSpeed = 1.0f;
+        switch (targetState)
+        {
+            case CharacterController::AnimState::WalkForward:
+                targetClip = findClip({character.animWalkForward, "walk_fwd", "walk_forward", "walk", "Walking"});
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
+                break;
+            case CharacterController::AnimState::WalkBackward:
+                targetClip = findClip({character.animWalkBackward, "walk_bwd", "walk_back", "backward", "walk"});
+                targetSpeed = character.enableTimeWarp ? character.backwardAnimSpeed : 1.0f;
+                break;
+            case CharacterController::AnimState::WalkLeft:
+                targetClip = findClip({character.animWalkLeft, "strafe_left", "walk_left", "left", "walk"});
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
+                break;
+            case CharacterController::AnimState::WalkRight:
+                targetClip = findClip({character.animWalkRight, "strafe_right", "walk_right", "right", "walk"});
+                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
+                break;
+            case CharacterController::AnimState::Run:
+                targetClip = findClip({character.animRun, "run_forward", "run_fwd", "run", "Running"});
+                targetSpeed = character.enableTimeWarp ? character.runAnimSpeed : 1.0f;
+                break;
+            default:
+                targetClip = findClip({character.animIdle, "idle_loop", "idle_standing", "idle", "Idle"});
+                targetSpeed = character.enableTimeWarp ? character.idleAnimSpeed : 1.0f;
+                break;
+        }
+
+        if (targetClip.empty() && targetState != CharacterController::AnimState::Idle)
+        {
+            targetClip = animationClips.front().name;
+        }
+
+        character.currentAnimSpeed = targetSpeed;
+        if (!targetClip.empty())
+        {
+            setAnimationPlaybackState(targetClip, true, true, targetSpeed);
+        }
+        else if (fbxAnimationRuntime)
+        {
+            fbxAnimationRuntime->playing = false;
+        }
     }
 }
