@@ -136,6 +136,12 @@ def assert_single_controllable(scene_items: list, expected_true_index: int) -> N
     )
 
 
+def assert_no_controllable(scene_items: list) -> None:
+    controllable = [bool(item.get("isControllable", False)) for item in scene_items]
+    true_count = sum(1 for v in controllable if v)
+    assert true_count == 0, f"Expected no controllable scene items after selection-only step, got {controllable}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="REST integration test for animation/physics controls")
     parser.add_argument("--editor", default="./build/motive_editor", help="Path to motive_editor binary")
@@ -173,7 +179,15 @@ def main() -> int:
     try:
         wait_for_health(base_url, args.startup_timeout)
 
-        scene = api_get(base_url, "/profile/scene")
+        unknown_control_path = api_post(base_url, "/controls/not_a_command", {})
+        assert unknown_control_path.get("ok") is False, (
+            f"Unknown control path should fail, got: {unknown_control_path}"
+        )
+        assert "not found" in str(unknown_control_path.get("error", "")).lower(), (
+            f"Unexpected unknown control path response: {unknown_control_path}"
+        )
+
+        scene = api_get(base_url, "/profile/scene_state")
         assert scene.get("sceneItemCount", 0) >= 2, f"Expected at least two scene items, got: {scene.get('sceneItemCount')}"
         scene_items = scene.get("sceneItems", [])
         assert len(scene_items) >= 2, "Expected at least two scene items in sceneItems"
@@ -188,8 +202,8 @@ def main() -> int:
         selection_resp = api_post(base_url, "/controls/selection", {"sceneIndex": scene_index})
         assert selection_resp.get("selected") is True, f"Failed selecting scene item: {selection_resp}"
         assert selection_resp.get("selectedSceneIndex") == scene_index, f"Unexpected inspector selection: {selection_resp}"
-        scene_after_select = api_get(base_url, "/profile/scene")
-        assert_single_controllable(scene_after_select.get("sceneItems", []), scene_index)
+        scene_after_select = api_get(base_url, "/profile/scene_state")
+        assert_no_controllable(scene_after_select.get("sceneItems", []))
 
         # Animation baseline checks from scene profile
         assert "animationPlaying" in scene_items[scene_index], "animationPlaying missing in scene profile"
@@ -202,7 +216,7 @@ def main() -> int:
         character_resp = api_post(base_url, "/controls/character", {"sceneIndex": scene_index, "controllable": True})
         assert character_resp.get("sceneIndex") == scene_index, f"Unexpected character response: {character_resp}"
         assert character_resp.get("isControllable") is True, f"Character not controllable: {character_resp}"
-        scene_after_first_owner = api_get(base_url, "/profile/scene")
+        scene_after_first_owner = api_get(base_url, "/profile/scene_state")
         assert_single_controllable(scene_after_first_owner.get("sceneItems", []), scene_index)
 
         character_resp_other = api_post(
@@ -216,7 +230,7 @@ def main() -> int:
         assert character_resp_other.get("isControllable") is True, (
             f"Second character not controllable: {character_resp_other}"
         )
-        scene_after_second_owner = api_get(base_url, "/profile/scene")
+        scene_after_second_owner = api_get(base_url, "/profile/scene_state")
         assert_single_controllable(scene_after_second_owner.get("sceneItems", []), other_scene_index)
 
         camera_follow_resp = api_post(base_url, "/controls/camera", {"freeFly": False})
@@ -256,7 +270,7 @@ def main() -> int:
                     s["sceneItems"][scene_index].get("animationPlaying") is False
                     and s["sceneItems"][scene_index].get("animationLoop") is False
                     and abs(float(s["sceneItems"][scene_index].get("animationSpeed", 0.0)) - 1.7) < 1e-4
-                ))(api_get(base_url, "/profile/scene"))
+                ))(api_get(base_url, "/profile/scene_state"))
             ),
             timeout_s=3.0,
         )

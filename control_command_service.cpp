@@ -1,0 +1,203 @@
+#include "control_command_service.h"
+
+#include "shell.h"
+
+#include <array>
+
+namespace motive::ui {
+
+ControlCommandService::ControlCommandService(MainWindowShell& window)
+    : m_window(window)
+{
+}
+
+bool ControlCommandService::tryHandle(const QString& command,
+                                      const QJsonObject& body,
+                                      QJsonObject& result,
+                                      bool& handled) const
+{
+    handled = false;
+    if (tryHandleSelectionDomain(command, body, result, handled))
+    {
+        return true;
+    }
+    if (handled)
+    {
+        return false;
+    }
+    if (tryHandleCameraDomain(command, body, result, handled))
+    {
+        return true;
+    }
+    if (handled)
+    {
+        return false;
+    }
+    if (tryHandleMotionDomain(command, body, result, handled))
+    {
+        return true;
+    }
+    if (handled)
+    {
+        return false;
+    }
+    if (tryHandleSceneDomain(command, body, result, handled))
+    {
+        return true;
+    }
+    if (handled)
+    {
+        return false;
+    }
+    return tryHandlePhysicsDomain(command, body, result, handled);
+}
+
+bool ControlCommandService::tryHandleSelectionDomain(const QString& command,
+                                                     const QJsonObject& body,
+                                                     QJsonObject& result,
+                                                     bool& handled) const
+{
+    struct Entry
+    {
+        const char* name;
+        CommandHandler handler;
+    };
+    static const std::array<Entry, 1> kSelectionCommands{{
+        {"selection", &ControlCommandService::handleSelection},
+    }};
+    for (const Entry& entry : kSelectionCommands)
+    {
+        if (command == QLatin1String(entry.name))
+        {
+            handled = true;
+            return (this->*(entry.handler))(body, result);
+        }
+    }
+    return false;
+}
+
+bool ControlCommandService::tryHandleCameraDomain(const QString& command,
+                                                  const QJsonObject& body,
+                                                  QJsonObject& result,
+                                                  bool& handled) const
+{
+    struct Entry
+    {
+        const char* name;
+        CommandHandler handler;
+    };
+    static const std::array<Entry, 1> kCameraCommands{{
+        {"camera", &ControlCommandService::handleCamera},
+    }};
+    for (const Entry& entry : kCameraCommands)
+    {
+        if (command == QLatin1String(entry.name))
+        {
+            handled = true;
+            return (this->*(entry.handler))(body, result);
+        }
+    }
+    return false;
+}
+
+bool ControlCommandService::tryHandleMotionDomain(const QString& command,
+                                                  const QJsonObject& body,
+                                                  QJsonObject& result,
+                                                  bool& handled) const
+{
+    struct Entry
+    {
+        const char* name;
+        CommandHandler handler;
+    };
+    static const std::array<Entry, 4> kMotionCommands{{
+        {"debug_motion", &ControlCommandService::handleDebugMotion},
+        {"motion_debug_history", &ControlCommandService::handleMotionDebugHistory},
+        {"motion_debug_summary", &ControlCommandService::handleMotionDebugSummaryCommand},
+        {"motion_debug_overlay", &ControlCommandService::handleMotionDebugOverlay},
+    }};
+    for (const Entry& entry : kMotionCommands)
+    {
+        if (command == QLatin1String(entry.name))
+        {
+            handled = true;
+            return (this->*(entry.handler))(body, result);
+        }
+    }
+    return false;
+}
+
+bool ControlCommandService::tryHandleSceneDomain(const QString& command,
+                                                 const QJsonObject& body,
+                                                 QJsonObject& result,
+                                                 bool& handled) const
+{
+    struct Entry
+    {
+        const char* name;
+        CommandHandler handler;
+    };
+    static const std::array<Entry, 6> kSceneCommands{{
+        {"primitive", &ControlCommandService::handlePrimitive},
+        {"scene_item", &ControlCommandService::handleSceneItem},
+        {"animation", &ControlCommandService::handleAnimation},
+        {"character", &ControlCommandService::handleCharacter},
+        {"rebuild", &ControlCommandService::handleRebuildCommand},
+        {"reset", &ControlCommandService::handleReset},
+    }};
+    for (const Entry& entry : kSceneCommands)
+    {
+        if (command == QLatin1String(entry.name))
+        {
+            handled = true;
+            return (this->*(entry.handler))(body, result);
+        }
+    }
+    return false;
+}
+
+bool ControlCommandService::tryHandlePhysicsDomain(const QString& command,
+                                                   const QJsonObject& body,
+                                                   QJsonObject& result,
+                                                   bool& handled) const
+{
+    struct Entry
+    {
+        const char* name;
+        CommandHandler handler;
+    };
+    static const std::array<Entry, 2> kPhysicsCommands{{
+        {"physics_coupling", &ControlCommandService::handlePhysicsCoupling},
+        {"physics_gravity", &ControlCommandService::handlePhysicsGravity},
+    }};
+    for (const Entry& entry : kPhysicsCommands)
+    {
+        if (command == QLatin1String(entry.name))
+        {
+            handled = true;
+            return (this->*(entry.handler))(body, result);
+        }
+    }
+    return false;
+}
+
+bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject& result) const
+{
+    bool selected = false;
+    if (body.contains(QStringLiteral("sceneIndex")))
+    {
+        selected = m_window.selectHierarchySceneItem(body.value(QStringLiteral("sceneIndex")).toInt(-1));
+    }
+    else if (body.contains(QStringLiteral("cameraId")) || body.contains(QStringLiteral("cameraIndex")))
+    {
+        const QString cameraId = body.value(QStringLiteral("cameraId")).toString();
+        const int cameraIndex = body.value(QStringLiteral("cameraIndex")).toInt(-1);
+        selected = m_window.selectHierarchyCamera(cameraId, cameraIndex);
+    }
+
+    result = m_window.inspectorDebugJson();
+    result.insert(QStringLiteral("selected"), selected);
+    return selected;
+}
+
+}  // namespace motive::ui

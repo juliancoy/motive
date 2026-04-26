@@ -2,7 +2,7 @@
 """
 Live camera/target tracking debugger for Motive editor.
 
-Polls /profile/scene and prints concise warnings/metrics while you control
+Polls /profile/input_state and prints concise warnings/metrics while you control
 the character/camera.
 
 Usage:
@@ -37,13 +37,13 @@ def main():
     interval = 1.0 / max(1.0, hz)
     base = f"http://127.0.0.1:{port}"
 
-    print(f"watching {base}/profile/scene at {hz:.1f} Hz (Ctrl+C to stop)")
+    print(f"watching {base}/profile/input_state at {hz:.1f} Hz (Ctrl+C to stop)")
     print("-" * 110)
 
     while True:
         t0 = time.time()
         try:
-            profile = fetch_json(f"{base}/profile/scene")
+            profile = fetch_json(f"{base}/profile/input_state")
             tracking = profile.get("cameraTracking", {})
             if not tracking.get("ok"):
                 print(f"cameraTracking unavailable: {tracking.get('error', 'unknown error')}")

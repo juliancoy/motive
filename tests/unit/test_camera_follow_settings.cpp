@@ -9,7 +9,7 @@ TEST_SUITE("Camera Follow Settings") {
         CHECK(settings.relativeYaw == doctest::Approx(0.0f));
         CHECK(settings.relativePitch == doctest::Approx(0.3f));
         CHECK(settings.distance == doctest::Approx(5.0f));
-        CHECK(settings.smoothSpeed == doctest::Approx(5.0f));
+        CHECK(settings.smoothSpeed == doctest::Approx(followcam::kDefaultSmoothSpeed));
         CHECK(settings.targetOffset == glm::vec3(0.0f, 0.0f, 0.0f));
         CHECK(settings.enabled == false);
     }
@@ -18,7 +18,7 @@ TEST_SUITE("Camera Follow Settings") {
         FollowSettings settings;
         settings.distance = 0.5f;  // Below minimum
         settings.relativePitch = 2.0f;  // Above maximum
-        settings.smoothSpeed = 0.05f;  // Below minimum
+        settings.smoothSpeed = -0.05f;  // Below minimum
         settings.relativeYaw = 10.0f;  // Will be normalized
         
         FollowSettings sanitized = followcam::sanitizeSettings(settings);

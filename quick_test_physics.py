@@ -17,7 +17,7 @@ def test():
         sys.exit(1)
     
     # Get scene items
-    r = requests.get(f"{BASE}/profile/scene", timeout=2)
+    r = requests.get(f"{BASE}/profile/scene_state", timeout=2)
     items = r.json().get("sceneItems", [])
     print(f"\n📊 Found {len(items)} scene items:")
     for i, item in enumerate(items):

@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MOTIVE_ENABLE_ASAN "Build with AddressSanitizer" OFF)
 option(MOTIVE_ENABLE_VALIDATION "Enable Vulkan validation layers" ON)
+option(MOTIVE_ENABLE_TESTS "Configure and build tests in tests/" OFF)
 
 if(MOTIVE_ENABLE_ASAN)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
@@ -293,3 +294,8 @@ motive_add_app(encode encode.cpp)
 motive_add_app(motive_editor main.cpp)
 motive_add_app(asset_load_profile asset_load_profile.cpp)
 target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+
+if(MOTIVE_ENABLE_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

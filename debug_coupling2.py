@@ -38,7 +38,7 @@ def test_step_by_step():
     
     # Step 1: Get scene items
     print("\n1. Getting scene items...")
-    r = requests.get(f"{BASE}/profile/scene", timeout=2)
+    r = requests.get(f"{BASE}/profile/scene_state", timeout=2)
     data = r.json()
     if not data.get('ok'):
         print(f"❌ Failed to get scene: {data}")

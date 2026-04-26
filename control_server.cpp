@@ -659,6 +659,15 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         return jsonResponse(200, compactJson(payload));
     }
 
+    if (path == "/profile/input_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload;
+        payload.insert(QStringLiteral("ok"), true);
+        payload.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
+        return jsonResponse(200, compactJson(payload));
+    }
+
     if (path == "/profile/hierarchy_state")
     {
         const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
@@ -666,85 +675,6 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("ok"), true);
         payload.insert(QStringLiteral("rootPath"), data.rootPath);
         payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
-        return jsonResponse(200, compactJson(payload));
-    }
-
-    if (path == "/profile/scene")
-    {
-        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
-        QJsonArray cameraPosArray;
-        cameraPosArray.append(data.cameraPosition.x());
-        cameraPosArray.append(data.cameraPosition.y());
-        cameraPosArray.append(data.cameraPosition.z());
-        
-        QJsonArray cameraRotArray;
-        cameraRotArray.append(data.cameraRotation.x());
-        cameraRotArray.append(data.cameraRotation.y());
-        cameraRotArray.append(data.cameraRotation.z());
-        
-        QJsonArray sceneItemsArray;
-        for (const auto& sceneItem : data.sceneItems)
-        {
-            sceneItemsArray.append(sceneItem);
-        }
-
-        QJsonArray viewportCameraIdsArray;
-        for (const QString& cameraId : data.viewportCameraIds)
-        {
-            viewportCameraIdsArray.append(cameraId);
-        }
-
-        QJsonObject payload;
-        payload.insert(QStringLiteral("ok"), true);
-        payload.insert(QStringLiteral("rootPath"), data.rootPath);
-        payload.insert(QStringLiteral("sceneItemCount"), data.sceneItemCount);
-        payload.insert(QStringLiteral("sceneItems"), sceneItemsArray);
-        payload.insert(QStringLiteral("hierarchy"), data.hierarchy);
-        payload.insert(QStringLiteral("cameraPosition"), cameraPosArray);
-        payload.insert(QStringLiteral("cameraRotation"), cameraRotArray);
-        // Performance metrics
-        payload.insert(QStringLiteral("fps"), static_cast<double>(data.currentFps));
-        payload.insert(QStringLiteral("renderIntervalMs"), data.renderIntervalMs);
-        payload.insert(QStringLiteral("renderTimerActive"), data.renderTimerActive);
-        payload.insert(QStringLiteral("viewportWidth"), data.viewportWidth);
-        payload.insert(QStringLiteral("viewportHeight"), data.viewportHeight);
-        payload.insert(QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex);
-        payload.insert(QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId);
-        payload.insert(QStringLiteral("viewportCameraIds"), viewportCameraIdsArray);
-        payload.insert(QStringLiteral("cameraTracking"), data.cameraTracking);
-        payload.insert(QStringLiteral("motionDebugFrame"), data.motionDebugFrame);
-        payload.insert(QStringLiteral("motionDebugSummary"), data.motionDebugSummary);
-        payload.insert(QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay);
-        payload.insert(QStringLiteral("deprecated"), true);
-        payload.insert(QStringLiteral("deprecatedMessage"),
-                       QStringLiteral("Use explicit endpoints: /profile/scene_state, /profile/camera_state, /profile/viewport_state, /profile/motion_state, /profile/hierarchy_state"));
-        payload.insert(QStringLiteral("scene"), QJsonObject{
-            {QStringLiteral("rootPath"), data.rootPath},
-            {QStringLiteral("sceneItemCount"), data.sceneItemCount},
-            {QStringLiteral("sceneItems"), sceneItemsArray}
-        });
-        payload.insert(QStringLiteral("camera"), QJsonObject{
-            {QStringLiteral("cameraPosition"), cameraPosArray},
-            {QStringLiteral("cameraRotation"), cameraRotArray},
-            {QStringLiteral("cameraTracking"), data.cameraTracking}
-        });
-        payload.insert(QStringLiteral("viewport"), QJsonObject{
-            {QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex},
-            {QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId},
-            {QStringLiteral("viewportCameraIds"), viewportCameraIdsArray}
-        });
-        payload.insert(QStringLiteral("motion"), QJsonObject{
-            {QStringLiteral("motionDebugFrame"), data.motionDebugFrame},
-            {QStringLiteral("motionDebugSummary"), data.motionDebugSummary},
-            {QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay}
-        });
-        payload.insert(QStringLiteral("performance"), QJsonObject{
-            {QStringLiteral("fps"), static_cast<double>(data.currentFps)},
-            {QStringLiteral("renderIntervalMs"), data.renderIntervalMs},
-            {QStringLiteral("renderTimerActive"), data.renderTimerActive},
-            {QStringLiteral("viewportWidth"), data.viewportWidth},
-            {QStringLiteral("viewportHeight"), data.viewportHeight}
-        });
         return jsonResponse(200, compactJson(payload));
     }
 
@@ -833,10 +763,8 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         camera.insert(QStringLiteral("rotation"), camRot);
         payload.insert(QStringLiteral("camera"), camera);
         
-        // Input state (requires separate /profile/scene call for full data due to Display namespace conflict)
-        QJsonObject input;
-        input.insert(QStringLiteral("note"), QStringLiteral("Call /profile/scene for input state"));
-        payload.insert(QStringLiteral("input"), input);
+        // Input state (explicit endpoint also available at /profile/input_state)
+        payload.insert(QStringLiteral("input"), data.cameraTracking);
         
         // Performance
         QJsonObject perf;

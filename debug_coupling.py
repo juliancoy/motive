@@ -8,7 +8,7 @@ BASE = "http://localhost:40132"
 
 def check_dropdown_options():
     """Check what options are actually in the dropdown via scene profile"""
-    r = requests.get(f"{BASE}/profile/scene", timeout=2)
+    r = requests.get(f"{BASE}/profile/scene_state", timeout=2)
     data = r.json()
     
     print("=== SCENE PROFILE ===")

@@ -23,7 +23,7 @@ def test_health():
 def test_scene_profile():
     """Get current scene info to see available scene items"""
     try:
-        r = requests.get(f"{BASE_URL}/profile/scene", timeout=2)
+        r = requests.get(f"{BASE_URL}/profile/scene_state", timeout=2)
         data = r.json()
         if data.get("ok"):
             print(f"\n📊 Scene Profile:")

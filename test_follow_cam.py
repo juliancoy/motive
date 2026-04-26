@@ -52,9 +52,9 @@ class MotiveApiClient:
         """Get scene hierarchy."""
         return self._call("GET", "/hierarchy")
     
-    def scene_profile(self):
-        """Get scene profile including camera position."""
-        return self._call("GET", "/profile/scene")
+    def camera_state(self):
+        """Get explicit camera state."""
+        return self._call("GET", "/profile/camera_state")
     
     def list_cameras(self):
         """List all cameras."""
@@ -74,8 +74,8 @@ class MotiveApiClient:
         return self._call("POST", "/controls/camera", {"setActive": camera_index})
     
     def get_camera_position(self):
-        """Get current camera position from scene profile."""
-        profile = self.scene_profile()
+        """Get current camera position from camera state."""
+        profile = self.camera_state()
         return profile.get("cameraPosition")
 
 

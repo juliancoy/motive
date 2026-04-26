@@ -39,8 +39,11 @@ class MotiveApiClient:
     def health(self):
         return self._call("GET", "/health")
 
-    def scene_profile(self):
-        return self._call("GET", "/profile/scene")
+    def scene_state(self):
+        return self._call("GET", "/profile/scene_state")
+
+    def viewport_state(self):
+        return self._call("GET", "/profile/viewport_state")
 
     def list_cameras(self):
         return self._call("POST", "/controls/camera", {"list": True})
@@ -87,9 +90,9 @@ def test_viewport_focus_sync(port=40132):
     print(f"[2] Cameras before prep: {len(cameras)}")
 
     if len(cameras) < 2:
-        profile = client.scene_profile()
-        assert_condition(profile.get("ok"), f"profile fetch failed: {profile}")
-        if profile.get("sceneItemCount", 0) > 0:
+        scene = client.scene_state()
+        assert_condition(scene.get("ok"), f"scene_state fetch failed: {scene}")
+        if scene.get("sceneItemCount", 0) > 0:
             create = client.create_follow_camera(0)
             if create.get("ok"):
                 print("[3] Added follow camera for scene item 0")
@@ -124,12 +127,12 @@ def test_viewport_focus_sync(port=40132):
 
         # Let UI/state callbacks settle.
         time.sleep(0.1)
-        profile = client.scene_profile()
-        assert_condition(profile.get("ok"), f"profile fetch failed: {profile}")
+        viewport = client.viewport_state()
+        assert_condition(viewport.get("ok"), f"viewport_state fetch failed: {viewport}")
 
-        focused_index = profile.get("focusedViewportIndex")
-        focused_camera_id = profile.get("focusedViewportCameraId", "")
-        viewport_camera_ids = profile.get("viewportCameraIds", [])
+        focused_index = viewport.get("focusedViewportIndex")
+        focused_camera_id = viewport.get("focusedViewportCameraId", "")
+        viewport_camera_ids = viewport.get("viewportCameraIds", [])
 
         assert_condition(isinstance(focused_index, int), "focusedViewportIndex missing/invalid")
         assert_condition(isinstance(viewport_camera_ids, list), "viewportCameraIds missing/invalid")

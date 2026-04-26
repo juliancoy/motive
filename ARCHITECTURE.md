@@ -57,8 +57,8 @@ All app executables are linked through `engine` in `CMakeLists.txt`.
   - `GET /profile/camera_state`
   - `GET /profile/viewport_state`
   - `GET /profile/motion_state`
+  - `GET /profile/input_state`
   - `GET /profile/hierarchy_state`
-- Compatibility aggregate endpoint: `GET /profile/scene` (deprecated; use explicit endpoints above).
 - Motion debug endpoints:
   - `GET /debug/motion/frame`
   - `GET /debug/motion/summary`
