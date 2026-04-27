@@ -63,6 +63,8 @@ private:
     void updateCameraSettingsPanel();
     void applyCameraSettings();
     void updateWasdRoutingStatus();
+    void refreshProfileAvatarButton();
+    void onProfileAvatarClicked();
     QJsonArray sceneItemsToJson(const QList<ViewportHostWidget::SceneItem>& items) const;
     QList<ViewportHostWidget::SceneItem> sceneItemsFromJson(const QJsonArray& items) const;
     QJsonArray cameraConfigsToJson(const QList<ViewportHostWidget::CameraConfig>& configs) const;
@@ -76,6 +78,8 @@ private:
     QWidget* m_leftPane = nullptr;
     QSplitter* m_splitter = nullptr;
     QTabWidget* m_rightTabs = nullptr;
+    QPushButton* m_profileAvatarButton = nullptr;
+    QString m_authApiBaseUrl;
     QTabWidget* m_elementDetailTabs = nullptr;
     QTreeWidget* m_hierarchyTree = nullptr;
     QGroupBox* m_summarySection = nullptr;

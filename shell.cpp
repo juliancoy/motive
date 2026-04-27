@@ -4,6 +4,7 @@
 #include "camera_follow_settings.h"
 #include "transform_undo_command.h"
 #include "physics_interface.h"
+#include "login_dialog.h"
 
 #include <glm/glm.hpp>
 
@@ -572,6 +573,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     inspectorDock->setFeatures(QDockWidget::DockWidgetMovable);
     m_rightTabs = new QTabWidget(inspectorDock);
+    m_profileAvatarButton = new QPushButton(m_rightTabs);
+    m_profileAvatarButton->setCursor(Qt::PointingHandCursor);
+    m_profileAvatarButton->setMinimumHeight(28);
+    connect(m_profileAvatarButton, &QPushButton::clicked, this, [this]() {
+        onProfileAvatarClicked();
+    });
+    m_rightTabs->setCornerWidget(m_profileAvatarButton, Qt::TopRightCorner);
     auto* inspectorPanel = new QWidget(m_rightTabs);
     auto* inspectorLayout = new QVBoxLayout(inspectorPanel);
     inspectorLayout->setContentsMargins(8, 8, 8, 8);
@@ -1936,6 +1944,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     setupUndoShortcuts();
     
     restoreSessionState();
+    m_authApiBaseUrl = qEnvironmentVariable("MOTIVE_AUTH_API_BASE_URL").trimmed();
+    if (m_authApiBaseUrl.isEmpty()) {
+        m_authApiBaseUrl = QStringLiteral(MOTIVE_AUTH_API_BASE_URL).trimmed();
+    }
+    refreshProfileAvatarButton();
     refreshWindowTitle();
     updateWasdRoutingStatus();
     maybePromptForGltfConversion(m_assetBrowser ? m_assetBrowser->rootPath() : m_projectSession.currentProjectRoot());
@@ -1953,6 +1966,77 @@ MainWindowShell::~MainWindowShell() = default;
 AssetBrowserWidget* MainWindowShell::assetBrowser() const
 {
     return m_assetBrowser;
+}
+
+void MainWindowShell::refreshProfileAvatarButton()
+{
+    if (!m_profileAvatarButton) {
+        return;
+    }
+
+    const QString token = LoginDialog::storedToken().trimmed();
+    const QString email = LoginDialog::storedEmail().trimmed();
+    const bool loggedIn = !token.isEmpty();
+    QString label = loggedIn ? (email.isEmpty() ? QStringLiteral("Profile") : email)
+                             : QStringLiteral("Guest");
+    if (label.size() > 24) {
+        label = label.left(21) + QStringLiteral("...");
+    }
+
+    QIcon icon = QIcon::fromTheme(QStringLiteral("user-identity"));
+    if (icon.isNull()) {
+        icon = style()->standardIcon(QStyle::SP_FileIcon);
+    }
+
+    m_profileAvatarButton->setIcon(icon);
+    m_profileAvatarButton->setText(label);
+    m_profileAvatarButton->setToolTip(
+        loggedIn
+            ? QStringLiteral("Signed in as %1").arg(email.isEmpty() ? QStringLiteral("user") : email)
+            : QStringLiteral("Guest - click to sign in"));
+}
+
+void MainWindowShell::onProfileAvatarClicked()
+{
+    const bool loggedIn = !LoginDialog::storedToken().trimmed().isEmpty();
+
+    if (!loggedIn) {
+        if (m_authApiBaseUrl.trimmed().isEmpty()) {
+            QMessageBox::information(this,
+                                     QStringLiteral("Sign In"),
+                                     QStringLiteral("No authentication API configured. Running as guest."));
+            refreshProfileAvatarButton();
+            return;
+        }
+
+        LoginDialog loginDialog(m_authApiBaseUrl, this);
+        loginDialog.exec();
+        refreshProfileAvatarButton();
+        return;
+    }
+
+    QMenu menu(this);
+    const QString email = LoginDialog::storedEmail().trimmed();
+    QAction* status = menu.addAction(
+        QStringLiteral("Signed in as %1").arg(email.isEmpty() ? QStringLiteral("user") : email));
+    status->setEnabled(false);
+    menu.addSeparator();
+    QAction* switchAccount = menu.addAction(QStringLiteral("Switch Account"));
+    QAction* signOut = menu.addAction(QStringLiteral("Sign Out"));
+
+    QAction* chosen = menu.exec(
+        m_profileAvatarButton->mapToGlobal(QPoint(0, m_profileAvatarButton->height())));
+    if (chosen == switchAccount) {
+        LoginDialog::clearCredentials();
+        if (!m_authApiBaseUrl.trimmed().isEmpty()) {
+            LoginDialog loginDialog(m_authApiBaseUrl, this);
+            loginDialog.exec();
+        }
+    } else if (chosen == signOut) {
+        LoginDialog::clearCredentials();
+    }
+
+    refreshProfileAvatarButton();
 }
 
 ViewportHostWidget* MainWindowShell::viewportHost() const
