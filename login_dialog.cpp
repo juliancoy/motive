@@ -3,24 +3,16 @@
 #include <cppmonetize/OAuthDesktopFlow.h>
 #include <cppmonetize/TokenStore.h>
 
-#include <QDesktopServices>
 #include <QDebug>
 #include <QDir>
-#include <QEventLoop>
 #include <QFile>
 #include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
-#include <QJsonDocument>
 #include <QJsonObject>
-#include <QProgressDialog>
 #include <QScreen>
 #include <QStandardPaths>
-#include <QTcpSocket>
 #include <QTextStream>
-#include <QTimer>
-#include <QUrl>
-#include <QUrlQuery>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -28,12 +20,11 @@
 namespace motive::ui {
 namespace {
 
-struct BrowserOAuthConfig
+cppmonetize::Result<cppmonetize::OAuthConfig> resolveSupabaseOAuthConfig(const QString& apiBaseUrl)
 {
-    bool enabled = false;
-    QString supabaseUrl;
-    QString desktopRedirectBase;
-};
+    cppmonetize::OAuthDesktopFlow flow;
+    return flow.resolveSupabaseConfig(apiBaseUrl);
+}
 
 void fitDialogToScreen(QDialog* dialog, const QSize& requestedSize)
 {
@@ -124,43 +115,6 @@ cppmonetize::MonetizeClient createMonetizeClient(const QString& apiBaseUrl)
     return cppmonetize::MonetizeClient(cfg);
 }
 
-BrowserOAuthConfig loadBrowserOAuthConfig(const QString& apiBaseUrl)
-{
-    BrowserOAuthConfig cfg;
-    cppmonetize::OAuthDesktopFlow flow;
-    const auto result = flow.fetchOAuthConfig(apiBaseUrl);
-    if (!result.hasValue()) {
-        return cfg;
-    }
-    cfg.enabled = result.value().enabled;
-    cfg.supabaseUrl = result.value().supabaseUrl;
-    cfg.desktopRedirectBase = result.value().desktopRedirectBase;
-    return cfg;
-}
-
-QString buildBrowserOAuthUrl(const QString& apiBaseUrl, const QString& provider, quint16 callbackPort)
-{
-    const BrowserOAuthConfig cfg = loadBrowserOAuthConfig(apiBaseUrl);
-    if (cfg.enabled)
-    {
-        QUrl redirectTo(cfg.desktopRedirectBase);
-        QUrlQuery redirectQuery(redirectTo.query());
-        redirectQuery.addQueryItem(QStringLiteral("port"), QString::number(callbackPort));
-        redirectQuery.addQueryItem(QStringLiteral("provider"), provider);
-        redirectTo.setQuery(redirectQuery);
-
-        QUrl authUrl(cfg.supabaseUrl + QStringLiteral("/auth/v1/authorize"));
-        QUrlQuery authQuery;
-        authQuery.addQueryItem(QStringLiteral("provider"), provider);
-        authQuery.addQueryItem(QStringLiteral("redirect_to"), redirectTo.toString());
-        authUrl.setQuery(authQuery);
-        return authUrl.toString();
-    }
-
-    return apiBaseUrl + QStringLiteral("/oauth/") + provider +
-           QStringLiteral("?redirect=http://localhost:%1/callback").arg(callbackPort);
-}
-
 QString fetchEmailFromToken(const QString& apiBaseUrl, const QString& token)
 {
     if (token.isEmpty())
@@ -244,6 +198,8 @@ bool LoginDialog::signInWithBrowser(const QString& apiBaseUrl,
                                     const QString& preferredProvider,
                                     QString* outError)
 {
+    Q_UNUSED(parent);
+
     if (outError)
     {
         outError->clear();
@@ -253,125 +209,35 @@ bool LoginDialog::signInWithBrowser(const QString& apiBaseUrl,
         ? QStringLiteral("google")
         : preferredProvider.trimmed().toLower();
 
-    QTcpServer server;
-    if (!server.listen(QHostAddress::LocalHost, 0))
+    const auto oauthCfgResult = resolveSupabaseOAuthConfig(apiBaseUrl);
+    if (!oauthCfgResult.hasValue())
     {
-        if (outError)
-        {
-            *outError = QStringLiteral("Unable to start local OAuth callback listener.");
+        if (outError) {
+            *outError = oauthCfgResult.error().message;
+        }
+        return false;
+    }
+    const auto oauthCfg = oauthCfgResult.value();
+
+    cppmonetize::OAuthConfig flowCfg;
+    flowCfg.enabled = true;
+    flowCfg.supabaseUrl = oauthCfg.supabaseUrl;
+    flowCfg.supabaseAnonKey = oauthCfg.supabaseAnonKey;
+    cppmonetize::OAuthDesktopFlow flow;
+    const auto authResult = flow.signInWithBrowserPkce(flowCfg, provider, 180000);
+    if (!authResult.hasValue())
+    {
+        if (outError) {
+            *outError = authResult.error().message;
         }
         return false;
     }
 
-    QString token;
-    QString email;
-    bool callbackReceived = false;
-    bool timedOut = false;
-    bool canceled = false;
-
-    QEventLoop loop;
-    QTimer timeoutTimer;
-    timeoutTimer.setSingleShot(true);
-    QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, [&]() {
-        timedOut = true;
-        loop.quit();
-    });
-    timeoutTimer.start(180000);
-
-    QObject::connect(&server, &QTcpServer::newConnection, &loop, [&]() {
-        QTcpSocket* sock = server.nextPendingConnection();
-        if (!sock)
-        {
-            return;
-        }
-
-        QObject::connect(sock, &QTcpSocket::readyRead, sock, [&, sock]() {
-            const QString request = QString::fromUtf8(sock->readAll());
-            const QString firstLine = request.section('\n', 0, 0).trimmed();
-            const QString path = firstLine.section(' ', 1, 1);
-            QUrl url(QStringLiteral("http://localhost") + path);
-            QUrlQuery query(url.query());
-            token = query.queryItemValue(QStringLiteral("token"));
-            if (token.isEmpty())
-            {
-                token = query.queryItemValue(QStringLiteral("access_token"));
-            }
-            email = query.queryItemValue(QStringLiteral("email"));
-            if (token.isEmpty() && path.contains('#'))
-            {
-                const QString fragment = path.section('#', 1);
-                const QUrlQuery fragmentQuery(fragment);
-                token = fragmentQuery.queryItemValue(QStringLiteral("token"));
-                if (token.isEmpty())
-                {
-                    token = fragmentQuery.queryItemValue(QStringLiteral("access_token"));
-                }
-                email = fragmentQuery.queryItemValue(QStringLiteral("email"));
-            }
-
-            const QByteArray body = token.isEmpty()
-                ? QByteArray("<html><body style='font-family:sans-serif'>Sign-in did not complete. You can close this tab.</body></html>")
-                : QByteArray("<html><body style='font-family:sans-serif'>Signed in. You can close this tab and return to Motive Editor.</body></html>");
-            QByteArray response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ";
-            response += QByteArray::number(body.size());
-            response += "\r\n\r\n";
-            response += body;
-            sock->write(response);
-            sock->flush();
-            sock->disconnectFromHost();
-            sock->deleteLater();
-
-            callbackReceived = true;
-            loop.quit();
-        });
-    });
-
-    const QString oauthUrl = buildBrowserOAuthUrl(apiBaseUrl, provider, server.serverPort());
-    if (!QDesktopServices::openUrl(QUrl(oauthUrl)))
+    QString token = authResult.value().token.trimmed();
+    QString email = authResult.value().email.trimmed();
+    if (token.isEmpty())
     {
-        if (outError)
-        {
-            *outError = QStringLiteral("Unable to open browser for OAuth sign-in.");
-        }
-        return false;
-    }
-
-    QProgressDialog progress(QStringLiteral("Complete sign-in in your browser..."),
-                             QStringLiteral("Cancel"), 0, 0, parent);
-    progress.setWindowModality(Qt::ApplicationModal);
-    progress.setMinimumDuration(0);
-    progress.setAutoClose(false);
-    progress.setAutoReset(false);
-    progress.setValue(0);
-    QObject::connect(&progress, &QProgressDialog::canceled, &loop, [&]() {
-        canceled = true;
-        loop.quit();
-    });
-    progress.show();
-    loop.exec();
-    progress.hide();
-    server.close();
-
-    if (canceled)
-    {
-        if (outError)
-        {
-            *outError = QStringLiteral("Browser sign-in canceled.");
-        }
-        return false;
-    }
-    if (timedOut)
-    {
-        if (outError)
-        {
-            *outError = QStringLiteral("Browser sign-in timed out.");
-        }
-        return false;
-    }
-    if (!callbackReceived || token.isEmpty())
-    {
-        if (outError)
-        {
+        if (outError) {
             *outError = QStringLiteral("OAuth callback did not return a token.");
         }
         return false;
@@ -592,6 +458,7 @@ void LoginDialog::doAuthRequest(const QString& endpoint)
 {
     const QString em = emailEdit_->text().trimmed();
     const QString pw = passwordEdit_->text();
+    const bool registerMode = (endpoint == QStringLiteral("/auth/register"));
     if (em.isEmpty() || pw.isEmpty())
     {
         setStatus(QStringLiteral("Email and password are required."), true);
@@ -602,14 +469,36 @@ void LoginDialog::doAuthRequest(const QString& endpoint)
     setStatus(QStringLiteral("Connecting..."), false);
 
     cppmonetize::MonetizeClient client = createMonetizeClient(apiBaseUrl_);
+    const auto browserCfgResult = resolveSupabaseOAuthConfig(apiBaseUrl_);
+    bool usedDirectSupabase = false;
+    if (browserCfgResult.hasValue()) {
+        const auto browserCfg = browserCfgResult.value();
+        usedDirectSupabase = true;
+        cppmonetize::OAuthConfig oauthCfg;
+        oauthCfg.enabled = true;
+        oauthCfg.supabaseUrl = browserCfg.supabaseUrl;
+        oauthCfg.supabaseAnonKey = browserCfg.supabaseAnonKey;
+        cppmonetize::OAuthDesktopFlow flow;
+        const auto directResult = flow.signInWithPassword(oauthCfg, em, pw, registerMode, 20000);
+        if (!directResult.hasValue()) {
+            setFieldsEnabled(true);
+            setStatus(directResult.error().message.isEmpty()
+                          ? QStringLiteral("Supabase sign-in failed.")
+                          : directResult.error().message,
+                      true);
+            return;
+        }
+        token_ = directResult.value().token.trimmed();
+        email_ = directResult.value().email.trimmed();
+    }
 
-    cppmonetize::Result<cppmonetize::AuthSession> authResult =
-        endpoint == QStringLiteral("/auth/register")
-            ? client.registerUser(em, pw)
-            : client.signIn(em, pw);
+    cppmonetize::Result<cppmonetize::AuthSession> authResult;
+    if (!usedDirectSupabase) {
+        authResult = registerMode ? client.registerUser(em, pw) : client.signIn(em, pw);
+    }
 
     setFieldsEnabled(true);
-    if (!authResult.hasValue()) {
+    if (!usedDirectSupabase && !authResult.hasValue()) {
         const int code = authResult.error().statusCode;
         const QString detail = authResult.error().message;
         if (code == 401) {
@@ -624,8 +513,10 @@ void LoginDialog::doAuthRequest(const QString& endpoint)
         return;
     }
 
-    token_ = authResult.value().accessToken.trimmed();
-    email_ = authResult.value().email.trimmed();
+    if (!usedDirectSupabase) {
+        token_ = authResult.value().accessToken.trimmed();
+        email_ = authResult.value().email.trimmed();
+    }
     if (email_.isEmpty()) {
         const auto who = client.whoAmI(token_);
         if (who.hasValue()) {
