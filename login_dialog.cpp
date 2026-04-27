@@ -4,6 +4,7 @@
 #include <cppmonetize/TokenStore.h>
 
 #include <QDesktopServices>
+#include <QDebug>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -105,6 +106,24 @@ std::unique_ptr<cppmonetize::TokenStore> createTokenStore()
     return cppmonetize::createDefaultTokenStore(cfg);
 }
 
+cppmonetize::MonetizeClient createMonetizeClient(const QString& apiBaseUrl)
+{
+    cppmonetize::ClientConfig cfg;
+    cfg.apiBaseUrl = apiBaseUrl;
+    cfg.clientId = QStringLiteral("motive-editor");
+    cfg.telemetryHook = [](const cppmonetize::RequestTelemetryEvent& event) {
+        if (event.success) {
+            return;
+        }
+        qWarning().noquote() << "[CPPMonetize][motive3d]"
+                             << event.operation
+                             << "status=" << event.statusCode
+                             << "request_id=" << event.clientRequestId
+                             << "message=" << event.message;
+    };
+    return cppmonetize::MonetizeClient(cfg);
+}
+
 BrowserOAuthConfig loadBrowserOAuthConfig(const QString& apiBaseUrl)
 {
     BrowserOAuthConfig cfg;
@@ -149,10 +168,7 @@ QString fetchEmailFromToken(const QString& apiBaseUrl, const QString& token)
         return {};
     }
 
-    cppmonetize::ClientConfig cfg;
-    cfg.apiBaseUrl = apiBaseUrl;
-    cfg.clientId = QStringLiteral("motive-editor");
-    cppmonetize::MonetizeClient client(cfg);
+    cppmonetize::MonetizeClient client = createMonetizeClient(apiBaseUrl);
     const auto who = client.whoAmI(token);
     if (!who.hasValue()) {
         return {};
@@ -366,10 +382,7 @@ bool LoginDialog::signInWithBrowser(const QString& apiBaseUrl,
     }
 
     QString licenseKey;
-    cppmonetize::ClientConfig cfg;
-    cfg.apiBaseUrl = apiBaseUrl;
-    cfg.clientId = QStringLiteral("motive-editor");
-    cppmonetize::MonetizeClient client(cfg);
+    cppmonetize::MonetizeClient client = createMonetizeClient(apiBaseUrl);
     const auto lic = client.getLicense(token);
     if (lic.hasValue()) {
         const QJsonObject resp = lic.value();
@@ -588,10 +601,7 @@ void LoginDialog::doAuthRequest(const QString& endpoint)
     setFieldsEnabled(false);
     setStatus(QStringLiteral("Connecting..."), false);
 
-    cppmonetize::ClientConfig cfg;
-    cfg.apiBaseUrl = apiBaseUrl_;
-    cfg.clientId = QStringLiteral("motive-editor");
-    cppmonetize::MonetizeClient client(cfg);
+    cppmonetize::MonetizeClient client = createMonetizeClient(apiBaseUrl_);
 
     cppmonetize::Result<cppmonetize::AuthSession> authResult =
         endpoint == QStringLiteral("/auth/register")
