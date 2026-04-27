@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QTcpServer>
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QLabel>
@@ -42,7 +41,6 @@ private:
     void switchToLogin();
 
     QString apiBaseUrl_;
-    QNetworkAccessManager* network_ = nullptr;
     QLineEdit* emailEdit_ = nullptr;
     QLineEdit* passwordEdit_ = nullptr;
     QLineEdit* passwordConfirmEdit_ = nullptr;

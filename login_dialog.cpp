@@ -1,4 +1,7 @@
 #include "login_dialog.h"
+#include <cppmonetize/MonetizeClient.h>
+#include <cppmonetize/OAuthDesktopFlow.h>
+#include <cppmonetize/TokenStore.h>
 
 #include <QDesktopServices>
 #include <QDir>
@@ -9,8 +12,6 @@
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QProgressDialog>
 #include <QScreen>
 #include <QStandardPaths>
@@ -95,31 +96,26 @@ QString credPath(const QString& name)
     return credentialDir().filePath(name);
 }
 
+std::unique_ptr<cppmonetize::TokenStore> createTokenStore()
+{
+    cppmonetize::TokenStoreConfig cfg;
+    cfg.appName = QStringLiteral("motive_editor");
+    cfg.orgName = QStringLiteral("motive");
+    cfg.serviceName = QStringLiteral("motive.auth");
+    return cppmonetize::createDefaultTokenStore(cfg);
+}
+
 BrowserOAuthConfig loadBrowserOAuthConfig(const QString& apiBaseUrl)
 {
     BrowserOAuthConfig cfg;
-    QNetworkAccessManager network;
-    QNetworkRequest req(QUrl(apiBaseUrl + QStringLiteral("/auth/supabase-config")));
-    QNetworkReply* reply = network.get(req);
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        reply->deleteLater();
+    cppmonetize::OAuthDesktopFlow flow;
+    const auto result = flow.fetchOAuthConfig(apiBaseUrl);
+    if (!result.hasValue()) {
         return cfg;
     }
-
-    const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
-    reply->deleteLater();
-    cfg.enabled = obj.value(QStringLiteral("enabled")).toBool(false);
-    cfg.supabaseUrl = obj.value(QStringLiteral("supabase_url")).toString().trimmed();
-    cfg.desktopRedirectBase = obj.value(QStringLiteral("desktop_redirect_base")).toString().trimmed();
-    if (cfg.supabaseUrl.isEmpty() || cfg.desktopRedirectBase.isEmpty())
-    {
-        cfg.enabled = false;
-    }
+    cfg.enabled = result.value().enabled;
+    cfg.supabaseUrl = result.value().supabaseUrl;
+    cfg.desktopRedirectBase = result.value().desktopRedirectBase;
     return cfg;
 }
 
@@ -153,44 +149,37 @@ QString fetchEmailFromToken(const QString& apiBaseUrl, const QString& token)
         return {};
     }
 
-    QNetworkAccessManager network;
-    QNetworkRequest req(QUrl(apiBaseUrl + QStringLiteral("/auth/whoami")));
-    req.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
-    QNetworkReply* reply = network.get(req);
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        reply->deleteLater();
+    cppmonetize::ClientConfig cfg;
+    cfg.apiBaseUrl = apiBaseUrl;
+    cfg.clientId = QStringLiteral("motive-editor");
+    cppmonetize::MonetizeClient client(cfg);
+    const auto who = client.whoAmI(token);
+    if (!who.hasValue()) {
         return {};
     }
-
-    const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
-    reply->deleteLater();
-    return obj.value(QStringLiteral("email")).toString();
+    return who.value().email;
 }
 
 }  // namespace
 
 QString LoginDialog::storedToken()
 {
-    QFile f(credPath(QStringLiteral("auth_token.txt")));
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-    {
+    auto store = createTokenStore();
+    const auto result = store->loadToken();
+    if (!result.hasValue()) {
         return {};
     }
-    return QTextStream(&f).readLine().trimmed();
+    return result.value().trimmed();
 }
 
 QString LoginDialog::storedEmail()
 {
-    QFile f(credPath(QStringLiteral("auth_email.txt")));
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-    {
+    auto store = createTokenStore();
+    const auto result = store->loadUserId();
+    if (!result.hasValue()) {
         return {};
     }
-    return QTextStream(&f).readLine().trimmed();
+    return result.value().trimmed();
 }
 
 QString LoginDialog::storedLicenseKey()
@@ -205,21 +194,17 @@ QString LoginDialog::storedLicenseKey()
 
 void LoginDialog::storeCredentials(const QString& token, const QString& email, const QString& licenseKey)
 {
+    auto store = createTokenStore();
+    if (!token.isEmpty()) {
+        store->storeToken(token, email);
+    }
+
     auto write = [](const QString& path, const QString& data) {
         QFile f(path);
-        if (f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
-        {
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
             QTextStream(&f) << data << "\n";
         }
     };
-    if (!token.isEmpty())
-    {
-        write(credPath(QStringLiteral("auth_token.txt")), token);
-    }
-    if (!email.isEmpty())
-    {
-        write(credPath(QStringLiteral("auth_email.txt")), email);
-    }
     if (!licenseKey.isEmpty())
     {
         write(credPath(QStringLiteral("license_key.txt")), licenseKey);
@@ -228,8 +213,8 @@ void LoginDialog::storeCredentials(const QString& token, const QString& email, c
 
 void LoginDialog::clearCredentials()
 {
-    QFile::remove(credPath(QStringLiteral("auth_token.txt")));
-    QFile::remove(credPath(QStringLiteral("auth_email.txt")));
+    auto store = createTokenStore();
+    store->clear();
     QFile::remove(credPath(QStringLiteral("license_key.txt")));
 }
 
@@ -381,22 +366,17 @@ bool LoginDialog::signInWithBrowser(const QString& apiBaseUrl,
     }
 
     QString licenseKey;
-    QNetworkAccessManager network;
-    QNetworkRequest licReq(QUrl(apiBaseUrl + QStringLiteral("/license")));
-    licReq.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
-    QNetworkReply* reply = network.get(licReq);
-    QEventLoop licLoop;
-    QObject::connect(reply, &QNetworkReply::finished, &licLoop, &QEventLoop::quit);
-    licLoop.exec();
-    if (reply->error() == QNetworkReply::NoError)
-    {
-        const QJsonObject resp = QJsonDocument::fromJson(reply->readAll()).object();
-        if (!resp.isEmpty() && resp.value(QStringLiteral("active")).toBool())
-        {
+    cppmonetize::ClientConfig cfg;
+    cfg.apiBaseUrl = apiBaseUrl;
+    cfg.clientId = QStringLiteral("motive-editor");
+    cppmonetize::MonetizeClient client(cfg);
+    const auto lic = client.getLicense(token);
+    if (lic.hasValue()) {
+        const QJsonObject resp = lic.value();
+        if (!resp.isEmpty() && resp.value(QStringLiteral("active")).toBool()) {
             licenseKey = resp.value(QStringLiteral("license_key")).toString();
         }
     }
-    reply->deleteLater();
 
     storeCredentials(token, email, licenseKey);
     return true;
@@ -405,7 +385,6 @@ bool LoginDialog::signInWithBrowser(const QString& apiBaseUrl,
 LoginDialog::LoginDialog(const QString& apiBaseUrl, QWidget* parent)
     : QDialog(parent)
     , apiBaseUrl_(apiBaseUrl)
-    , network_(new QNetworkAccessManager(this))
 {
     setWindowTitle(QStringLiteral("Motive Editor - Sign In"));
     setModal(true);
@@ -609,64 +588,52 @@ void LoginDialog::doAuthRequest(const QString& endpoint)
     setFieldsEnabled(false);
     setStatus(QStringLiteral("Connecting..."), false);
 
-    QJsonObject body;
-    body[QStringLiteral("email")] = em;
-    body[QStringLiteral("password")] = pw;
+    cppmonetize::ClientConfig cfg;
+    cfg.apiBaseUrl = apiBaseUrl_;
+    cfg.clientId = QStringLiteral("motive-editor");
+    cppmonetize::MonetizeClient client(cfg);
 
-    QNetworkRequest req(QUrl(apiBaseUrl_ + endpoint));
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    QNetworkReply* reply = network_->post(req, QJsonDocument(body).toJson());
+    cppmonetize::Result<cppmonetize::AuthSession> authResult =
+        endpoint == QStringLiteral("/auth/register")
+            ? client.registerUser(em, pw)
+            : client.signIn(em, pw);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-        setFieldsEnabled(true);
-
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            const QJsonObject errBody = QJsonDocument::fromJson(reply->readAll()).object();
-            const QString detail = errBody.value(QStringLiteral("detail")).toString();
-            if (code == 401)
-            {
-                setStatus(QStringLiteral("Invalid email or password."), true);
-            }
-            else if (code == 409)
-            {
-                setStatus(QStringLiteral("Email already registered. Try signing in."), true);
-            }
-            else if (detail.isEmpty())
-            {
-                setStatus(QStringLiteral("Connection failed. Check your internet."), true);
-            }
-            else
-            {
-                setStatus(detail, true);
-            }
-            return;
+    setFieldsEnabled(true);
+    if (!authResult.hasValue()) {
+        const int code = authResult.error().statusCode;
+        const QString detail = authResult.error().message;
+        if (code == 401) {
+            setStatus(QStringLiteral("Invalid email or password."), true);
+        } else if (code == 409) {
+            setStatus(QStringLiteral("Email already registered. Try signing in."), true);
+        } else if (detail.isEmpty()) {
+            setStatus(QStringLiteral("Connection failed. Check your internet."), true);
+        } else {
+            setStatus(detail, true);
         }
+        return;
+    }
 
-        const QJsonObject resp = QJsonDocument::fromJson(reply->readAll()).object();
-        token_ = resp.value(QStringLiteral("token")).toString();
-        email_ = resp.value(QStringLiteral("email")).toString();
+    token_ = authResult.value().accessToken.trimmed();
+    email_ = authResult.value().email.trimmed();
+    if (email_.isEmpty()) {
+        const auto who = client.whoAmI(token_);
+        if (who.hasValue()) {
+            email_ = who.value().email.trimmed();
+        }
+    }
 
-        QNetworkRequest licReq(QUrl(apiBaseUrl_ + QStringLiteral("/license")));
-        licReq.setRawHeader("Authorization", ("Bearer " + token_).toUtf8());
-        QNetworkReply* licReply = network_->get(licReq);
-        connect(licReply, &QNetworkReply::finished, this, [this, licReply]() {
-            licReply->deleteLater();
-            if (licReply->error() == QNetworkReply::NoError)
-            {
-                const QJsonObject licResp = QJsonDocument::fromJson(licReply->readAll()).object();
-                if (!licResp.isEmpty() && licResp.value(QStringLiteral("active")).toBool())
-                {
-                    licenseKey_ = licResp.value(QStringLiteral("license_key")).toString();
-                }
-            }
-            storeCredentials(token_, email_, licenseKey_);
-            setStatus(QStringLiteral("Signed in as %1").arg(email_), false);
-            accept();
-        });
-    });
+    const auto licenseResult = client.getLicense(token_);
+    if (licenseResult.hasValue()) {
+        const QJsonObject licResp = licenseResult.value();
+        if (!licResp.isEmpty() && licResp.value(QStringLiteral("active")).toBool()) {
+            licenseKey_ = licResp.value(QStringLiteral("license_key")).toString();
+        }
+    }
+
+    storeCredentials(token_, email_, licenseKey_);
+    setStatus(QStringLiteral("Signed in as %1").arg(email_), false);
+    accept();
 }
 
 void LoginDialog::onSkipClicked()
@@ -714,4 +681,3 @@ QString LoginDialog::licenseKey() const
 }
 
 }  // namespace motive::ui
-
