@@ -46,6 +46,51 @@ if(MOTIVE_ENABLE_INTEGRATION_TESTS)
 
     if(Python3_Interpreter_FOUND)
         add_test(
+            NAME motive_runtime_ux
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_runtime_ux.py
+                --editor ${MOTIVE_EDITOR_BIN}
+                --project-dir ${MOTIVE_ROOT}/projects/default
+        )
+        set_tests_properties(
+            motive_runtime_ux
+            PROPERTIES
+                TIMEOUT 180
+                LABELS "integration;runtime;ux"
+        )
+
+        add_test(
+            NAME motive_oblique_text_png
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_oblique_text_png.py
+                --bin ${MOTIVE_ROOT}/build/text_oblique_png
+                --out /tmp/motive_oblique_text_test.png
+        )
+        set_tests_properties(
+            motive_oblique_text_png
+            PROPERTIES
+                TIMEOUT 60
+                LABELS "integration;runtime;ux;text"
+        )
+
+        add_test(
+            NAME motive_text_extrusion_png
+            COMMAND
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_text_extrusion_png.py
+                --bin ${MOTIVE_ROOT}/build/text_extrusion_png
+                --out /tmp/motive_text_extrusion_test.png
+        )
+        set_tests_properties(
+            motive_text_extrusion_png
+            PROPERTIES
+                TIMEOUT 60
+                LABELS "integration;runtime;ux;text"
+        )
+
+        add_test(
             NAME motive_rest_animation_physics
             COMMAND
                 ${Python3_EXECUTABLE}
@@ -61,10 +106,11 @@ if(MOTIVE_ENABLE_INTEGRATION_TESTS)
         )
 
         if(NOT EXISTS "${MOTIVE_EDITOR_BIN}")
-            message(STATUS "motive_editor not found at ${MOTIVE_EDITOR_BIN}; disabling integration test")
+            message(STATUS "motive_editor not found at ${MOTIVE_EDITOR_BIN}; disabling integration tests")
+            set_tests_properties(motive_runtime_ux PROPERTIES DISABLED TRUE)
             set_tests_properties(motive_rest_animation_physics PROPERTIES DISABLED TRUE)
         endif()
     else()
-        message(STATUS "Python3 interpreter not found; integration test disabled")
+        message(STATUS "Python3 interpreter not found; integration tests disabled")
     endif()
 endif()

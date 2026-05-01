@@ -59,9 +59,9 @@ EngineUiControlServer::ProfileData ProfileDataService::captureProfileData() cons
         data.motionDebugFrame = viewport->motionDebugFrameJson();
         data.motionDebugSummary = viewport->motionDebugSummaryJson();
         data.motionDebugOverlay = viewport->motionDebugOverlayOptionsJson();
+        data.tpsState = viewport->thirdPersonShooterStateJson();
     }
     return data;
 }
 
 }  // namespace motive::ui
-

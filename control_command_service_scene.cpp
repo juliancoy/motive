@@ -564,6 +564,88 @@ bool ControlCommandService::handleCharacter(const QJsonObject& body, QJsonObject
     return true;
 }
 
+bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& result) const
+{
+    auto* viewport = m_window.viewportHost();
+    if (!viewport)
+    {
+        result.insert(QStringLiteral("error"), QStringLiteral("viewport unavailable"));
+        return false;
+    }
+
+    ViewportHostWidget::SceneLight light = viewport->sceneLight();
+
+    if (body.value(QStringLiteral("create")).toBool(false) || !light.exists)
+    {
+        viewport->createSceneLight();
+        light = viewport->sceneLight();
+    }
+
+    if (body.contains(QStringLiteral("exists")))
+    {
+        light.exists = body.value(QStringLiteral("exists")).toBool(light.exists);
+    }
+
+    if (body.contains(QStringLiteral("type")))
+    {
+        const QString type = body.value(QStringLiteral("type")).toString().trimmed().toLower();
+        if (type == QStringLiteral("directional") ||
+            type == QStringLiteral("ambient") ||
+            type == QStringLiteral("hemispherical"))
+        {
+            light.type = type;
+        }
+        else
+        {
+            result.insert(QStringLiteral("error"),
+                          QStringLiteral("type must be one of: directional, ambient, hemispherical"));
+            return false;
+        }
+    }
+
+    if (body.contains(QStringLiteral("brightness")))
+    {
+        light.brightness = static_cast<float>(body.value(QStringLiteral("brightness")).toDouble(light.brightness));
+    }
+
+    QVector3D color = light.color;
+    if (body.contains(QStringLiteral("color")))
+    {
+        const QJsonArray value = body.value(QStringLiteral("color")).toArray();
+        if (value.size() != 3)
+        {
+            result.insert(QStringLiteral("error"), QStringLiteral("color must be an array of 3 numbers"));
+            return false;
+        }
+        color = QVector3D(
+            static_cast<float>(value.at(0).toDouble(color.x())),
+            static_cast<float>(value.at(1).toDouble(color.y())),
+            static_cast<float>(value.at(2).toDouble(color.z())));
+    }
+    if (body.contains(QStringLiteral("colorR")))
+    {
+        color.setX(static_cast<float>(body.value(QStringLiteral("colorR")).toDouble(color.x())));
+    }
+    if (body.contains(QStringLiteral("colorG")))
+    {
+        color.setY(static_cast<float>(body.value(QStringLiteral("colorG")).toDouble(color.y())));
+    }
+    if (body.contains(QStringLiteral("colorB")))
+    {
+        color.setZ(static_cast<float>(body.value(QStringLiteral("colorB")).toDouble(color.z())));
+    }
+    light.color = color;
+
+    viewport->setSceneLight(light);
+
+    const auto applied = viewport->sceneLight();
+    result.insert(QStringLiteral("exists"), applied.exists);
+    result.insert(QStringLiteral("type"), applied.type);
+    result.insert(QStringLiteral("brightness"), applied.brightness);
+    result.insert(QStringLiteral("color"), QJsonArray{applied.color.x(), applied.color.y(), applied.color.z()});
+    return true;
+}
+
 bool ControlCommandService::handleRebuild(QJsonObject& result) const
 {
     auto* viewport = m_window.viewportHost();
@@ -583,6 +665,20 @@ bool ControlCommandService::handleRebuildCommand(const QJsonObject& body, QJsonO
 {
     Q_UNUSED(body);
     return handleRebuild(result);
+}
+
+bool ControlCommandService::handleBootstrapTps(const QJsonObject& body, QJsonObject& result) const
+{
+    auto* viewport = m_window.viewportHost();
+    if (!viewport)
+    {
+        result.insert(QStringLiteral("error"), QStringLiteral("viewport unavailable"));
+        return false;
+    }
+
+    const bool force = body.value(QStringLiteral("force")).toBool(false);
+    result = viewport->bootstrapThirdPersonShooterReport(force);
+    return true;
 }
 
 bool ControlCommandService::handleReset(const QJsonObject& body, QJsonObject& result) const

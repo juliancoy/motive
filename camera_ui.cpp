@@ -124,6 +124,13 @@ void MainWindowShell::setupCameraSettingsPanel()
         saveProjectState();
     });
 
+    auto* centerAllButton = new QPushButton(QStringLiteral("Center All"), cameraPanel);
+    centerAllButton->setToolTip(QStringLiteral("Recenter all scene items so the hierarchy centroid is at world origin."));
+    cameraLayout->addRow(QStringLiteral("Scene"), centerAllButton);
+    connect(centerAllButton, &QPushButton::clicked, this, [this]() {
+        centerAllSceneItemsToOrigin();
+    });
+
     m_rightTabs->addTab(wrapTabInScrollArea(cameraPanel), QStringLiteral("Global"));
     
     // Store reference to parallel load checkbox for persistence (optional)

@@ -6,7 +6,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QCoreApplication>
 #include <QRegularExpression>
+#include <QSaveFile>
 
 #include <algorithm>
 
@@ -138,7 +140,40 @@ QJsonArray ProjectSession::currentViewportCameraIds() const
 
 QString ProjectSession::projectsDirPath() const
 {
-    return QDir(QDir::currentPath()).filePath(QStringLiteral("projects"));
+    return QDir(rootDirPath()).filePath(QStringLiteral("projects"));
+}
+
+QString ProjectSession::configFilePath() const
+{
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("editor.config"));
+}
+
+QString ProjectSession::rootDirPath() const
+{
+    QFile configFile(configFilePath());
+    if (configFile.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        const QString path = QString::fromUtf8(configFile.readAll()).trimmed();
+        if (!path.isEmpty() && QDir(path).exists())
+        {
+            return path;
+        }
+    }
+    return QCoreApplication::applicationDirPath();
+}
+
+void ProjectSession::setRootDirPath(const QString& path)
+{
+    if (path.isEmpty())
+    {
+        return;
+    }
+    QSaveFile config(configFilePath());
+    if (config.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+    {
+        config.write(path.toUtf8());
+        config.commit();
+    }
 }
 
 QString ProjectSession::currentProjectMarkerPath() const
@@ -198,7 +233,7 @@ void ProjectSession::ensureDefaultProjectExists()
         const QString previousId = m_currentProjectId;
         const QString previousRoot = m_currentProjectRoot;
         m_currentProjectId = id;
-        m_currentProjectRoot = QDir::currentPath();
+        m_currentProjectRoot = rootDirPath();
         saveCurrentProject();
         m_currentProjectId = previousId;
         m_currentProjectRoot = previousRoot;
@@ -237,7 +272,7 @@ bool ProjectSession::createProject(const QString& name, const QString& rootPath)
     }
 
     m_currentProjectId = id;
-    m_currentProjectRoot = QFileInfo(rootPath).isDir() ? QFileInfo(rootPath).absoluteFilePath() : QDir::currentPath();
+    m_currentProjectRoot = QFileInfo(rootPath).isDir() ? QFileInfo(rootPath).absoluteFilePath() : rootDirPath();
     saveCurrentProject();
     saveCurrentProjectMarker();
     return true;
@@ -378,7 +413,7 @@ bool ProjectSession::loadProject(const QString& projectId)
     if (!file.exists())
     {
         m_currentProjectId = projectId;
-        m_currentProjectRoot = QDir::currentPath();
+        m_currentProjectRoot = rootDirPath();
         saveCurrentProject();
         return true;
     }
@@ -467,7 +502,7 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
     if (!root.contains(QStringLiteral("base")) || !root.value(QStringLiteral("base")).isObject())
     {
         root[QStringLiteral("base")] = QJsonObject{
-            {QStringLiteral("projectRoot"), currentStateFromDocument(m_currentProjectId, root).value(QStringLiteral("projectRoot")).toString(QDir::currentPath())}
+            {QStringLiteral("projectRoot"), currentStateFromDocument(m_currentProjectId, root).value(QStringLiteral("projectRoot")).toString(rootDirPath())}
         };
     }
 
@@ -541,7 +576,7 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
     // Legacy flat format compatibility.
     return QJsonObject{
         {QStringLiteral("projectId"), root.value(QStringLiteral("projectId")).toString(projectId)},
-        {QStringLiteral("projectRoot"), root.value(QStringLiteral("projectRoot")).toString(QDir::currentPath())},
+        {QStringLiteral("projectRoot"), root.value(QStringLiteral("projectRoot")).toString(rootDirPath())},
         {QStringLiteral("galleryPath"), root.value(QStringLiteral("galleryPath")).toString()},
         {QStringLiteral("selectedAssetPath"), root.value(QStringLiteral("selectedAssetPath")).toString()},
         {QStringLiteral("viewportAssetPath"), root.value(QStringLiteral("viewportAssetPath")).toString()},
@@ -573,7 +608,7 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     }
     else
     {
-        m_currentProjectRoot = QDir::currentPath();
+        m_currentProjectRoot = rootDirPath();
     }
 
     m_currentGalleryPath = state.value(QStringLiteral("galleryPath")).toString();

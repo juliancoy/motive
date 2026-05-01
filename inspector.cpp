@@ -19,7 +19,7 @@
 
 namespace motive::ui {
 
-void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
+void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, bool focusContextTab)
 {
     m_updatingInspector = true;
     const int row = currentItem ? currentItem->data(0, Qt::UserRole).toInt() : -1;
@@ -518,6 +518,41 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             m_motionOverlayVelocityScaleSpin->blockSignals(false);
         }
     };
+    const auto setTextInspector = [this](bool visible, const ViewportHostWidget::SceneItem* item = nullptr)
+    {
+        if (!m_textSection)
+        {
+            return;
+        }
+        m_textSection->setVisible(true);
+        m_textSection->setEnabled(visible);
+        if (!visible || !item)
+        {
+            return;
+        }
+        if (m_textContentEdit) m_textContentEdit->setText(item->textContent);
+        if (m_textFontPathEdit) m_textFontPathEdit->setText(item->textFontPath);
+        if (m_textPixelHeightSpin) m_textPixelHeightSpin->setValue(item->textPixelHeight);
+        if (m_textBoldCheck) m_textBoldCheck->setChecked(item->textBold);
+        if (m_textItalicCheck) m_textItalicCheck->setChecked(item->textItalic);
+        if (m_textShadowCheck) m_textShadowCheck->setChecked(item->textShadow);
+        if (m_textOutlineCheck) m_textOutlineCheck->setChecked(item->textOutline);
+        if (m_textLetterSpacingSpin) m_textLetterSpacingSpin->setValue(item->textLetterSpacing);
+        if (m_textExtrudeDepthSpin) m_textExtrudeDepthSpin->setValue(item->textExtrudeDepth);
+        if (m_textExtrudeGlyphsOnlyCheck) m_textExtrudeGlyphsOnlyCheck->setChecked(item->textExtrudeGlyphsOnly);
+        if (m_textDepthTestCheck) m_textDepthTestCheck->setChecked(item->textDepthTest);
+        if (m_textDepthWriteCheck) m_textDepthWriteCheck->setChecked(item->textDepthWrite);
+        if (m_textColorSwatch)
+        {
+            m_textColorSwatch->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(item->textColor));
+            m_textColorSwatch->setProperty("textColor", item->textColor);
+        }
+        if (m_textBgColorSwatch)
+        {
+            m_textBgColorSwatch->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(item->textBackgroundColor));
+            m_textBgColorSwatch->setProperty("textBgColor", item->textBackgroundColor);
+        }
+    };
     const auto vec3FromJson = [](const QJsonValue& value) -> QVector3D
     {
         const QJsonArray arr = value.toArray();
@@ -617,7 +652,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_cameraTypeValue, isFollowCamera ? QStringLiteral("Follow Camera")
                                                        : QStringLiteral("Free Camera"));
             setBoundsSummary(-1);
-            setElementDetailTab(3); // Camera
+            if (focusContextTab)
+            {
+                setElementDetailTab(3); // Camera
+            }
             setPlacementInspector(-1);
             
             // Show free fly checkbox for all cameras
@@ -741,6 +779,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setCharacterMotionInspector(false);
             setObjectRuntimeInspector(false);
             setMotionOverlayInspector(true);
+            setTextInspector(false);
             setTexturePreview(QImage());
             
             // Show follow target selector for all cameras
@@ -756,7 +795,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_cameraTypeValue, QStringLiteral("-"));
             setBoundsSummary(-1);
-            setElementDetailTab(1); // Visual
+            if (focusContextTab)
+            {
+                setElementDetailTab(1); // Visual
+            }
             setPlacementInspector(-1);
             if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
@@ -778,6 +820,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
             setCharacterMotionInspector(false);
             setObjectRuntimeInspector(false);
             setMotionOverlayInspector(true);
+            setTextInspector(false);
             if (m_lockScaleXYZCheck) {
                 m_lockScaleXYZCheck->setVisible(true);
                 m_lockScaleXYZCheck->setEnabled(false);
@@ -866,6 +909,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         setCharacterMotionInspector(false);
         setObjectRuntimeInspector(false);
         setMotionOverlayInspector(true);
+        setTextInspector(false);
         if (m_lockScaleXYZCheck) {
             m_lockScaleXYZCheck->setVisible(true);
             m_lockScaleXYZCheck->setEnabled(false);
@@ -876,7 +920,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     }
 
     const auto& item = m_sceneItems[row];
-    setElementDetailTab(0); // Overview
+    if (focusContextTab)
+    {
+        setElementDetailTab(0); // Overview
+    }
     setValue(m_inspectorNameValue, item.name);
     setValue(m_inspectorPathValue, QDir::toNativeSeparators(item.sourcePath));
     setValue(m_animationModeValue,
@@ -916,16 +963,17 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
         m_paintColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
         m_paintColorWidget->setProperty("paintColor", color.name());
     }
+    const bool isTextItem = item.sourcePath.startsWith(QStringLiteral("text://"), Qt::CaseInsensitive);
     const QString suffix = QFileInfo(item.sourcePath).suffix().toLower();
     const bool loadVisible = suffix == QStringLiteral("gltf") || suffix == QStringLiteral("glb");
     const bool primitiveControlsVisible = m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0;
-    setLoadInspectorVisible(loadVisible, item.meshConsolidationEnabled);
-    setPrimitiveInspectorVisible(primitiveControlsVisible,
-                                 m_viewportHost ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
+    setLoadInspectorVisible(!isTextItem && loadVisible, item.meshConsolidationEnabled);
+    setPrimitiveInspectorVisible(!isTextItem && primitiveControlsVisible,
+                                 (!isTextItem && m_viewportHost) ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
     if (m_materialSection)
     {
         m_materialSection->setVisible(true);
-        m_materialSection->setEnabled(loadVisible || primitiveControlsVisible);
+        m_materialSection->setEnabled(!isTextItem && (loadVisible || primitiveControlsVisible));
     }
     if (m_primitiveForceAlphaButton)
     {
@@ -937,6 +985,20 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                                                            : QStringLiteral("Set Alpha 1"));
     }
     setLightInspectorVisible(false);
+    setTextInspector(isTextItem, &item);
+    if (isTextItem)
+    {
+        setFollowTargetInspectorVisible(false);
+        setFollowParamsVisible(false);
+        setAnimationInspector(false);
+        setGravityInspector(false);
+        setCharacterMotionInspector(false);
+        setObjectRuntimeInspector(false);
+        setMotionOverlayInspector(true);
+        setTexturePreview(QImage());
+        m_updatingInspector = false;
+        return;
+    }
     int followCameraIndex = -1;
     bool hasObjectFollowCamera = false;
     ViewportHostWidget::CameraConfig objectFollowConfig;
@@ -979,7 +1041,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
     {
         selectedClip = item.activeAnimationClip;
     }
-    setAnimationInspector(!animationClips.isEmpty(),
+    setAnimationInspector(!isTextItem && !animationClips.isEmpty(),
                           animationClips,
                           selectedClip,
                           item.animationPlaying,
@@ -989,8 +1051,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem)
                           item.animationCentroidNormalization,
                           item.animationTrimStartNormalized,
                           item.animationTrimEndNormalized);
-    setGravityInspector(true, item.useGravity, item.customGravity);
-    setCharacterMotionInspector(true, item.characterTurnResponsiveness);
+    setGravityInspector(!isTextItem, item.useGravity, item.customGravity);
+    setCharacterMotionInspector(!isTextItem, item.characterTurnResponsiveness);
     if (m_viewportHost)
     {
         QString followCamInfo = QStringLiteral("None");

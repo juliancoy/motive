@@ -318,7 +318,8 @@ void Display::render()
                 {
                     for (const auto& primitive : mesh.primitives)
                     {
-                        const bool isTransparent = primitive->alphaMode == PrimitiveAlphaMode::Blend;
+                        const bool blendAlpha = primitive->alphaMode == PrimitiveAlphaMode::Blend;
+                        const bool isTransparent = blendAlpha && !primitive->depthWriteEnabled;
                         if (isTransparent != transparentPass)
                         {
                             continue;
@@ -326,11 +327,18 @@ void Display::render()
 
                         const uint32_t pipelineIndex = pipelineIndexForCullMode(primitive->cullMode, cullingDisabled, use2DPipeline);
                         const bool useSkinnedPipeline = primitive->gpuSkinningEnabled && !use2DPipeline;
+                        const bool depthTestEnabled = primitive->depthTestEnabled;
                         const VkPipeline activePipeline = useSkinnedPipeline
-                            ? (transparentPass ? transparentSkinnedGraphicsPipelines[pipelineIndex]
-                                               : skinnedGraphicsPipelines[pipelineIndex])
-                            : (transparentPass ? transparentGraphicsPipelines[pipelineIndex]
-                                               : graphicsPipelines[pipelineIndex]);
+                            ? (depthTestEnabled
+                                   ? (transparentPass ? transparentSkinnedGraphicsPipelines[pipelineIndex]
+                                                      : skinnedGraphicsPipelines[pipelineIndex])
+                                   : (transparentPass ? noDepthTransparentSkinnedGraphicsPipelines[pipelineIndex]
+                                                      : noDepthSkinnedGraphicsPipelines[pipelineIndex]))
+                            : (depthTestEnabled
+                                   ? (transparentPass ? transparentGraphicsPipelines[pipelineIndex]
+                                                      : graphicsPipelines[pipelineIndex])
+                                   : (transparentPass ? noDepthTransparentGraphicsPipelines[pipelineIndex]
+                                                      : noDepthGraphicsPipelines[pipelineIndex]));
 
                         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, activePipeline);
 

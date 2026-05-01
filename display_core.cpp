@@ -49,8 +49,12 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     graphicsQueue = engine->graphicsQueue;
     graphicsPipelines.fill(VK_NULL_HANDLE);
     transparentGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthTransparentGraphicsPipelines.fill(VK_NULL_HANDLE);
     skinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
     transparentSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthTransparentSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
 
     createWindow(title);
     createCommandPool();
@@ -142,6 +146,38 @@ Display::~Display()
             }
         }
         for (VkPipeline& pipeline : transparentSkinnedGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthTransparentGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthSkinnedGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthTransparentSkinnedGraphicsPipelines)
         {
             if (pipeline != VK_NULL_HANDLE)
             {

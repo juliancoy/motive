@@ -4,7 +4,9 @@
 #include "camera_follow_settings.h"
 #include "transform_undo_command.h"
 #include "physics_interface.h"
-#include "login_dialog.h"
+#include <cppmonetize/MonetizeClient.h>
+#include <cppmonetize/OAuthDesktopFlow.h>
+#include <cppmonetize/TokenStore.h>
 
 #include <glm/glm.hpp>
 
@@ -46,6 +48,115 @@
 
 namespace motive::ui {
 namespace {
+
+std::unique_ptr<cppmonetize::TokenStore> createTokenStore()
+{
+    cppmonetize::TokenStoreConfig cfg;
+    cfg.appName = QStringLiteral("motive_editor");
+    cfg.orgName = QStringLiteral("motive");
+    cfg.serviceName = QStringLiteral("motive.auth");
+    return cppmonetize::createDefaultTokenStore(cfg);
+}
+
+QString storedToken()
+{
+    auto store = createTokenStore();
+    const auto result = store->loadToken();
+    if (!result.hasValue())
+    {
+        return {};
+    }
+    return result.value().trimmed();
+}
+
+QString storedEmail()
+{
+    auto store = createTokenStore();
+    const auto result = store->loadUserId();
+    if (!result.hasValue())
+    {
+        return {};
+    }
+    return result.value().trimmed();
+}
+
+void clearCredentials()
+{
+    auto store = createTokenStore();
+    store->clear();
+}
+
+cppmonetize::MonetizeClient createMonetizeClient(const QString& apiBaseUrl)
+{
+    cppmonetize::ClientConfig cfg;
+    cfg.apiBaseUrl = apiBaseUrl;
+    cfg.clientId = QStringLiteral("motive-editor");
+    return cppmonetize::MonetizeClient(cfg);
+}
+
+bool signInWithBrowser(const QString& apiBaseUrl, const QString& provider, QString* outError)
+{
+    if (outError)
+    {
+        outError->clear();
+    }
+
+    cppmonetize::MonetizeClient client = createMonetizeClient(apiBaseUrl);
+    const auto oauthCfgResult = client.fetchOAuthConfig();
+    if (!oauthCfgResult.hasValue())
+    {
+        if (outError)
+        {
+            *outError = oauthCfgResult.error().message;
+        }
+        return false;
+    }
+
+    cppmonetize::OAuthConfig flowCfg = oauthCfgResult.value();
+    if (!flowCfg.enabled)
+    {
+        if (outError)
+        {
+            *outError = QStringLiteral("OAuth is not enabled for this API.");
+        }
+        return false;
+    }
+
+    cppmonetize::OAuthDesktopFlow flow;
+    const auto authResult = flow.signInWithBrowserPkce(flowCfg, provider, 180000);
+    if (!authResult.hasValue())
+    {
+        if (outError)
+        {
+            *outError = authResult.error().message;
+        }
+        return false;
+    }
+
+    const QString token = authResult.value().token.trimmed();
+    if (token.isEmpty())
+    {
+        if (outError)
+        {
+            *outError = QStringLiteral("OAuth callback did not return a token.");
+        }
+        return false;
+    }
+
+    QString email = authResult.value().email.trimmed();
+    if (email.isEmpty())
+    {
+        const auto who = client.whoAmI(token);
+        if (who.hasValue())
+        {
+            email = who.value().email.trimmed();
+        }
+    }
+
+    auto store = createTokenStore();
+    store->storeToken(token, email);
+    return true;
+}
 
 QString editorDarkStyleSheet()
 {
@@ -181,6 +292,22 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_hierarchyTree->viewport()->installEventFilter(this);
     connect(m_hierarchyTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos)
     {
+        const auto createAndSelectTextItem = [this]() {
+            if (!m_viewportHost)
+            {
+                return;
+            }
+            m_viewportHost->addTextOverlayToScene();
+            const auto itemsAfter = m_viewportHost->sceneItems();
+            const int newIndex = itemsAfter.size() - 1;
+            refreshHierarchy(itemsAfter);
+            if (newIndex >= 0)
+            {
+                selectHierarchySceneItem(newIndex);
+            }
+            saveProjectState();
+        };
+
         QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
         const int row = item ? item->data(0, Qt::UserRole).toInt() : -1;
         const int nodeType = item ? item->data(0, Qt::UserRole + 3).toInt() : -1;
@@ -191,11 +318,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         {
             QMenu menu(this);
             QAction* createLightAction = menu.addAction(QStringLiteral("Create Light"));
+            QAction* createTextAction = menu.addAction(QStringLiteral("Create Text"));
             if (m_viewportHost && m_viewportHost->hasSceneLight())
             {
                 createLightAction->setEnabled(false);
             }
-            if (menu.exec(m_hierarchyTree->mapToGlobal(pos)) == createLightAction && m_viewportHost)
+            QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
+            if (chosen == createLightAction && m_viewportHost)
             {
                 m_viewportHost->createSceneLight();
                 refreshHierarchy(m_viewportHost->sceneItems());
@@ -204,6 +333,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
                 {
                     m_hierarchyTree->setCurrentItem(matches.front());
                 }
+            }
+            else if (chosen == createTextAction && m_viewportHost)
+            {
+                createAndSelectTextItem();
             }
             return;
         }
@@ -309,6 +442,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         QAction* focusAction = menu.addAction(QStringLiteral("Focus"));
         QAction* setFocusPointAction = menu.addAction(QStringLiteral("Set Focus Point"));
         QAction* relocateAction = menu.addAction(QStringLiteral("Relocate 5m in front of camera"));
+        QAction* createTextAction = menu.addAction(QStringLiteral("Create Text"));
         
         // Add Follow submenu
         QMenu* followMenu = menu.addMenu(QStringLiteral("Follow"));
@@ -349,6 +483,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         {
             m_viewportHost->relocateSceneItemInFrontOfCamera(row);
             updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+        else if (chosen == createTextAction)
+        {
+            createAndSelectTextItem();
         }
         else if (chosen == createFollowAction)
         {
@@ -557,6 +695,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
     m_assetBrowser->setRootPathChangedCallback([this](const QString& rootPath)
     {
+        m_projectSession.setRootDirPath(rootPath);
         m_projectSession.setCurrentProjectRoot(rootPath);
         m_projectSession.setCurrentGalleryPath(m_assetBrowser ? m_assetBrowser->galleryPath() : QString());
         saveProjectState();
@@ -794,6 +933,46 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_placementApplyButton = new QPushButton(QStringLiteral("Stand In Target Scene"), inspectorPanel);
     m_placementLandmarksValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_placementLandmarksValue->setWordWrap(true);
+    m_textContentEdit = new QLineEdit(inspectorPanel);
+    m_textContentEdit->setPlaceholderText(QStringLiteral("Overlay text"));
+    m_textFontPathEdit = new QLineEdit(inspectorPanel);
+    m_textFontPathEdit->setPlaceholderText(QStringLiteral("Font path (.ttf/.otf), empty = nofile.ttf"));
+    m_textPixelHeightSpin = new QSpinBox(inspectorPanel);
+    m_textPixelHeightSpin->setRange(8, 256);
+    m_textPixelHeightSpin->setValue(56);
+    m_textBoldCheck = new QCheckBox(QStringLiteral("Bold"), inspectorPanel);
+    m_textItalicCheck = new QCheckBox(QStringLiteral("Italic"), inspectorPanel);
+    m_textShadowCheck = new QCheckBox(QStringLiteral("Shadow"), inspectorPanel);
+    m_textShadowCheck->setChecked(true);
+    m_textOutlineCheck = new QCheckBox(QStringLiteral("Outline"), inspectorPanel);
+    m_textExtrudeDepthSpin = createSpinBox(inspectorPanel, 0.0, 10.0, 0.01);
+    m_textExtrudeDepthSpin->setValue(0.02);
+    m_textExtrudeGlyphsOnlyCheck = new QCheckBox(QStringLiteral("Glyphs Only"), inspectorPanel);
+    m_textExtrudeGlyphsOnlyCheck->setChecked(true);
+    m_textDepthTestCheck = new QCheckBox(QStringLiteral("Depth Test"), inspectorPanel);
+    m_textDepthTestCheck->setChecked(true);
+    m_textDepthWriteCheck = new QCheckBox(QStringLiteral("Depth Write"), inspectorPanel);
+    m_textLetterSpacingSpin = new QSpinBox(inspectorPanel);
+    m_textLetterSpacingSpin->setRange(-8, 24);
+    m_textLetterSpacingSpin->setValue(0);
+    m_textColorSwatch = new QWidget(inspectorPanel);
+    m_textColorSwatch->setFixedSize(60, 24);
+    m_textColorSwatch->setStyleSheet(QStringLiteral("background-color: #ffffff; border: 1px solid #888;"));
+    m_textColorSwatch->setProperty("textColor", QStringLiteral("#ffffffff"));
+    m_textBgColorSwatch = new QWidget(inspectorPanel);
+    m_textBgColorSwatch->setFixedSize(60, 24);
+    m_textBgColorSwatch->setStyleSheet(QStringLiteral("background-color: #aa000000; border: 1px solid #888;"));
+    m_textBgColorSwatch->setProperty("textBgColor", QStringLiteral("#aa000000"));
+    auto* textColorButton = new QPushButton(QStringLiteral("Text"), inspectorPanel);
+    auto* textBgColorButton = new QPushButton(QStringLiteral("Background"), inspectorPanel);
+    auto* textColorRow = new QWidget(inspectorPanel);
+    auto* textColorRowLayout = new QHBoxLayout(textColorRow);
+    textColorRowLayout->setContentsMargins(0, 0, 0, 0);
+    textColorRowLayout->addWidget(m_textColorSwatch);
+    textColorRowLayout->addWidget(textColorButton);
+    textColorRowLayout->addWidget(m_textBgColorSwatch);
+    textColorRowLayout->addWidget(textBgColorButton);
+    textColorRowLayout->addStretch(1);
     
     // Per-object Gravity controls
     m_elementUseGravityCheck = new QCheckBox(QStringLiteral("Use World Gravity"), inspectorPanel);
@@ -926,6 +1105,37 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     placementLayout->addRow(QStringLiteral("Landmarks"), m_placementLandmarksValue);
     placementLayout->addRow(QStringLiteral("Action"), m_placementApplyButton);
 
+    m_textSection = new QGroupBox(QStringLiteral("Text"), overviewTab);
+    auto* textLayout = new QFormLayout(m_textSection);
+    textLayout->addRow(QStringLiteral("Content"), m_textContentEdit);
+    textLayout->addRow(QStringLiteral("Font"), m_textFontPathEdit);
+    textLayout->addRow(QStringLiteral("Size"), m_textPixelHeightSpin);
+    auto* textStyleRow = new QWidget(m_textSection);
+    auto* textStyleLayout = new QHBoxLayout(textStyleRow);
+    textStyleLayout->setContentsMargins(0, 0, 0, 0);
+    textStyleLayout->addWidget(m_textBoldCheck);
+    textStyleLayout->addWidget(m_textItalicCheck);
+    textStyleLayout->addWidget(m_textShadowCheck);
+    textStyleLayout->addWidget(m_textOutlineCheck);
+    textStyleLayout->addStretch(1);
+    textLayout->addRow(QStringLiteral("Style"), textStyleRow);
+    textLayout->addRow(QStringLiteral("Letter Spacing"), m_textLetterSpacingSpin);
+    auto* textExtrudeRow = new QWidget(m_textSection);
+    auto* textExtrudeLayout = new QHBoxLayout(textExtrudeRow);
+    textExtrudeLayout->setContentsMargins(0, 0, 0, 0);
+    textExtrudeLayout->addWidget(m_textExtrudeDepthSpin);
+    textExtrudeLayout->addWidget(m_textExtrudeGlyphsOnlyCheck);
+    textExtrudeLayout->addStretch(1);
+    textLayout->addRow(QStringLiteral("Extrude"), textExtrudeRow);
+    auto* textDepthRow = new QWidget(m_textSection);
+    auto* textDepthLayout = new QHBoxLayout(textDepthRow);
+    textDepthLayout->setContentsMargins(0, 0, 0, 0);
+    textDepthLayout->addWidget(m_textDepthTestCheck);
+    textDepthLayout->addWidget(m_textDepthWriteCheck);
+    textDepthLayout->addStretch(1);
+    textLayout->addRow(QStringLiteral("Depth"), textDepthRow);
+    textLayout->addRow(QStringLiteral("Colors"), textColorRow);
+
     m_physicsSection = new QGroupBox(QStringLiteral("Physics & Motion"), motionTab);
     auto* physicsLayout = new QFormLayout(m_physicsSection);
     physicsLayout->addRow(QStringLiteral("WASD Enablement"), m_freeFlyCameraCheck);
@@ -951,6 +1161,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     overviewLayout->addWidget(m_summarySection);
     overviewLayout->addWidget(m_transformSection);
     overviewLayout->addWidget(m_placementSection);
+    overviewLayout->addWidget(m_textSection);
     overviewLayout->addStretch(1);
 
     visualLayout->addWidget(m_materialSection);
@@ -1099,7 +1310,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
                 }
             }
         }
-        updateInspectorForSelection(current);
+        updateInspectorForSelection(current, true);
         updateWasdRoutingStatus();
     });
 
@@ -1752,6 +1963,74 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         }
         refreshPlacementInspector();
     });
+    auto applyTextInspector = [this, selectedSceneItemIndex]() {
+        if (m_updatingInspector || !m_viewportHost || !m_textContentEdit || !m_textFontPathEdit ||
+            !m_textPixelHeightSpin || !m_textBoldCheck || !m_textItalicCheck || !m_textShadowCheck ||
+            !m_textOutlineCheck || !m_textLetterSpacingSpin || !m_textExtrudeDepthSpin || !m_textExtrudeGlyphsOnlyCheck || !m_textColorSwatch || !m_textBgColorSwatch ||
+            !m_textDepthTestCheck || !m_textDepthWriteCheck)
+        {
+            return;
+        }
+        const int row = selectedSceneItemIndex();
+        if (row < 0 || row >= m_sceneItems.size() ||
+            !m_sceneItems[row].sourcePath.startsWith(QStringLiteral("text://"), Qt::CaseInsensitive))
+        {
+            return;
+        }
+
+        auto item = m_sceneItems[row];
+        item.textContent = m_textContentEdit->text();
+        item.textFontPath = m_textFontPathEdit->text();
+        item.textPixelHeight = m_textPixelHeightSpin->value();
+        item.textBold = m_textBoldCheck->isChecked();
+        item.textItalic = m_textItalicCheck->isChecked();
+        item.textShadow = m_textShadowCheck->isChecked();
+        item.textOutline = m_textOutlineCheck->isChecked();
+        item.textLetterSpacing = m_textLetterSpacingSpin->value();
+        item.textExtrudeDepth = static_cast<float>(m_textExtrudeDepthSpin->value());
+        item.textExtrudeGlyphsOnly = m_textExtrudeGlyphsOnlyCheck->isChecked();
+        item.textColor = m_textColorSwatch->property("textColor").toString();
+        item.textBackgroundColor = m_textBgColorSwatch->property("textBgColor").toString();
+        item.textDepthTest = m_textDepthTestCheck->isChecked();
+        item.textDepthWrite = m_textDepthWriteCheck->isChecked();
+        m_sceneItems[row] = item;
+        m_viewportHost->updateSceneItemTextOverlay(row, item);
+        saveProjectState();
+    };
+    connect(m_textContentEdit, &QLineEdit::textChanged, this, [applyTextInspector](const QString&) { applyTextInspector(); });
+    connect(m_textFontPathEdit, &QLineEdit::textChanged, this, [applyTextInspector](const QString&) { applyTextInspector(); });
+    connect(m_textPixelHeightSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [applyTextInspector](int) { applyTextInspector(); });
+    connect(m_textBoldCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textItalicCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textShadowCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textOutlineCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textLetterSpacingSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [applyTextInspector](int) { applyTextInspector(); });
+    connect(m_textExtrudeDepthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyTextInspector](double) { applyTextInspector(); });
+    connect(m_textExtrudeGlyphsOnlyCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textDepthTestCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(m_textDepthWriteCheck, &QCheckBox::toggled, this, [applyTextInspector](bool) { applyTextInspector(); });
+    connect(textColorButton, &QPushButton::clicked, this, [this, applyTextInspector]() {
+        const QColor initial = QColor(m_textColorSwatch ? m_textColorSwatch->property("textColor").toString() : QStringLiteral("#ffffffff"));
+        const QColor picked = QColorDialog::getColor(initial, this, QStringLiteral("Select Text Color"), QColorDialog::ShowAlphaChannel);
+        if (!picked.isValid() || !m_textColorSwatch)
+        {
+            return;
+        }
+        m_textColorSwatch->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(picked.name(QColor::HexArgb)));
+        m_textColorSwatch->setProperty("textColor", picked.name(QColor::HexArgb));
+        applyTextInspector();
+    });
+    connect(textBgColorButton, &QPushButton::clicked, this, [this, applyTextInspector]() {
+        const QColor initial = QColor(m_textBgColorSwatch ? m_textBgColorSwatch->property("textBgColor").toString() : QStringLiteral("#aa000000"));
+        const QColor picked = QColorDialog::getColor(initial, this, QStringLiteral("Select Text Background Color"), QColorDialog::ShowAlphaChannel);
+        if (!picked.isValid() || !m_textBgColorSwatch)
+        {
+            return;
+        }
+        m_textBgColorSwatch->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(picked.name(QColor::HexArgb)));
+        m_textBgColorSwatch->setProperty("textBgColor", picked.name(QColor::HexArgb));
+        applyTextInspector();
+    });
 
     connect(m_takeWasdControlButton, &QPushButton::clicked, this, [this, ensureFollowCameraIndexForScene, selectedSceneItemIndex]() {
         if (!m_viewportHost)
@@ -1974,8 +2253,8 @@ void MainWindowShell::refreshProfileAvatarButton()
         return;
     }
 
-    const QString token = LoginDialog::storedToken().trimmed();
-    const QString email = LoginDialog::storedEmail().trimmed();
+    const QString token = storedToken();
+    const QString email = storedEmail();
     const bool loggedIn = !token.isEmpty();
     QString label = loggedIn ? (email.isEmpty() ? QStringLiteral("Profile") : email)
                              : QStringLiteral("Guest");
@@ -1998,7 +2277,7 @@ void MainWindowShell::refreshProfileAvatarButton()
 
 void MainWindowShell::onProfileAvatarClicked()
 {
-    const bool loggedIn = !LoginDialog::storedToken().trimmed().isEmpty();
+    const bool loggedIn = !storedToken().isEmpty();
 
     if (!loggedIn) {
         if (m_authApiBaseUrl.trimmed().isEmpty()) {
@@ -2009,14 +2288,22 @@ void MainWindowShell::onProfileAvatarClicked()
             return;
         }
 
-        LoginDialog loginDialog(m_authApiBaseUrl, this);
-        loginDialog.exec();
+        QString error;
+        const bool ok = signInWithBrowser(m_authApiBaseUrl, QStringLiteral("google"), &error);
+        if (!ok)
+        {
+            QMessageBox::warning(this,
+                                 QStringLiteral("Sign In Failed"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("OAuth sign-in failed.")
+                                     : error);
+        }
         refreshProfileAvatarButton();
         return;
     }
 
     QMenu menu(this);
-    const QString email = LoginDialog::storedEmail().trimmed();
+    const QString email = storedEmail();
     QAction* status = menu.addAction(
         QStringLiteral("Signed in as %1").arg(email.isEmpty() ? QStringLiteral("user") : email));
     status->setEnabled(false);
@@ -2027,13 +2314,21 @@ void MainWindowShell::onProfileAvatarClicked()
     QAction* chosen = menu.exec(
         m_profileAvatarButton->mapToGlobal(QPoint(0, m_profileAvatarButton->height())));
     if (chosen == switchAccount) {
-        LoginDialog::clearCredentials();
+        clearCredentials();
         if (!m_authApiBaseUrl.trimmed().isEmpty()) {
-            LoginDialog loginDialog(m_authApiBaseUrl, this);
-            loginDialog.exec();
+            QString error;
+            const bool ok = signInWithBrowser(m_authApiBaseUrl, QStringLiteral("google"), &error);
+            if (!ok)
+            {
+                QMessageBox::warning(this,
+                                     QStringLiteral("Switch Account Failed"),
+                                     error.isEmpty()
+                                         ? QStringLiteral("OAuth sign-in failed.")
+                                         : error);
+            }
         }
     } else if (chosen == signOut) {
-        LoginDialog::clearCredentials();
+        clearCredentials();
     }
 
     refreshProfileAvatarButton();
@@ -2126,6 +2421,52 @@ void MainWindowShell::updateWasdRoutingStatus()
     m_wasdRoutingStatusValue->setText(status);
 }
 
+void MainWindowShell::centerAllSceneItemsToOrigin()
+{
+    if (!m_viewportHost)
+    {
+        return;
+    }
+
+    const QList<ViewportHostWidget::SceneItem> sceneItems = m_viewportHost->sceneItems();
+    if (sceneItems.isEmpty())
+    {
+        return;
+    }
+
+    QVector3D centroid(0.0f, 0.0f, 0.0f);
+    int count = 0;
+    for (int i = 0; i < sceneItems.size(); ++i)
+    {
+        const QVector3D center = m_viewportHost->sceneItemBoundsCenter(i);
+        if (!std::isfinite(center.x()) || !std::isfinite(center.y()) || !std::isfinite(center.z()))
+        {
+            continue;
+        }
+        centroid += center;
+        ++count;
+    }
+
+    if (count <= 0)
+    {
+        return;
+    }
+    centroid /= static_cast<float>(count);
+
+    for (int i = 0; i < sceneItems.size(); ++i)
+    {
+        const QVector3D newTranslation = sceneItems[i].translation - centroid;
+        m_viewportHost->updateSceneItemTransform(i, newTranslation, sceneItems[i].rotation, sceneItems[i].scale);
+    }
+
+    m_sceneItems = m_viewportHost->sceneItems();
+    saveProjectState();
+    if (m_hierarchyTree && m_hierarchyTree->currentItem())
+    {
+        updateInspectorForSelection(m_hierarchyTree->currentItem());
+    }
+}
+
 QJsonArray MainWindowShell::hierarchyJson() const
 {
     return m_viewportHost ? m_viewportHost->hierarchyJson() : QJsonArray{};
@@ -2138,28 +2479,44 @@ bool MainWindowShell::selectHierarchySceneItem(int sceneIndex)
         return false;
     }
 
-    const QList<QTreeWidgetItem*> items =
-        m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
-    for (QTreeWidgetItem* item : items)
+    const auto selectFromTree = [this, sceneIndex]() -> bool
     {
-        if (!item)
+        const QList<QTreeWidgetItem*> items =
+            m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        for (QTreeWidgetItem* item : items)
         {
-            continue;
+            if (!item)
+            {
+                continue;
+            }
+            const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
+            if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem))
+            {
+                continue;
+            }
+            if (item->data(0, Qt::UserRole).toInt() != sceneIndex)
+            {
+                continue;
+            }
+            m_hierarchyTree->setCurrentItem(item);
+            item->setSelected(true);
+            updateInspectorForSelection(item, true);
+            updateWasdRoutingStatus();
+            return true;
         }
-        const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
-        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem))
-        {
-            continue;
-        }
-        if (item->data(0, Qt::UserRole).toInt() != sceneIndex)
-        {
-            continue;
-        }
-        m_hierarchyTree->setCurrentItem(item);
-        item->setSelected(true);
-        updateInspectorForSelection(item);
-        updateWasdRoutingStatus();
+        return false;
+    };
+
+    if (selectFromTree())
+    {
         return true;
+    }
+
+    // Selection calls may race hierarchy refresh; perform one deterministic sync + retry.
+    if (m_viewportHost)
+    {
+        refreshHierarchy(m_viewportHost->sceneItems());
+        return selectFromTree();
     }
     return false;
 }
@@ -2171,37 +2528,52 @@ bool MainWindowShell::selectHierarchyCamera(const QString& cameraId, int cameraI
         return false;
     }
 
-    const QList<QTreeWidgetItem*> items =
-        m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
-    for (QTreeWidgetItem* item : items)
+    const auto selectFromTree = [this, &cameraId, cameraIndex]() -> bool
     {
-        if (!item)
+        const QList<QTreeWidgetItem*> items =
+            m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        for (QTreeWidgetItem* item : items)
         {
-            continue;
-        }
-        const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
-        if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
-        {
-            continue;
-        }
+            if (!item)
+            {
+                continue;
+            }
+            const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
+            if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera))
+            {
+                continue;
+            }
 
-        if (!cameraId.isEmpty() && item->data(0, Qt::UserRole + 6).toString() == cameraId)
-        {
-            m_hierarchyTree->setCurrentItem(item);
-            item->setSelected(true);
-            updateInspectorForSelection(item);
-            updateWasdRoutingStatus();
-            return true;
-        }
+            if (!cameraId.isEmpty() && item->data(0, Qt::UserRole + 6).toString() == cameraId)
+            {
+                m_hierarchyTree->setCurrentItem(item);
+                item->setSelected(true);
+                updateInspectorForSelection(item, true);
+                updateWasdRoutingStatus();
+                return true;
+            }
 
-        if (cameraId.isEmpty() && cameraIndex >= 0 && item->data(0, Qt::UserRole + 5).toInt() == cameraIndex)
-        {
-            m_hierarchyTree->setCurrentItem(item);
-            item->setSelected(true);
-            updateInspectorForSelection(item);
-            updateWasdRoutingStatus();
-            return true;
+            if (cameraId.isEmpty() && cameraIndex >= 0 && item->data(0, Qt::UserRole + 5).toInt() == cameraIndex)
+            {
+                m_hierarchyTree->setCurrentItem(item);
+                item->setSelected(true);
+                updateInspectorForSelection(item, true);
+                updateWasdRoutingStatus();
+                return true;
+            }
         }
+        return false;
+    };
+
+    if (selectFromTree())
+    {
+        return true;
+    }
+
+    if (m_viewportHost)
+    {
+        refreshHierarchy(m_viewportHost->sceneItems());
+        return selectFromTree();
     }
     return false;
 }

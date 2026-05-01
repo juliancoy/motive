@@ -9,8 +9,10 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QDoubleSpinBox>
@@ -53,12 +55,13 @@ private:
     void refreshWindowTitle();
     void createProject();
     void switchProject();
+    void setMediaDirProjects();
     void saveProjectState();
     void saveUiState();
     void maybePromptForGltfConversion(const QString& rootPath);
     void refreshHierarchy(const QList<ViewportHostWidget::SceneItem>& items);
     void appendHierarchyNode(QTreeWidgetItem* parent, const ViewportHostWidget::HierarchyNode& node, bool ancestorHidden = false);
-    void updateInspectorForSelection(QTreeWidgetItem* item);
+    void updateInspectorForSelection(QTreeWidgetItem* item, bool focusContextTab = false);
     void setupCameraSettingsPanel();
     void updateCameraSettingsPanel();
     void applyCameraSettings();
@@ -92,6 +95,7 @@ private:
     QGroupBox* m_physicsSection = nullptr;
     QGroupBox* m_runtimeSection = nullptr;
     QGroupBox* m_motionDebugOverlaySection = nullptr;
+    QGroupBox* m_textSection = nullptr;
     QLabel* m_inspectorNameValue = nullptr;
     QLabel* m_inspectorPathValue = nullptr;
     QLabel* m_animationModeValue = nullptr;
@@ -135,6 +139,20 @@ private:
     QCheckBox* m_motionOverlayCameraLineCheck = nullptr;
     QCheckBox* m_motionOverlayCenterCrosshairCheck = nullptr;
     QDoubleSpinBox* m_motionOverlayVelocityScaleSpin = nullptr;
+    QLineEdit* m_textContentEdit = nullptr;
+    QLineEdit* m_textFontPathEdit = nullptr;
+    QSpinBox* m_textPixelHeightSpin = nullptr;
+    QCheckBox* m_textBoldCheck = nullptr;
+    QCheckBox* m_textItalicCheck = nullptr;
+    QCheckBox* m_textShadowCheck = nullptr;
+    QCheckBox* m_textOutlineCheck = nullptr;
+    QSpinBox* m_textLetterSpacingSpin = nullptr;
+    QDoubleSpinBox* m_textExtrudeDepthSpin = nullptr;
+    QCheckBox* m_textExtrudeGlyphsOnlyCheck = nullptr;
+    QWidget* m_textColorSwatch = nullptr;
+    QWidget* m_textBgColorSwatch = nullptr;
+    QCheckBox* m_textDepthTestCheck = nullptr;
+    QCheckBox* m_textDepthWriteCheck = nullptr;
     
     QWidget* m_lightTypeWidget = nullptr;
     QComboBox* m_lightTypeCombo = nullptr;
@@ -209,6 +227,7 @@ private:
         const QVector3D& newScale);
     
     void setupUndoShortcuts();
+    void centerAllSceneItemsToOrigin();
 };
 
 }  // namespace motive::ui

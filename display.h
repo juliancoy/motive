@@ -105,8 +105,12 @@ public:
     // Pipeline arrays
     std::array<VkPipeline, 3> graphicsPipelines{};
     std::array<VkPipeline, 3> transparentGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthTransparentGraphicsPipelines{};
     std::array<VkPipeline, 3> skinnedGraphicsPipelines{};
     std::array<VkPipeline, 3> transparentSkinnedGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthSkinnedGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthTransparentSkinnedGraphicsPipelines{};
 
     bool firstFrame = true;
     std::string vertShaderPath;

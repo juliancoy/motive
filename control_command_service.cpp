@@ -137,12 +137,14 @@ bool ControlCommandService::tryHandleSceneDomain(const QString& command,
         const char* name;
         CommandHandler handler;
     };
-    static const std::array<Entry, 6> kSceneCommands{{
+    static const std::array<Entry, 8> kSceneCommands{{
         {"primitive", &ControlCommandService::handlePrimitive},
         {"scene_item", &ControlCommandService::handleSceneItem},
         {"animation", &ControlCommandService::handleAnimation},
         {"character", &ControlCommandService::handleCharacter},
+        {"light", &ControlCommandService::handleLight},
         {"rebuild", &ControlCommandService::handleRebuildCommand},
+        {"bootstrap_tps", &ControlCommandService::handleBootstrapTps},
         {"reset", &ControlCommandService::handleReset},
     }};
     for (const Entry& entry : kSceneCommands)
@@ -183,6 +185,14 @@ bool ControlCommandService::tryHandlePhysicsDomain(const QString& command,
 
 bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject& result) const
 {
+    if (!body.contains(QStringLiteral("sceneIndex")) &&
+        !body.contains(QStringLiteral("cameraId")) &&
+        !body.contains(QStringLiteral("cameraIndex")))
+    {
+        result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex or cameraId/cameraIndex is required"));
+        return false;
+    }
+
     bool selected = false;
     if (body.contains(QStringLiteral("sceneIndex")))
     {
@@ -197,7 +207,11 @@ bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject
 
     result = m_window.inspectorDebugJson();
     result.insert(QStringLiteral("selected"), selected);
-    return selected;
+    if (!selected)
+    {
+        result.insert(QStringLiteral("message"), QStringLiteral("selection target not available yet"));
+    }
+    return true;
 }
 
 }  // namespace motive::ui

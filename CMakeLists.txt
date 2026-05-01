@@ -29,6 +29,19 @@ find_package(Threads REQUIRED)
 find_package(OpenMP QUIET COMPONENTS CXX)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 find_program(GLSLANG_VALIDATOR NAMES glslangValidator REQUIRED)
+set(MOTIVE_SUPABASE_URL "https://ivwutugdrpugjqglxabw.supabase.co" CACHE STRING
+    "Default Supabase project URL for desktop auth.")
+set(MOTIVE_SUPABASE_ANON_KEY
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2d3V0dWdkcnB1Z2pxZ2x4YWJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNTM2NTIsImV4cCI6MjA5MjYyOTY1Mn0.P5Z2lvCK4qNtIN5TsvYRqjVfaLsetoT3b7dUklLeMms"
+    CACHE STRING "Default Supabase anon key for desktop auth.")
+if(NOT DEFINED CPPMONETIZE_DEFAULT_SUPABASE_URL)
+    set(CPPMONETIZE_DEFAULT_SUPABASE_URL "${MOTIVE_SUPABASE_URL}" CACHE STRING
+        "Built-in Supabase URL fallback for CPPMonetize.")
+endif()
+if(NOT DEFINED CPPMONETIZE_DEFAULT_SUPABASE_ANON_KEY)
+    set(CPPMONETIZE_DEFAULT_SUPABASE_ANON_KEY "${MOTIVE_SUPABASE_ANON_KEY}" CACHE STRING
+        "Built-in Supabase anon key fallback for CPPMonetize.")
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/CPPMonetize/CMakeLists.txt")
     add_subdirectory(external/CPPMonetize EXCLUDE_FROM_ALL)
 endif()
@@ -302,6 +315,8 @@ motive_add_app(motive2d motive2d.cpp)
 motive_add_app(encode encode.cpp)
 motive_add_app(motive_editor main.cpp)
 motive_add_app(asset_load_profile asset_load_profile.cpp)
+motive_add_app(text_oblique_png text_oblique_png.cpp)
+motive_add_app(text_extrusion_png text_extrusion_png.cpp)
 target_link_libraries(motive_editor PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 
 if(MOTIVE_ENABLE_TESTS)

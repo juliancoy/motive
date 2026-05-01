@@ -10,6 +10,7 @@
 #include <QWidget>
 #include <QString>
 #include <QStringList>
+#include "text_rendering.h"
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -100,6 +101,20 @@ public:
         bool focusCameraOffsetValid = false;
         bool characterRestPointOnReleaseEnabled = true;
         float characterRestPointOnReleaseNormalized = 1.0f;
+        QString textContent = QStringLiteral("Text");
+        QString textFontPath;
+        int textPixelHeight = 56;
+        bool textBold = false;
+        bool textItalic = false;
+        bool textShadow = true;
+        bool textOutline = false;
+        int textLetterSpacing = 0;
+        QString textColor = QStringLiteral("#ffffffff");
+        QString textBackgroundColor = QStringLiteral("#aa000000");
+        float textExtrudeDepth = 0.02f;
+        bool textExtrudeGlyphsOnly = true;
+        bool textDepthTest = false;
+        bool textDepthWrite = false;
     };
 
     struct SceneLight
@@ -152,6 +167,7 @@ public:
     void loadAssetFromPath(const QString& path);
     void loadSceneFromItems(const QList<SceneItem>& items);
     void addAssetToScene(const QString& path);
+    void addTextOverlayToScene();
     QString currentAssetPath() const;
     QList<SceneItem> sceneItems() const;
     QList<HierarchyNode> hierarchyItems() const;
@@ -244,6 +260,9 @@ public:
     bool isCharacterControlEnabled(int sceneIndex) const;
     bool injectCharacterInput(int sceneIndex, bool keyW, bool keyA, bool keyS, bool keyD, bool jumpRequested, int durationMs);
     bool playCharacterInputPattern(int sceneIndex, const QString& pattern, int stepDurationMs, int steps, bool includeJump);
+    bool bootstrapThirdPersonShooter(bool force = false);
+    QJsonObject bootstrapThirdPersonShooterReport(bool force = false);
+    QJsonObject thirdPersonShooterStateJson() const;
     motive::IPhysicsBody* getPhysicsBodyForSceneItem(int sceneIndex) const;
     void setFreeFlyCameraEnabled(bool enabled);
     bool isFreeFlyCameraEnabled() const;
@@ -266,6 +285,9 @@ public:
     void updateCameraConfig(int cameraIndex, const CameraConfig& config);
     bool normalizeSceneScaleForMeters(float targetCharacterRadius = 0.45f);
     void refresh();
+    void setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap);
+    void clearCustomOverlayBitmap();
+    void updateSceneItemTextOverlay(int index, const SceneItem& textProps);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -334,6 +356,8 @@ private:
     QTimer m_renderTimer;
     bool m_initialized = false;
     bool m_initScheduled = false;
+    bool m_tpsBootstrapPending = true;
+    bool m_tpsBootstrapApplied = false;
     bool m_hasEmittedCameraState = false;
     QLabel* m_statusLabel = nullptr;
     QWidget* m_renderSurface = nullptr;

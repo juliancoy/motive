@@ -6,6 +6,7 @@
 #   --no-validation Disable Vulkan validation layers
 #   --clean         Clean build directory first
 #   --full          Build additional executables (motive3d_runtime, motive2d, encode)
+#   --test-ux       Build and run runtime UX integration tests (requires motive_editor)
 #   --jobs N        Number of parallel jobs (default: auto)
 #   --verbose       Verbose build output
 
@@ -25,6 +26,7 @@ ENABLE_VALIDATION=ON
 CLEAN_BUILD=OFF
 VERBOSE=OFF
 FULL_BUILD=OFF
+RUN_UX_TESTS=OFF
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 # Parse arguments
@@ -51,6 +53,11 @@ while [[ $# -gt 0 ]]; do
             echo -e "${BLUE}ℹ️  Full build enabled (runtime executables will be built)${NC}"
             shift
             ;;
+        --test-ux)
+            RUN_UX_TESTS=ON
+            echo -e "${BLUE}ℹ️  Runtime UX tests enabled${NC}"
+            shift
+            ;;
         --jobs)
             JOBS="$2"
             shift 2
@@ -69,6 +76,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-validation Disable Vulkan validation layers"
             echo "  --clean         Clean build directory first"
             echo "  --full          Build motive3d, motive3d_runtime, motive2d, and encode"
+            echo "  --test-ux       Build and run runtime UX integration tests via ctest"
             echo "  --jobs N        Number of parallel jobs (default: auto)"
             echo "  --verbose       Verbose build output"
             echo "  --help, -h      Show this help message"
@@ -93,6 +101,7 @@ echo "Build type:     $BUILD_TYPE"
 echo "ASan:           $ENABLE_ASAN"
 echo "Validation:     $ENABLE_VALIDATION"
 echo "Full build:     $FULL_BUILD"
+echo "UX tests:       $RUN_UX_TESTS"
 echo "Parallel jobs:  $JOBS"
 echo ""
 
@@ -133,6 +142,10 @@ CMAKE_ARGS=(
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 )
 
+if [ "$RUN_UX_TESTS" = "ON" ]; then
+    CMAKE_ARGS+=(-DMOTIVE_ENABLE_TESTS=ON)
+fi
+
 if [ "$VERBOSE" = "ON" ]; then
     CMAKE_ARGS+=(--verbose)
 fi
@@ -148,6 +161,8 @@ echo -e "${BLUE}🔧 Building...${NC}"
 BUILD_ARGS=(--parallel "$JOBS")
 if [ "$FULL_BUILD" = "ON" ]; then
     BUILD_ARGS+=(--target motive3d motive3d_runtime motive2d encode)
+elif [ "$RUN_UX_TESTS" = "ON" ]; then
+    BUILD_ARGS+=(--target motive3d motive_editor motive_tests text_oblique_png text_extrusion_png)
 else
     BUILD_ARGS+=(--target motive3d)
 fi
@@ -168,6 +183,8 @@ echo ""
 echo "Built targets:"
 if [ "$FULL_BUILD" = "ON" ]; then
     TARGETS=(motive3d motive3d_runtime motive2d encode)
+elif [ "$RUN_UX_TESTS" = "ON" ]; then
+    TARGETS=(motive3d motive_editor motive_tests text_oblique_png text_extrusion_png)
 else
     TARGETS=(motive3d)
 fi
@@ -177,6 +194,16 @@ for f in "${TARGETS[@]}"; do
         echo "  $f ($size)"
     fi
 done
+
+if [ "$RUN_UX_TESTS" = "ON" ]; then
+    echo ""
+    echo -e "${BLUE}🧪 Running runtime UX tests...${NC}"
+    if ! ctest --output-on-failure -L ux; then
+        echo -e "${RED}❌ Runtime UX tests failed${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ Runtime UX tests passed${NC}"
+fi
 
 echo ""
 if [ "$FULL_BUILD" = "ON" ]; then

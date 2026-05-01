@@ -33,6 +33,9 @@ public:
     float currentMinPreviewTriangleAreaPx() const;
     int currentViewportCount() const;
     QJsonArray currentViewportCameraIds() const;
+    QString configFilePath() const;
+    QString rootDirPath() const;
+    void setRootDirPath(const QString& path);
     QString projectsDirPath() const;
     QString currentProjectMarkerPath() const;
     QString projectPath(const QString& projectId) const;

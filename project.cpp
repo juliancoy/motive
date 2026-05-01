@@ -42,7 +42,7 @@ void MainWindowShell::restoreSessionState()
     }
     else
     {
-        m_assetBrowser->setRootPath(QDir::currentPath());
+        m_assetBrowser->setRootPath(m_projectSession.rootDirPath());
     }
 
     m_assetBrowser->restoreGalleryPath(m_projectSession.currentGalleryPath());
@@ -105,11 +105,34 @@ void MainWindowShell::setupProjectMenu()
 {
     QMenu* projectMenu = menuBar()->addMenu(QStringLiteral("&Project"));
 
+    QAction* mediaDirProjectsAction = projectMenu->addAction(QStringLiteral("Media Dir \"Projects\""));
+    connect(mediaDirProjectsAction, &QAction::triggered, this, [this]() { setMediaDirProjects(); });
+    projectMenu->addSeparator();
+
     QAction* newProjectAction = projectMenu->addAction(QStringLiteral("New Project..."));
     connect(newProjectAction, &QAction::triggered, this, [this]() { createProject(); });
 
     QAction* switchProjectAction = projectMenu->addAction(QStringLiteral("Switch Project..."));
     connect(switchProjectAction, &QAction::triggered, this, [this]() { switchProject(); });
+}
+
+void MainWindowShell::setMediaDirProjects()
+{
+    const QString rootPath = m_projectSession.rootDirPath();
+    if (rootPath.isEmpty() || !QDir(rootPath).exists())
+    {
+        QMessageBox::warning(this, QStringLiteral("Media Dir \"Projects\""),
+                             QStringLiteral("Projects media directory is not available."));
+        return;
+    }
+
+    if (m_assetBrowser)
+    {
+        m_assetBrowser->setRootPath(rootPath);
+        m_assetBrowser->restoreGalleryPath(QString());
+    }
+    m_projectSession.setCurrentProjectRoot(rootPath);
+    saveProjectState();
 }
 
 void MainWindowShell::refreshWindowTitle()
@@ -138,7 +161,7 @@ void MainWindowShell::createProject()
     const QString rootPath = QFileDialog::getExistingDirectory(
         this,
         QStringLiteral("Select Project Root"),
-        m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath(),
+        m_assetBrowser ? m_assetBrowser->rootPath() : m_projectSession.rootDirPath(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
 
     if (!m_projectSession.createProject(name, rootPath))

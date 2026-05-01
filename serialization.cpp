@@ -141,7 +141,21 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()}},
             {QStringLiteral("focusDistance"), item.focusDistance},
             {QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()}},
-            {QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid}
+            {QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid},
+            {QStringLiteral("textContent"), item.textContent},
+            {QStringLiteral("textFontPath"), item.textFontPath},
+            {QStringLiteral("textPixelHeight"), item.textPixelHeight},
+            {QStringLiteral("textBold"), item.textBold},
+            {QStringLiteral("textItalic"), item.textItalic},
+            {QStringLiteral("textShadow"), item.textShadow},
+            {QStringLiteral("textOutline"), item.textOutline},
+            {QStringLiteral("textLetterSpacing"), item.textLetterSpacing},
+            {QStringLiteral("textColor"), item.textColor},
+            {QStringLiteral("textBackgroundColor"), item.textBackgroundColor},
+            {QStringLiteral("textExtrudeDepth"), item.textExtrudeDepth},
+            {QStringLiteral("textExtrudeGlyphsOnly"), item.textExtrudeGlyphsOnly},
+            {QStringLiteral("textDepthTest"), item.textDepthTest},
+            {QStringLiteral("textDepthWrite"), item.textDepthWrite}
         });
     }
     return array;
@@ -170,7 +184,7 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
         {
             continue;
         }
-        result.push_back(ViewportHostWidget::SceneItem{
+        ViewportHostWidget::SceneItem sceneItem{
             object.value(QStringLiteral("name")).toString(QFileInfo(sourcePath).completeBaseName()),
             sourcePath,
             object.value(QStringLiteral("meshConsolidationEnabled")).toBool(true),
@@ -196,7 +210,22 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             static_cast<float>(object.value(QStringLiteral("focusDistance")).toDouble(0.0)),
             readVector(object.value(QStringLiteral("focusCameraOffset")), QVector3D(0.0f, 0.0f, 0.0f)),
             object.value(QStringLiteral("focusCameraOffsetValid")).toBool(false)
-        });
+        };
+        sceneItem.textContent = object.value(QStringLiteral("textContent")).toString(QStringLiteral("Text"));
+        sceneItem.textFontPath = object.value(QStringLiteral("textFontPath")).toString();
+        sceneItem.textPixelHeight = object.value(QStringLiteral("textPixelHeight")).toInt(56);
+        sceneItem.textBold = object.value(QStringLiteral("textBold")).toBool(false);
+        sceneItem.textItalic = object.value(QStringLiteral("textItalic")).toBool(false);
+        sceneItem.textShadow = object.value(QStringLiteral("textShadow")).toBool(true);
+        sceneItem.textOutline = object.value(QStringLiteral("textOutline")).toBool(false);
+        sceneItem.textLetterSpacing = object.value(QStringLiteral("textLetterSpacing")).toInt(0);
+        sceneItem.textColor = object.value(QStringLiteral("textColor")).toString(QStringLiteral("#ffffffff"));
+        sceneItem.textBackgroundColor = object.value(QStringLiteral("textBackgroundColor")).toString(QStringLiteral("#aa000000"));
+        sceneItem.textExtrudeDepth = static_cast<float>(object.value(QStringLiteral("textExtrudeDepth")).toDouble(0.02));
+        sceneItem.textExtrudeGlyphsOnly = object.value(QStringLiteral("textExtrudeGlyphsOnly")).toBool(true);
+        sceneItem.textDepthTest = object.value(QStringLiteral("textDepthTest")).toBool(false);
+        sceneItem.textDepthWrite = object.value(QStringLiteral("textDepthWrite")).toBool(false);
+        result.push_back(sceneItem);
     }
     return result;
 }

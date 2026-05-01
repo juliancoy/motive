@@ -69,7 +69,7 @@ private:
     void maybePromptForGltfConversion(const QString& rootPath);
     void refreshHierarchy(const QList<SceneItem>& items);
     void appendHierarchyNode(QTreeWidgetItem* parent, const HierarchyNode& node, bool ancestorHidden = false);
-    void updateInspectorForSelection(QTreeWidgetItem* item);
+    void updateInspectorForSelection(QTreeWidgetItem* item, bool focusContextTab = false);
     void setupCameraSettingsPanel();
     void updateCameraSettingsPanel();
     void applyCameraSettings();

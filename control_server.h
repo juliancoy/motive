@@ -41,6 +41,7 @@ public:
         QJsonObject motionDebugFrame;
         QJsonObject motionDebugSummary;
         QJsonObject motionDebugOverlay;
+        QJsonObject tpsState;
     };
     
     struct PerformanceMetrics

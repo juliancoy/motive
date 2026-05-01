@@ -135,6 +135,22 @@ Model* firstControllableModel(Engine* engine)
     return nullptr;
 }
 
+bool pathLooksLikeNathanCharacter(const QString& sourcePath)
+{
+    const QString p = sourcePath.toLower();
+    return p.contains(QStringLiteral("rp_nathan")) ||
+           p.contains(QStringLiteral("nathan_animated")) ||
+           p.contains(QStringLiteral("55-rp_nathan"));
+}
+
+bool pathLooksLikeEnvironmentScene(const QString& sourcePath)
+{
+    const QString p = sourcePath.toLower();
+    return p.contains(QStringLiteral("/city/")) ||
+           p.contains(QStringLiteral("china")) ||
+           p.contains(QStringLiteral("scene.gltf"));
+}
+
 int findFollowCameraIndexForScene(Display* display, int sceneIndex)
 {
     if (!display || sceneIndex < 0)
@@ -519,13 +535,18 @@ ViewportHostWidget::~ViewportHostWidget()
 void ViewportHostWidget::loadAssetFromPath(const QString& path)
 {
     qDebug() << "[ViewportHost] loadAssetFromPath" << path;
+    m_tpsBootstrapPending = true;
+    m_tpsBootstrapApplied = false;
     m_sceneController->loadAssetFromPath(path);
 }
 
 void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
 {
     qDebug() << "[ViewportHost] loadSceneFromItems count=" << items.size();
+    m_tpsBootstrapPending = true;
+    m_tpsBootstrapApplied = false;
     m_sceneController->loadSceneFromItems(items);
+    bootstrapThirdPersonShooter(false);
     notifySceneChanged();
 }
 
@@ -533,6 +554,24 @@ void ViewportHostWidget::refresh()
 {
     qDebug() << "[ViewportHost] Refreshing viewport";
     notifySceneChanged();
+}
+
+void ViewportHostWidget::setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap)
+{
+    if (!m_runtime || !m_runtime->display())
+    {
+        return;
+    }
+    m_runtime->display()->setCustomOverlayBitmap(bitmap, true);
+}
+
+void ViewportHostWidget::clearCustomOverlayBitmap()
+{
+    if (!m_runtime || !m_runtime->display())
+    {
+        return;
+    }
+    m_runtime->display()->clearCustomOverlayBitmap();
 }
 
 QString ViewportHostWidget::currentAssetPath() const
@@ -1719,6 +1758,179 @@ bool ViewportHostWidget::playCharacterInputPattern(int sceneIndex,
         });
     }
     return true;
+}
+
+bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
+{
+    if (!m_runtime || !m_runtime->engine() || !m_runtime->display())
+    {
+        return false;
+    }
+
+    if (m_tpsBootstrapApplied && !force)
+    {
+        return true;
+    }
+
+    const auto& entries = m_sceneController->loadedEntries();
+    if (entries.isEmpty())
+    {
+        return false;
+    }
+
+    int nathanIndex = -1;
+    int environmentIndex = -1;
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        if (nathanIndex < 0 && pathLooksLikeNathanCharacter(entries[i].sourcePath))
+        {
+            nathanIndex = i;
+        }
+        if (environmentIndex < 0 && pathLooksLikeEnvironmentScene(entries[i].sourcePath))
+        {
+            environmentIndex = i;
+        }
+    }
+
+    if (nathanIndex < 0 || environmentIndex < 0)
+    {
+        return false;
+    }
+
+    if (nathanIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
+        !m_runtime->engine()->models[static_cast<size_t>(nathanIndex)])
+    {
+        return false;
+    }
+
+    Model* nathan = m_runtime->engine()->models[static_cast<size_t>(nathanIndex)].get();
+    if (!nathan)
+    {
+        return false;
+    }
+
+    // Ensure ownership + physics coupling are configured for WASD character control.
+    setCharacterControlState(nathanIndex, true, false);
+    updateSceneItemAnimationPhysicsCoupling(nathanIndex, QStringLiteral("Kinematic"));
+    updateSceneItemPhysicsGravity(nathanIndex, true, QVector3D(0.0f, 0.0f, 0.0f));
+    updateSceneItemCharacterTurnResponsiveness(nathanIndex, 4.0f);
+
+    // Reasonable gameplay defaults.
+    nathan->character.moveSpeed = 3.2f;
+    nathan->character.runSpeedThreshold = 4.5f;
+    nathan->character.walkSpeedThreshold = 0.08f;
+
+    // Prefer a walk-forward clip when present.
+    QString walkClip;
+    const QStringList clips = animationClipNames(nathanIndex);
+    for (const QString& clip : clips)
+    {
+        const QString lower = clip.toLower();
+        if (lower.contains(QStringLiteral("walk")) && !lower.contains(QStringLiteral("back")))
+        {
+            walkClip = clip;
+            break;
+        }
+    }
+    if (walkClip.isEmpty() && !clips.isEmpty())
+    {
+        walkClip = clips.front();
+    }
+    if (!walkClip.isEmpty())
+    {
+        updateSceneItemAnimationState(nathanIndex, walkClip, true, true, 1.0f);
+    }
+
+    // Ensure camera follows Nathan and WASD routes to character instead of free-fly.
+    const int followCameraIndex = ensureFollowCamera(nathanIndex, 4.8f, 5.0f, 17.0f);
+    if (followCameraIndex >= 0)
+    {
+        setActiveCamera(followCameraIndex);
+    }
+    setFreeFlyCameraEnabled(false);
+
+    m_tpsBootstrapApplied = true;
+    m_tpsBootstrapPending = false;
+    qDebug() << "[ViewportHost] TPS bootstrap applied. Nathan index =" << nathanIndex
+             << " environment index =" << environmentIndex
+             << " follow camera index =" << followCameraIndex;
+    return true;
+}
+
+QJsonObject ViewportHostWidget::bootstrapThirdPersonShooterReport(bool force)
+{
+    QJsonObject stateBefore = thirdPersonShooterStateJson();
+    const bool applied = bootstrapThirdPersonShooter(force);
+    QJsonObject stateAfter = thirdPersonShooterStateJson();
+
+    QJsonArray reasons;
+    if (!stateBefore.value(QStringLiteral("runtimeReady")).toBool(false))
+    {
+        reasons.append(QStringLiteral("runtime_not_ready"));
+    }
+    if (!stateBefore.value(QStringLiteral("hasNathan")).toBool(false))
+    {
+        reasons.append(QStringLiteral("nathan_not_loaded"));
+    }
+    if (!stateBefore.value(QStringLiteral("hasEnvironment")).toBool(false))
+    {
+        reasons.append(QStringLiteral("environment_not_loaded"));
+    }
+    if (!applied && stateBefore.value(QStringLiteral("runtimeReady")).toBool(false) &&
+        stateBefore.value(QStringLiteral("hasNathan")).toBool(false) &&
+        stateBefore.value(QStringLiteral("hasEnvironment")).toBool(false))
+    {
+        reasons.append(QStringLiteral("bootstrap_apply_failed"));
+    }
+
+    stateAfter.insert(QStringLiteral("ok"), true);
+    stateAfter.insert(QStringLiteral("force"), force);
+    stateAfter.insert(QStringLiteral("applied"), applied);
+    stateAfter.insert(QStringLiteral("reasons"), reasons);
+    return stateAfter;
+}
+
+QJsonObject ViewportHostWidget::thirdPersonShooterStateJson() const
+{
+    QJsonObject state;
+    const bool runtimeReady = m_runtime && m_runtime->engine() && m_runtime->display();
+    state.insert(QStringLiteral("runtimeReady"), runtimeReady);
+    state.insert(QStringLiteral("bootstrapPending"), m_tpsBootstrapPending);
+    state.insert(QStringLiteral("bootstrapApplied"), m_tpsBootstrapApplied);
+
+    int nathanIndex = -1;
+    int environmentIndex = -1;
+    const auto& entries = m_sceneController->loadedEntries();
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        if (nathanIndex < 0 && pathLooksLikeNathanCharacter(entries[i].sourcePath))
+        {
+            nathanIndex = i;
+        }
+        if (environmentIndex < 0 && pathLooksLikeEnvironmentScene(entries[i].sourcePath))
+        {
+            environmentIndex = i;
+        }
+    }
+    state.insert(QStringLiteral("nathanIndex"), nathanIndex);
+    state.insert(QStringLiteral("environmentIndex"), environmentIndex);
+    state.insert(QStringLiteral("hasNathan"), nathanIndex >= 0);
+    state.insert(QStringLiteral("hasEnvironment"), environmentIndex >= 0);
+
+    bool nathanControllable = false;
+    if (nathanIndex >= 0)
+    {
+        nathanControllable = isCharacterControlEnabled(nathanIndex);
+    }
+    state.insert(QStringLiteral("nathanControllable"), nathanControllable);
+
+    const int followCameraIndex =
+        runtimeReady ? findFollowCameraIndexForScene(m_runtime->display(), nathanIndex) : -1;
+    state.insert(QStringLiteral("followCameraIndex"), followCameraIndex);
+    state.insert(QStringLiteral("freeFly"), isFreeFlyCameraEnabled());
+    state.insert(QStringLiteral("activeCameraIndex"), activeCameraIndex());
+    state.insert(QStringLiteral("activeCameraId"), activeCameraId());
+    return state;
 }
 
 motive::IPhysicsBody* ViewportHostWidget::getPhysicsBodyForSceneItem(int sceneIndex) const
@@ -3059,6 +3271,12 @@ void ViewportHostWidget::updateSceneItemFocusSettings(int index, const QVector3D
     notifySceneChanged();
 }
 
+void ViewportHostWidget::updateSceneItemTextOverlay(int index, const SceneItem& textProps)
+{
+    m_sceneController->updateSceneItemTextOverlay(index, textProps);
+    notifySceneChanged();
+}
+
 void ViewportHostWidget::captureSceneItemFocusFromCurrentCamera(int index)
 {
     if (index < 0 || !m_runtime || !m_runtime->engine())
@@ -3623,6 +3841,15 @@ void ViewportHostWidget::ensureViewportInitialized()
 void ViewportHostWidget::addAssetToScene(const QString& path)
 {
     m_sceneController->addAssetToScene(path);
+    m_tpsBootstrapPending = true;
+    m_tpsBootstrapApplied = false;
+    bootstrapThirdPersonShooter(false);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::addTextOverlayToScene()
+{
+    m_sceneController->addTextOverlayItem();
     notifySceneChanged();
 }
 
@@ -3647,6 +3874,11 @@ void ViewportHostWidget::renderFrame()
 
     if (m_runtime->engine())
     {
+        if (m_tpsBootstrapPending)
+        {
+            bootstrapThirdPersonShooter(false);
+        }
+
         auto* physicsWorld = m_runtime->engine()->getPhysicsWorld();
         auto& entries = m_sceneController->loadedEntries();
         for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
@@ -3705,7 +3937,14 @@ void ViewportHostWidget::renderFrame()
     }
 
     captureMotionDebugFrame(dt);
-    updateMotionDebugOverlay();
+    if (m_motionDebugOverlayOptions.enabled)
+    {
+        updateMotionDebugOverlay();
+    }
+    else if (m_runtime && m_runtime->display())
+    {
+        m_runtime->display()->clearCustomOverlayBitmap();
+    }
     m_runtime->render();
     notifyCameraChangedIfNeeded();
 }

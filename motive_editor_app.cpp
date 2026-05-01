@@ -2,7 +2,6 @@
 #include "asset_browser_widget.h"
 #include "control_command_service.h"
 #include "control_server.h"
-#include "login_dialog.h"
 #include "profile_data_service.h"
 #include "shell.h"
 
@@ -82,33 +81,18 @@ int runMotiveEditorApp(int argc, char** argv)
     }
     const bool forceGuestMode = parser.isSet(guestModeOption);
 
-    if (!forceGuestMode && !authApiBaseUrl.isEmpty())
+    if (!authApiBaseUrl.isEmpty())
     {
-        if (LoginDialog::storedToken().isEmpty())
-        {
-            LoginDialog loginDialog(authApiBaseUrl);
-            const int loginResult = loginDialog.exec();
-            if (loginResult == QDialog::Accepted)
-            {
-                qInfo() << "[AUTH] Signed in as" << (loginDialog.email().isEmpty() ? QStringLiteral("(unknown)") : loginDialog.email());
-            }
-            else
-            {
-                qInfo() << "[AUTH] Guest mode selected.";
-            }
-        }
-        else
-        {
-            qInfo() << "[AUTH] Using stored credentials for" << LoginDialog::storedEmail();
-        }
+        qputenv("MOTIVE_AUTH_API_BASE_URL", authApiBaseUrl.toUtf8());
     }
-    else if (forceGuestMode)
+
+    if (forceGuestMode)
     {
-        qInfo() << "[AUTH] Guest mode forced by --guest-mode.";
+        qInfo() << "[AUTH] Startup login prompt disabled; --guest-mode has no startup effect.";
     }
     else
     {
-        qInfo() << "[AUTH] No auth API base configured; defaulting to guest mode.";
+        qInfo() << "[AUTH] Startup login prompt disabled. Use the profile menu to sign in via CPPMonetize.";
     }
 
     MainWindowShell window;

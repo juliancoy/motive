@@ -204,6 +204,10 @@ void Display::createGraphicsPipeline()
 
     VkPipelineDepthStencilStateCreateInfo transparentDepthStencil = depthStencil;
     transparentDepthStencil.depthWriteEnable = VK_FALSE;
+    VkPipelineDepthStencilStateCreateInfo noDepthStencil = depthStencil;
+    noDepthStencil.depthTestEnable = VK_FALSE;
+    noDepthStencil.depthWriteEnable = VK_FALSE;
+    noDepthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     for (uint32_t i = 0; i < graphicsPipelines.size(); ++i)
     {
         rasterizer.cullMode = vkCullModeForPrimitiveCullMode(static_cast<PrimitiveCullMode>(i), cullingDisabled, use2DPipeline);
@@ -233,6 +237,33 @@ void Display::createGraphicsPipeline()
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &transparentSkinnedPipelineInfo, nullptr, &transparentSkinnedGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create transparent skinned graphics pipeline!");
+        }
+
+        pipelineInfo.pDepthStencilState = &noDepthStencil;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &noDepthGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth graphics pipeline!");
+        }
+
+        VkGraphicsPipelineCreateInfo noDepthSkinnedPipelineInfo = pipelineInfo;
+        noDepthSkinnedPipelineInfo.pStages = skinnedShaderStages;
+        noDepthSkinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &noDepthSkinnedPipelineInfo, nullptr, &noDepthSkinnedGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth skinned graphics pipeline!");
+        }
+
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &noDepthTransparentGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth transparent graphics pipeline!");
+        }
+
+        VkGraphicsPipelineCreateInfo noDepthTransparentSkinnedPipelineInfo = pipelineInfo;
+        noDepthTransparentSkinnedPipelineInfo.pStages = skinnedShaderStages;
+        noDepthTransparentSkinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &noDepthTransparentSkinnedPipelineInfo, nullptr, &noDepthTransparentSkinnedGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth transparent skinned graphics pipeline!");
         }
     }
 

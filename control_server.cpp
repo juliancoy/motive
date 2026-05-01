@@ -14,6 +14,8 @@
 
 #include <cerrno>
 #include <cstring>
+#include <atomic>
+#include <cstdint>
 
 #include <arpa/inet.h>
 #include <signal.h>
@@ -24,6 +26,7 @@
 namespace motive::ui {
 
 namespace {
+std::atomic<std::uint64_t> g_requestId{1};
 
 QString reasonPhrase(int statusCode)
 {
@@ -263,6 +266,7 @@ void EngineUiControlServer::handleClient(int clientFd) const
 {
     try
     {
+        const std::uint64_t requestId = g_requestId.fetch_add(1, std::memory_order_relaxed);
         QByteArray request;
         request.reserve(8192);
         char buffer[8192];
@@ -285,11 +289,38 @@ void EngineUiControlServer::handleClient(int clientFd) const
             return;
         }
 
+        QByteArray requestMethod = "UNKNOWN";
+        QByteArray requestPath = "/";
+        const QList<QByteArray> lines = request.split('\n');
+        if (!lines.isEmpty())
+        {
+            const QList<QByteArray> requestLine = lines.first().trimmed().split(' ');
+            if (requestLine.size() >= 2)
+            {
+                requestMethod = requestLine.at(0);
+                requestPath = requestLine.at(1);
+            }
+        }
+        qInfo() << "[EngineUiControlServer][req" << requestId << "]"
+                << requestMethod << requestPath;
+
         const QByteArray response = buildResponse(request);
         if (response.isEmpty())
         {
             return;
         }
+
+        int statusCode = 0;
+        const QList<QByteArray> responseLines = response.split('\n');
+        if (!responseLines.isEmpty())
+        {
+            const QList<QByteArray> statusTokens = responseLines.first().trimmed().split(' ');
+            if (statusTokens.size() >= 2)
+            {
+                statusCode = statusTokens.at(1).toInt();
+            }
+        }
+        qInfo() << "[EngineUiControlServer][req" << requestId << "] status" << statusCode;
 
         qint64 totalSent = 0;
         while (totalSent < response.size())
@@ -446,6 +477,17 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
                 {
                     command = QStringLiteral("camera");
                 }
+                else if (params.contains(QStringLiteral("create")) ||
+                         params.contains(QStringLiteral("exists")) ||
+                         params.contains(QStringLiteral("type")) ||
+                         params.contains(QStringLiteral("brightness")) ||
+                         params.contains(QStringLiteral("color")) ||
+                         params.contains(QStringLiteral("colorR")) ||
+                         params.contains(QStringLiteral("colorG")) ||
+                         params.contains(QStringLiteral("colorB")))
+                {
+                    command = QStringLiteral("light");
+                }
                 else if (params.contains(QStringLiteral("sceneIndex")) &&
                          (params.contains(QStringLiteral("visible")) ||
                           params.contains(QStringLiteral("focus")) ||
@@ -487,6 +529,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
                 QStringLiteral("selection"),
                 QStringLiteral("scene_item"),
                 QStringLiteral("camera"),
+                QStringLiteral("light"),
                 QStringLiteral("animation"),
                 QStringLiteral("character"),
                 QStringLiteral("physics_coupling"),
@@ -494,6 +537,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
                 QStringLiteral("debug_motion"),
                 QStringLiteral("motion_debug_overlay"),
                 QStringLiteral("rebuild"),
+                QStringLiteral("bootstrap_tps"),
                 QStringLiteral("reset")
             };
 
@@ -557,6 +601,19 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
         }
+        if (path == "/controls/light")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("light"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("light control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
         if (path == "/controls/camera")
         {
             QJsonObject result;
@@ -578,6 +635,19 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
                     {QStringLiteral("error"), QStringLiteral("rebuild failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/bootstrap_tps")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("bootstrap_tps"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("bootstrap_tps failed")}
                 }));
             }
             result.insert(QStringLiteral("ok"), true);
@@ -640,10 +710,16 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
             QJsonObject result;
             if (!invokeCommandHandler(m_commandHandler, QStringLiteral("selection"), body, result))
             {
-                return jsonResponse(500, compactJson(QJsonObject{
-                    {QStringLiteral("ok"), false},
-                    {QStringLiteral("error"), QStringLiteral("selection control failed")}
-                }));
+                // Selection can legitimately miss during transient startup/UI sync windows.
+                // Keep this endpoint non-fatal and report the miss via payload instead of HTTP 500.
+                QJsonObject payload = result;
+                payload.insert(QStringLiteral("ok"), true);
+                payload.insert(QStringLiteral("selected"), false);
+                if (!payload.contains(QStringLiteral("message")))
+                {
+                    payload.insert(QStringLiteral("message"), QStringLiteral("selection target not available"));
+                }
+                return jsonResponse(200, compactJson(payload));
             }
             result.insert(QStringLiteral("ok"), true);
             return jsonResponse(200, compactJson(result));
@@ -807,6 +883,14 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("motionDebugFrame"), data.motionDebugFrame);
         payload.insert(QStringLiteral("motionDebugSummary"), data.motionDebugSummary);
         payload.insert(QStringLiteral("motionDebugOverlay"), data.motionDebugOverlay);
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/tps_state")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.tpsState;
+        payload.insert(QStringLiteral("ok"), true);
         return jsonResponse(200, compactJson(payload));
     }
 

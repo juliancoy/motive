@@ -39,8 +39,10 @@ private:
     bool handleSceneItem(const QJsonObject& body, QJsonObject& result) const;
     bool handleAnimation(const QJsonObject& body, QJsonObject& result) const;
     bool handleCharacter(const QJsonObject& body, QJsonObject& result) const;
+    bool handleLight(const QJsonObject& body, QJsonObject& result) const;
     bool handleRebuild(QJsonObject& result) const;
     bool handleReset(const QJsonObject& body, QJsonObject& result) const;
+    bool handleBootstrapTps(const QJsonObject& body, QJsonObject& result) const;
     bool handlePhysicsCoupling(const QJsonObject& body, QJsonObject& result) const;
     bool handlePhysicsGravity(const QJsonObject& body, QJsonObject& result) const;
     bool handleMotionDebugSummaryCommand(const QJsonObject& body, QJsonObject& result) const;

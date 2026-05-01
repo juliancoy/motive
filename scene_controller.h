@@ -17,6 +17,7 @@ public:
     void loadAssetFromPath(const QString& path);
     void loadSceneFromItems(const QList<ViewportHostWidget::SceneItem>& items);
     void addAssetToScene(const QString& path);
+    void addTextOverlayItem();
 
     QString currentAssetPath() const;
     QList<ViewportHostWidget::SceneItem> sceneItems() const;
@@ -41,6 +42,7 @@ public:
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
+    void updateSceneItemTextOverlay(int index, const ViewportHostWidget::SceneItem& textProps);
 
     QList<ViewportHostWidget::SceneItem>& loadedEntries();
     const QList<ViewportHostWidget::SceneItem>& loadedEntries() const;
