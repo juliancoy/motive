@@ -7,6 +7,8 @@
 #   --clean         Clean build directory first
 #   --full          Build additional executables (motive3d_runtime, motive2d, encode)
 #   --test-ux       Build and run runtime UX integration tests (requires motive_editor)
+#   --check-cpp-size Run first-party .cpp size checks (warn-only unless --fail-cpp-size is also set)
+#   --fail-cpp-size  Fail build if first-party .cpp size checks find violations
 #   --jobs N        Number of parallel jobs (default: auto)
 #   --verbose       Verbose build output
 
@@ -27,6 +29,8 @@ CLEAN_BUILD=OFF
 VERBOSE=OFF
 FULL_BUILD=OFF
 RUN_UX_TESTS=OFF
+CHECK_CPP_SIZE=OFF
+FAIL_CPP_SIZE=OFF
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 # Parse arguments
@@ -58,6 +62,17 @@ while [[ $# -gt 0 ]]; do
             echo -e "${BLUE}ℹ️  Runtime UX tests enabled${NC}"
             shift
             ;;
+        --check-cpp-size)
+            CHECK_CPP_SIZE=ON
+            echo -e "${BLUE}ℹ️  C++ file-size check enabled${NC}"
+            shift
+            ;;
+        --fail-cpp-size)
+            CHECK_CPP_SIZE=ON
+            FAIL_CPP_SIZE=ON
+            echo -e "${YELLOW}⚠️  C++ file-size check will fail on violations${NC}"
+            shift
+            ;;
         --jobs)
             JOBS="$2"
             shift 2
@@ -77,6 +92,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --clean         Clean build directory first"
             echo "  --full          Build motive3d, motive3d_runtime, motive2d, and encode"
             echo "  --test-ux       Build and run runtime UX integration tests via ctest"
+            echo "  --check-cpp-size Run first-party C++ file-size check (warn-only)"
+            echo "  --fail-cpp-size  Fail on first-party C++ file-size violations"
             echo "  --jobs N        Number of parallel jobs (default: auto)"
             echo "  --verbose       Verbose build output"
             echo "  --help, -h      Show this help message"
@@ -102,6 +119,7 @@ echo "ASan:           $ENABLE_ASAN"
 echo "Validation:     $ENABLE_VALIDATION"
 echo "Full build:     $FULL_BUILD"
 echo "UX tests:       $RUN_UX_TESTS"
+echo "C++ size check: $CHECK_CPP_SIZE"
 echo "Parallel jobs:  $JOBS"
 echo ""
 
@@ -203,6 +221,37 @@ if [ "$RUN_UX_TESTS" = "ON" ]; then
         exit 1
     fi
     echo -e "${GREEN}✅ Runtime UX tests passed${NC}"
+fi
+
+if [ "$CHECK_CPP_SIZE" = "ON" ]; then
+    echo ""
+    echo -e "${BLUE}📏 Checking first-party C++ file sizes...${NC}"
+    SIZE_ARGS=(
+        --root "${SCRIPT_DIR}"
+        --max-lines 1500
+        --exclude-dir build
+        --exclude-dir FFmpeg
+        --exclude-dir Vulkan-Video-Samples
+        --exclude-dir Vulkan-Headers
+        --exclude-dir VulkanMemoryAllocator
+        --exclude-dir bullet3
+        --exclude-dir glm
+        --exclude-dir glfw
+        --exclude-dir imgui
+        --exclude-dir jolt
+        --exclude-dir ncnn
+        --exclude-dir tinygltf
+        --exclude-dir ufbx
+        --exclude-dir common_vv
+        --exclude-dir vk_video_decoder
+    )
+    if [ "$FAIL_CPP_SIZE" = "ON" ]; then
+        SIZE_ARGS+=(--fail)
+    fi
+    if ! python "${SCRIPT_DIR}/tools_check_cpp_size.py" "${SIZE_ARGS[@]}"; then
+        echo -e "${RED}❌ C++ file-size check failed${NC}"
+        exit 1
+    fi
 fi
 
 echo ""

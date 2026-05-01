@@ -143,6 +143,7 @@ public:
     void removeCamera(Camera* camera);
     void setActiveCamera(Camera* camera);
     Camera* getActiveCamera() const;
+    uint32_t getLastRenderedImageIndex() const { return lastRenderedImageIndex; }
 
     // Access to swapchain manager
     SwapchainManager& getSwapchainManager() { return swapchainManager; }
@@ -192,4 +193,5 @@ private:
     std::function<void(int, int, int, double, double)> mouseButtonEventCallback;
     Camera* activeCamera = nullptr;
     std::unique_ptr<InputRouter> inputRouter;
+    uint32_t lastRenderedImageIndex = 0;
 };

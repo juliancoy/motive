@@ -160,6 +160,7 @@ void Display::render()
 
     uint32_t imageIndex = 0;
     VkResult result = static_cast<VkResult>(swapchainManager.acquireNextImage(frameIndex, &imageIndex));
+    lastRenderedImageIndex = imageIndex;
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {

@@ -1,6 +1,7 @@
 #include "scene_controller.h"
 
 #include "asset_loader.h"
+#include "text_mesh_extrusion.h"
 #include "text_rendering.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
@@ -21,119 +22,6 @@ namespace {
 bool isTextOverlaySceneItem(const ViewportHostWidget::SceneItem& entry)
 {
     return entry.sourcePath.startsWith(QStringLiteral("text://"), Qt::CaseInsensitive);
-}
-
-void appendTextFace(std::vector<Vertex>& vertices,
-                    const glm::vec3& a,
-                    const glm::vec3& b,
-                    const glm::vec3& c,
-                    const glm::vec3& d,
-                    const glm::vec3& normal,
-                    const glm::vec2& uva,
-                    const glm::vec2& uvb,
-                    const glm::vec2& uvc,
-                    const glm::vec2& uvd)
-{
-    const glm::vec3 faceCross = glm::cross(b - a, c - a);
-    const bool windingMatchesNormal = glm::dot(faceCross, normal) >= 0.0f;
-
-    if (windingMatchesNormal)
-    {
-        vertices.push_back(Vertex{a, normal, uva});
-        vertices.push_back(Vertex{b, normal, uvb});
-        vertices.push_back(Vertex{c, normal, uvc});
-        vertices.push_back(Vertex{a, normal, uva});
-        vertices.push_back(Vertex{c, normal, uvc});
-        vertices.push_back(Vertex{d, normal, uvd});
-        return;
-    }
-
-    vertices.push_back(Vertex{a, normal, uva});
-    vertices.push_back(Vertex{c, normal, uvc});
-    vertices.push_back(Vertex{b, normal, uvb});
-    vertices.push_back(Vertex{a, normal, uva});
-    vertices.push_back(Vertex{d, normal, uvd});
-    vertices.push_back(Vertex{c, normal, uvc});
-}
-
-std::vector<Vertex> buildExtrudedTextVertices(const motive::text::OverlayBitmap& bitmap, float depth)
-{
-    std::vector<Vertex> vertices;
-    if (bitmap.width == 0 || bitmap.height == 0 || bitmap.pixels.empty())
-    {
-        return vertices;
-    }
-    const uint32_t width = bitmap.width;
-    const uint32_t height = bitmap.height;
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const float halfW = 0.5f * aspect;
-    const float halfH = 0.5f;
-    const float halfD = std::max(0.0f, depth) * 0.5f;
-    const auto opaque = [&](int x, int y) -> bool {
-        if (x < 0 || y < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height))
-        {
-            return false;
-        }
-        const size_t idx = (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u + 3u;
-        return idx < bitmap.pixels.size() && bitmap.pixels[idx] > 8u;
-    };
-    vertices.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
-    for (int y = 0; y < static_cast<int>(height); ++y)
-    {
-        for (int x = 0; x < static_cast<int>(width); ++x)
-        {
-            if (!opaque(x, y))
-            {
-                continue;
-            }
-            const float x0n = static_cast<float>(x) / static_cast<float>(width);
-            const float x1n = static_cast<float>(x + 1) / static_cast<float>(width);
-            const float y0n = static_cast<float>(y) / static_cast<float>(height);
-            const float y1n = static_cast<float>(y + 1) / static_cast<float>(height);
-            const float px0 = -halfW + x0n * aspect;
-            const float px1 = -halfW + x1n * aspect;
-            const float py0 = halfH - y0n;
-            const float py1 = halfH - y1n;
-            const glm::vec2 uva(x0n, y1n);
-            const glm::vec2 uvb(x1n, y1n);
-            const glm::vec2 uvc(x1n, y0n);
-            const glm::vec2 uvd(x0n, y0n);
-
-            const glm::vec3 fbl(px0, py1, halfD);
-            const glm::vec3 fbr(px1, py1, halfD);
-            const glm::vec3 ftr(px1, py0, halfD);
-            const glm::vec3 ftl(px0, py0, halfD);
-            const glm::vec3 bbl(px0, py1, -halfD);
-            const glm::vec3 bbr(px1, py1, -halfD);
-            const glm::vec3 btr(px1, py0, -halfD);
-            const glm::vec3 btl(px0, py0, -halfD);
-
-            // Front face keeps full UV mapping for crisp glyph sampling.
-            appendTextFace(vertices, fbl, fbr, ftr, ftl, glm::vec3(0.0f, 0.0f, 1.0f), uva, uvb, uvc, uvd);
-
-            // Back/side faces use texel-centered UVs to avoid stretched mirrored streaks.
-            const glm::vec2 uvCenter((x0n + x1n) * 0.5f, (y0n + y1n) * 0.5f);
-            appendTextFace(vertices, bbr, bbl, btl, btr, glm::vec3(0.0f, 0.0f, -1.0f), uvCenter, uvCenter, uvCenter, uvCenter);
-
-            if (!opaque(x - 1, y))
-            {
-                appendTextFace(vertices, bbl, fbl, ftl, btl, glm::vec3(-1.0f, 0.0f, 0.0f), uvCenter, uvCenter, uvCenter, uvCenter);
-            }
-            if (!opaque(x + 1, y))
-            {
-                appendTextFace(vertices, fbr, bbr, btr, ftr, glm::vec3(1.0f, 0.0f, 0.0f), uvCenter, uvCenter, uvCenter, uvCenter);
-            }
-            if (!opaque(x, y - 1))
-            {
-                appendTextFace(vertices, ftl, ftr, btr, btl, glm::vec3(0.0f, 1.0f, 0.0f), uvCenter, uvCenter, uvCenter, uvCenter);
-            }
-            if (!opaque(x, y + 1))
-            {
-                appendTextFace(vertices, bbl, bbr, fbr, fbl, glm::vec3(0.0f, -1.0f, 0.0f), uvCenter, uvCenter, uvCenter, uvCenter);
-            }
-        }
-    }
-    return vertices;
 }
 
 uint32_t packedColorFromString(const QString& value, const QColor& fallback)
@@ -201,25 +89,10 @@ void applyTextSceneItemToModel(ViewportRuntime& runtime, int sceneIndex, const V
         pxHeight,
         fontOptions,
         meshStyle);
-    motive::text::OverlayBitmap glyphMeshBitmap = meshBitmap;
-    if (entry.textExtrudeGlyphsOnly)
-    {
-        const motive::text::FontBitmap glyphBitmap = motive::text::renderText(
-            entry.textContent.toStdString(),
-            static_cast<uint32_t>(std::max(8, entry.textPixelHeight)),
-            fontOptions);
-        if (!glyphBitmap.pixels.empty() && glyphBitmap.width > 0 && glyphBitmap.height > 0)
-        {
-            glyphMeshBitmap.width = glyphBitmap.width;
-            glyphMeshBitmap.height = glyphBitmap.height;
-            glyphMeshBitmap.offsetX = 0;
-            glyphMeshBitmap.offsetY = 0;
-            glyphMeshBitmap.pixels = glyphBitmap.pixels;
-        }
-    }
     if (!textBitmap.pixels.empty() && textBitmap.width > 0 && textBitmap.height > 0)
     {
-        const std::vector<Vertex> textVertices = buildExtrudedTextVertices(glyphMeshBitmap, std::max(0.0f, entry.textExtrudeDepth));
+        const std::vector<Vertex> textVertices =
+            motive::text::buildExtrudedTextVertices(meshBitmap, std::max(0.0f, entry.textExtrudeDepth));
         if (textVertices.empty())
         {
             return;
