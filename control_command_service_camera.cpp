@@ -1,5 +1,6 @@
 #include "control_command_service.h"
 
+#include "camera_follow_settings.h"
 #include "host_widget.h"
 #include "shell.h"
 
@@ -172,7 +173,7 @@ bool ControlCommandService::handleCamera(const QJsonObject& body, QJsonObject& r
         float pitchDeg = config.rotation.y();
         yawDeg += static_cast<float>(body.value(QStringLiteral("yawDelta")).toDouble(0.0));
         pitchDeg += static_cast<float>(body.value(QStringLiteral("pitchDelta")).toDouble(0.0));
-        pitchDeg = std::clamp(pitchDeg, -80.0f, 80.0f);
+        pitchDeg = std::clamp(pitchDeg, -followcam::kFreeFlyMaxPitchDegrees, followcam::kFreeFlyMaxPitchDegrees);
         config.rotation = QVector3D(yawDeg, pitchDeg, 0.0f);
 
         const float travelDistance = static_cast<float>(body.value(QStringLiteral("distance")).toDouble(1.0));

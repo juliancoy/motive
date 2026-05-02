@@ -159,16 +159,45 @@ bool ControlCommandService::handlePrimitive(const QJsonObject& body, QJsonObject
     const int meshIndex = body.value(QStringLiteral("meshIndex")).toInt(-1);
     const int primitiveIndex = body.value(QStringLiteral("primitiveIndex")).toInt(-1);
     const QString cullMode = body.value(QStringLiteral("cullMode")).toString();
-    if (sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0 || cullMode.isEmpty())
+    if (sceneIndex < 0 || cullMode.isEmpty())
     {
-        result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex, meshIndex, primitiveIndex, and cullMode are required"));
+        result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex and cullMode are required"));
         return false;
     }
-    viewport->setPrimitiveCullMode(sceneIndex, meshIndex, primitiveIndex, cullMode);
+    if (meshIndex >= 0 && primitiveIndex >= 0)
+    {
+        viewport->setPrimitiveCullMode(sceneIndex, meshIndex, primitiveIndex, cullMode);
+    }
+    else
+    {
+        viewport->setSceneItemCullMode(sceneIndex, cullMode);
+    }
     result.insert(QStringLiteral("sceneIndex"), sceneIndex);
     result.insert(QStringLiteral("meshIndex"), meshIndex);
     result.insert(QStringLiteral("primitiveIndex"), primitiveIndex);
     result.insert(QStringLiteral("cullMode"), cullMode);
+    return true;
+}
+
+bool ControlCommandService::handlePlaneIndicators(const QJsonObject& body, QJsonObject& result) const
+{
+    auto* viewport = m_window.viewportHost();
+    if (!viewport)
+    {
+        result.insert(QStringLiteral("error"), QStringLiteral("viewport unavailable"));
+        return false;
+    }
+
+    const bool enabled = body.contains(QStringLiteral("enabled"))
+        ? body.value(QStringLiteral("enabled")).toBool(false)
+        : !viewport->coordinatePlaneIndicatorsEnabled();
+    viewport->setCoordinatePlaneIndicatorsEnabled(enabled);
+    result.insert(QStringLiteral("enabled"), viewport->coordinatePlaneIndicatorsEnabled());
+    result.insert(QStringLiteral("sourcePaths"), QJsonArray{
+        QStringLiteral("planes://xy"),
+        QStringLiteral("planes://xz"),
+        QStringLiteral("planes://yz"),
+    });
     return true;
 }
 
@@ -297,6 +326,27 @@ bool ControlCommandService::handleSceneItem(const QJsonObject& body, QJsonObject
     {
         viewport->setFreeFlyCameraEnabled(body.value(QStringLiteral("freeFly")).toBool(true));
     }
+    if (body.contains(QStringLiteral("meshConsolidationEnabled")))
+    {
+        viewport->setSceneItemMeshConsolidationEnabled(
+            sceneIndex,
+            body.value(QStringLiteral("meshConsolidationEnabled")).toBool(items[sceneIndex].meshConsolidationEnabled));
+    }
+    if (body.contains(QStringLiteral("cullMode")))
+    {
+        viewport->setSceneItemCullMode(sceneIndex, body.value(QStringLiteral("cullMode")).toString(QStringLiteral("back")));
+    }
+    if (body.value(QStringLiteral("alignBottomToGround")).toBool(false))
+    {
+        const float groundY = static_cast<float>(body.value(QStringLiteral("groundY")).toDouble(0.0));
+        if (!viewport->alignSceneItemBottomToGround(sceneIndex, groundY))
+        {
+            result.insert(QStringLiteral("error"), QStringLiteral("failed to align scene item bottom to ground"));
+            return false;
+        }
+        result.insert(QStringLiteral("alignedBottomToGround"), true);
+        result.insert(QStringLiteral("groundY"), groundY);
+    }
     const AnimationMutation animationMutation = parseAnimationMutation(body, items[sceneIndex]);
     applyAnimationMutation(viewport, sceneIndex, animationMutation, false);
     if (body.contains(QStringLiteral("characterRestPointOnReleaseEnabled")) ||
@@ -370,6 +420,7 @@ bool ControlCommandService::handleSceneItem(const QJsonObject& body, QJsonObject
         result.insert(QStringLiteral("translation"), QJsonArray{item.translation.x(), item.translation.y(), item.translation.z()});
         result.insert(QStringLiteral("rotation"), QJsonArray{item.rotation.x(), item.rotation.y(), item.rotation.z()});
         result.insert(QStringLiteral("scale"), QJsonArray{item.scale.x(), item.scale.y(), item.scale.z()});
+        result.insert(QStringLiteral("meshConsolidationEnabled"), item.meshConsolidationEnabled);
         result.insert(QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()});
         result.insert(QStringLiteral("focusDistance"), item.focusDistance);
         result.insert(QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()});

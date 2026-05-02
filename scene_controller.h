@@ -18,6 +18,8 @@ public:
     void loadSceneFromItems(const QList<ViewportHostWidget::SceneItem>& items);
     void addAssetToScene(const QString& path);
     void addTextOverlayItem();
+    void setCoordinatePlaneIndicatorsEnabled(bool enabled);
+    bool coordinatePlaneIndicatorsEnabled() const;
 
     QString currentAssetPath() const;
     QList<ViewportHostWidget::SceneItem> sceneItems() const;

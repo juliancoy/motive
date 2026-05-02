@@ -137,6 +137,24 @@ def post_until_ok(base_url: str, path: str, payload: dict, timeout_s: float = 10
     return last
 
 
+def primitive_cull_modes(scene_item: dict) -> list[tuple[int, int, str]]:
+    modes = []
+    for mesh in scene_item.get("meshes", []):
+        mesh_index = int(mesh.get("meshIndex", -1))
+        for primitive in mesh.get("primitives", []):
+            primitive_index = int(primitive.get("primitiveIndex", -1))
+            cull_mode = str(primitive.get("cullMode", "back"))
+            if mesh_index >= 0 and primitive_index >= 0:
+                modes.append((mesh_index, primitive_index, cull_mode))
+    return modes
+
+
+def expect_origin_locked_plane(scene_item: dict) -> None:
+    expect(scene_item.get("translation") == [0, 0, 0], f"plane indicator is not origin-centered: {scene_item}")
+    expect(scene_item.get("rotation") == [0, 0, 0], f"plane indicator has unexpected rotation: {scene_item}")
+    expect(scene_item.get("scale") == [1, 1, 1], f"plane indicator has unexpected scale: {scene_item}")
+
+
 def run_suite(base_url: str) -> None:
     health = api_get(base_url, "/health")
     expect(health.get("ok") is True, f"/health failed: {health}")
@@ -164,6 +182,19 @@ def run_suite(base_url: str) -> None:
     scene = api_get(base_url, "/profile/scene_state")
     scene_items = scene.get("sceneItems", [])
     expect(isinstance(scene_items, list), f"sceneItems is not a list: {scene}")
+
+    camera_state = api_get(base_url, "/profile/camera_state")
+    direction_indicator = camera_state.get("cameraTracking", {}).get("directionIndicator", {})
+    expect(isinstance(direction_indicator, dict), f"missing camera direction indicator: {camera_state}")
+    expect(direction_indicator.get("visible") is True, f"camera direction indicator not visible: {direction_indicator}")
+    expect(
+        isinstance(direction_indicator.get("vertical"), str) and direction_indicator.get("vertical"),
+        f"camera direction indicator missing vertical label: {direction_indicator}",
+    )
+    expect(
+        isinstance(direction_indicator.get("forward"), list) and len(direction_indicator.get("forward")) == 3,
+        f"camera direction indicator missing forward vector: {direction_indicator}",
+    )
 
     hierarchy = api_get(base_url, "/hierarchy")
     expect(hierarchy.get("ok") is True, f"/hierarchy failed: {hierarchy}")
@@ -201,6 +232,83 @@ def run_suite(base_url: str) -> None:
     expect(free_mode.get("ok") is True, f"set freeFly failed: {free_mode}")
     expect(free_mode.get("freeFly") is True, f"freeFly mode did not stick: {free_mode}")
 
+    pitch_clamp = api_post(
+        base_url,
+        "/controls/camera",
+        {"navigate": 0, "pitchDelta": -200, "distance": 0, "forceFreeFly": True},
+    )
+    expect(pitch_clamp.get("ok") is True, f"free-fly pitch navigation failed: {pitch_clamp}")
+    rotation = pitch_clamp.get("rotation", [])
+    expect(isinstance(rotation, list) and len(rotation) == 3, f"pitch response missing rotation: {pitch_clamp}")
+    expect(abs(float(rotation[1])) <= 85.001, f"free-fly pitch exceeded clamp: {pitch_clamp}")
+
+    planes_on = api_post(base_url, "/controls/plane-indicators", {"enabled": True})
+    expect(planes_on.get("ok") is True, f"plane indicators enable failed: {planes_on}")
+    expect(planes_on.get("enabled") is True, f"plane indicators did not enable: {planes_on}")
+    plane_sources = set(planes_on.get("sourcePaths", []))
+    expect(
+        {"planes://xy", "planes://xz", "planes://yz"}.issubset(plane_sources),
+        f"plane indicators missing source paths: {planes_on}",
+    )
+
+    scene_with_planes = api_get(base_url, "/profile/scene_state")
+    visible_planes = [
+        item
+        for item in scene_with_planes.get("sceneItems", [])
+        if item.get("sourcePath") in {"planes://xy", "planes://xz", "planes://yz"} and item.get("visible") is True
+    ]
+    expect(len(visible_planes) == 3, f"expected three visible plane indicators: {scene_with_planes}")
+    for plane in visible_planes:
+        expect_origin_locked_plane(plane)
+
+    planes_off = api_post(base_url, "/controls/plane_indicators", {"enabled": False})
+    expect(planes_off.get("ok") is True, f"plane indicators disable failed: {planes_off}")
+    expect(planes_off.get("enabled") is False, f"plane indicators did not disable: {planes_off}")
+    scene_without_planes = api_get(base_url, "/profile/scene_state")
+    hidden_planes = [
+        item
+        for item in scene_without_planes.get("sceneItems", [])
+        if item.get("sourcePath") in {"planes://xy", "planes://xz", "planes://yz"} and item.get("visible") is False
+    ]
+    expect(len(hidden_planes) == 3, f"expected three hidden plane indicators: {scene_without_planes}")
+    for plane in hidden_planes:
+        expect_origin_locked_plane(plane)
+
+    cull_target_index = -1
+    for index, item in enumerate(scene_without_planes.get("sceneItems", [])):
+        if item.get("name") == "china" and primitive_cull_modes(item):
+            cull_target_index = index
+            break
+    if cull_target_index < 0:
+        for index, item in enumerate(scene_without_planes.get("sceneItems", [])):
+            if primitive_cull_modes(item):
+                cull_target_index = index
+                break
+    if cull_target_index >= 0:
+        original_item = scene_without_planes["sceneItems"][cull_target_index]
+        original_culls = primitive_cull_modes(original_item)
+        object_cull = api_post(base_url, "/controls/scene-item", {"sceneIndex": cull_target_index, "cullMode": "none"})
+        expect(object_cull.get("ok") is True, f"object-level cull command failed: {object_cull}")
+        cull_scene = api_get(base_url, "/profile/scene_state")
+        cull_modes_after = primitive_cull_modes(cull_scene["sceneItems"][cull_target_index])
+        expect(cull_modes_after, f"object-level cull target has no primitives after mutation: {cull_scene}")
+        expect(
+            all(cull_mode == "none" for _, _, cull_mode in cull_modes_after),
+            f"object-level cull did not apply to every primitive: {cull_modes_after}",
+        )
+        for mesh_index, primitive_index, cull_mode in original_culls:
+            restore_cull = api_post(
+                base_url,
+                "/controls/primitive",
+                {
+                    "sceneIndex": cull_target_index,
+                    "meshIndex": mesh_index,
+                    "primitiveIndex": primitive_index,
+                    "cullMode": cull_mode,
+                },
+            )
+            expect(restore_cull.get("ok") is True, f"failed to restore primitive cull: {restore_cull}")
+
     bootstrap = api_post(base_url, "/controls/bootstrap_tps", {"force": True})
     expect(bootstrap.get("ok") is True, f"bootstrap_tps failed: {bootstrap}")
     expect(isinstance(bootstrap.get("applied"), bool), f"bootstrap_tps missing applied flag: {bootstrap}")
@@ -209,6 +317,34 @@ def run_suite(base_url: str) -> None:
     if len(scene_items) >= 1:
         select = post_until_ok(base_url, "/controls/selection", {"sceneIndex": 0}, timeout_s=12.0)
         expect(select.get("ok") is True, f"selection failed: {select}")
+        inspector = api_get(base_url, "/profile/inspector")
+        expect(
+            inspector.get("alignBottomToGroundVisible") is True,
+            f"align-bottom-to-ground action is not visible for object selection: {inspector}",
+        )
+        expect(
+            inspector.get("alignBottomToGroundEnabled") is True,
+            f"align-bottom-to-ground action is not enabled for object selection: {inspector}",
+        )
+        original_scene = api_get(base_url, "/profile/scene_state")
+        original_items = original_scene.get("sceneItems", [])
+        original_translation = (
+            original_items[0].get("translation", [])
+            if isinstance(original_items, list) and len(original_items) >= 1 and isinstance(original_items[0], dict)
+            else []
+        )
+        align = api_post(base_url, "/controls/scene-item", {"sceneIndex": 0, "alignBottomToGround": True})
+        expect(align.get("ok") is True, f"align-bottom-to-ground command failed: {align}")
+        expect(align.get("alignedBottomToGround") is True, f"align-bottom-to-ground flag missing: {align}")
+        aligned_inspector = api_get(base_url, "/profile/inspector")
+        aligned_min = aligned_inspector.get("bounds", {}).get("min", [])
+        expect(
+            isinstance(aligned_min, list) and len(aligned_min) == 3 and abs(float(aligned_min[1])) <= 0.02,
+            f"aligned bounds bottom is not on ground plane: {aligned_inspector}",
+        )
+        if isinstance(original_translation, list) and len(original_translation) == 3:
+            restore = api_post(base_url, "/controls/scene-item", {"sceneIndex": 0, "translation": original_translation})
+            expect(restore.get("ok") is True, f"failed to restore original translation after align test: {restore}")
 
     # Single-owner controllable UX contract when there are at least 2 items.
     if len(scene_items) >= 2:

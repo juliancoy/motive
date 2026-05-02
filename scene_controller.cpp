@@ -2,7 +2,6 @@
 
 #include "asset_loader.h"
 #include "text_mesh_extrusion.h"
-#include "text_rendering.h"
 #include "viewport_internal_utils.h"
 #include "viewport_runtime.h"
 
@@ -13,28 +12,159 @@
 #include <QColor>
 #include <QDebug>
 #include <QFileInfo>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QStringList>
 #include <algorithm>
-#include <vulkan/vulkan.h>
+#include <cstring>
 
 namespace motive::ui {
 
 namespace {
+
 bool isTextOverlaySceneItem(const ViewportHostWidget::SceneItem& entry)
 {
     return entry.sourcePath.startsWith(QStringLiteral("text://"), Qt::CaseInsensitive);
 }
 
-uint32_t packedColorFromString(const QString& value, const QColor& fallback)
+bool isCoordinatePlaneIndicatorSceneItem(const ViewportHostWidget::SceneItem& entry)
+{
+    return entry.sourcePath.startsWith(QStringLiteral("planes://"), Qt::CaseInsensitive);
+}
+
+void canonicalizeCoordinatePlaneIndicatorItem(ViewportHostWidget::SceneItem& item)
+{
+    item.translation = QVector3D(0.0f, 0.0f, 0.0f);
+    item.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+    item.scale = QVector3D(1.0f, 1.0f, 1.0f);
+}
+
+void appendStrip(std::vector<Vertex>& vertices,
+                 const glm::vec3& a,
+                 const glm::vec3& b,
+                 const glm::vec3& normal,
+                 const glm::vec3& halfWidth)
+{
+    const glm::vec3 p0 = a - halfWidth;
+    const glm::vec3 p1 = a + halfWidth;
+    const glm::vec3 p2 = b + halfWidth;
+    const glm::vec3 p3 = b - halfWidth;
+    const glm::vec2 uv0(0.0f, 0.0f);
+    const glm::vec2 uv1(1.0f, 0.0f);
+    const glm::vec2 uv2(1.0f, 1.0f);
+    const glm::vec2 uv3(0.0f, 1.0f);
+    vertices.push_back(Vertex{p0, normal, uv0});
+    vertices.push_back(Vertex{p1, normal, uv1});
+    vertices.push_back(Vertex{p2, normal, uv2});
+    vertices.push_back(Vertex{p0, normal, uv0});
+    vertices.push_back(Vertex{p2, normal, uv2});
+    vertices.push_back(Vertex{p3, normal, uv3});
+}
+
+std::vector<Vertex> buildCoordinatePlaneGrid(const QString& plane)
+{
+    std::vector<Vertex> vertices;
+    constexpr float kExtent = 60.0f;
+    constexpr int kDivisions = 24;
+    constexpr float kThin = 0.035f;
+    constexpr float kBold = 0.09f;
+
+    auto makePoint = [&](float u, float v) {
+        if (plane == QStringLiteral("xy"))
+        {
+            return glm::vec3(u, v, 0.0f);
+        }
+        if (plane == QStringLiteral("yz"))
+        {
+            return glm::vec3(0.0f, u, v);
+        }
+        return glm::vec3(u, 0.0f, v);
+    };
+    const glm::vec3 normal = plane == QStringLiteral("xy")
+        ? glm::vec3(0.0f, 0.0f, 1.0f)
+        : (plane == QStringLiteral("yz") ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 uHalfWidth = plane == QStringLiteral("xy")
+        ? glm::vec3(0.0f, kThin, 0.0f)
+        : (plane == QStringLiteral("yz") ? glm::vec3(0.0f, kThin, 0.0f) : glm::vec3(0.0f, 0.0f, kThin));
+    const glm::vec3 vHalfWidth = plane == QStringLiteral("xy")
+        ? glm::vec3(kThin, 0.0f, 0.0f)
+        : (plane == QStringLiteral("yz") ? glm::vec3(0.0f, 0.0f, kThin) : glm::vec3(kThin, 0.0f, 0.0f));
+
+    for (int i = -kDivisions; i <= kDivisions; ++i)
+    {
+        const float coord = (static_cast<float>(i) / static_cast<float>(kDivisions)) * kExtent;
+        const float width = (i == 0) ? kBold : kThin;
+        const glm::vec3 uWidth = uHalfWidth * (width / kThin);
+        const glm::vec3 vWidth = vHalfWidth * (width / kThin);
+        appendStrip(vertices, makePoint(-kExtent, coord), makePoint(kExtent, coord), normal, uWidth);
+        appendStrip(vertices, makePoint(coord, -kExtent), makePoint(coord, kExtent), normal, vWidth);
+    }
+    return vertices;
+}
+
+void applyCoordinatePlaneIndicatorToModel(ViewportRuntime& runtime, int sceneIndex, const ViewportHostWidget::SceneItem& entry)
+{
+    if (!runtime.engine() || sceneIndex < 0)
+    {
+        return;
+    }
+    const QString plane = entry.sourcePath.mid(QStringLiteral("planes://").size()).toLower();
+    const std::vector<Vertex> vertices = buildCoordinatePlaneGrid(plane);
+    if (vertices.empty())
+    {
+        return;
+    }
+
+    ViewportAssetLoader::ensureModelSlot(runtime, sceneIndex);
+    auto model = std::make_unique<Model>(vertices, runtime.engine());
+    model->name = entry.name.toStdString();
+    model->setSceneTransform(glm::vec3(0.0f),
+                             glm::vec3(0.0f),
+                             glm::vec3(1.0f));
+    model->visible = entry.visible;
+    const glm::vec3 color = plane == QStringLiteral("xy")
+        ? glm::vec3(0.15f, 0.45f, 1.0f)
+        : (plane == QStringLiteral("yz") ? glm::vec3(1.0f, 0.25f, 0.25f) : glm::vec3(0.2f, 0.9f, 0.35f));
+    for (auto& mesh : model->meshes)
+    {
+        for (auto& primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+            primitive->cullMode = PrimitiveCullMode::Disabled;
+            primitive->depthTestEnabled = false;
+            primitive->depthWriteEnabled = false;
+        }
+    }
+    model->setPaintOverride(true, color);
+    runtime.engine()->models[static_cast<size_t>(sceneIndex)] = std::move(model);
+}
+
+ViewportHostWidget::SceneItem makeCoordinatePlaneIndicatorItem(const QString& plane, bool enabled)
+{
+    ViewportHostWidget::SceneItem item;
+    item.name = plane.toUpper() + QStringLiteral(" Plane");
+    item.sourcePath = QStringLiteral("planes://") + plane;
+    item.meshConsolidationEnabled = false;
+    canonicalizeCoordinatePlaneIndicatorItem(item);
+    item.visible = enabled;
+    item.paintOverrideEnabled = false;
+    item.animationPlaying = false;
+    return item;
+}
+
+glm::vec3 vec3ColorFromString(const QString& value, const QColor& fallback)
 {
     QColor c(value);
     if (!c.isValid())
     {
         c = fallback;
     }
-    return (static_cast<uint32_t>(c.alpha()) << 24u) |
-           (static_cast<uint32_t>(c.red()) << 16u) |
-           (static_cast<uint32_t>(c.green()) << 8u) |
-           static_cast<uint32_t>(c.blue());
+    return glm::vec3(static_cast<float>(c.redF()),
+                     static_cast<float>(c.greenF()),
+                     static_cast<float>(c.blueF()));
 }
 
 void applyTextSceneItemToModel(ViewportRuntime& runtime, int sceneIndex, const ViewportHostWidget::SceneItem& entry)
@@ -56,81 +186,45 @@ void applyTextSceneItemToModel(ViewportRuntime& runtime, int sceneIndex, const V
     fontOptions.italic = entry.textItalic;
     fontOptions.letterSpacing = entry.textLetterSpacing;
 
-    motive::text::TextOverlayStyle style;
-    style.textColor = packedColorFromString(entry.textColor, QColor(Qt::white));
-    style.backgroundColor = packedColorFromString(entry.textBackgroundColor, QColor(0, 0, 0, 170));
-    style.drawShadow = entry.textShadow;
-    style.drawOutline = entry.textOutline;
-    style.drawBackground = true;
+    motive::text::ExtrudedTextOptions textOptions;
+    textOptions.pixelHeight = static_cast<uint32_t>(std::max(8, entry.textPixelHeight));
+    textOptions.meshSupersample = motive::text::kDefaultExtrudedTextMeshSupersample;
+    textOptions.font = fontOptions;
+    textOptions.depth = std::max(0.0f, entry.textExtrudeDepth);
+    textOptions.bevelScale = motive::text::kDefaultExtrudedTextBevelScale;
 
-    motive::text::TextOverlayStyle meshStyle = style;
-    if (entry.textExtrudeGlyphsOnly)
+    const std::vector<Vertex> textVertices =
+        motive::text::buildExtrudedTextVerticesFromText(entry.textContent.toStdString(), textOptions);
+    if (textVertices.empty())
     {
-        meshStyle.drawBackground = false;
-        meshStyle.drawShadow = false;
+        return;
     }
-
-    const uint32_t pxHeight = static_cast<uint32_t>(std::max(8, entry.textPixelHeight));
-    const size_t charCount = std::max<size_t>(entry.textContent.size(), 1u);
-    const uint32_t overlayWidth = static_cast<uint32_t>(std::clamp<size_t>(charCount * static_cast<size_t>(pxHeight) * 2u, 1024u, 4096u));
-    const uint32_t overlayHeight = static_cast<uint32_t>(std::clamp<uint32_t>(pxHeight * 4u, 256u, 1024u));
-
-    const motive::text::OverlayBitmap textBitmap = motive::text::buildStyledTextOverlay(
-        overlayWidth,
-        overlayHeight,
-        entry.textContent.toStdString(),
-        pxHeight,
-        fontOptions,
-        style);
-    const motive::text::OverlayBitmap meshBitmap = motive::text::buildStyledTextOverlay(
-        overlayWidth,
-        overlayHeight,
-        entry.textContent.toStdString(),
-        pxHeight,
-        fontOptions,
-        meshStyle);
-    if (!textBitmap.pixels.empty() && textBitmap.width > 0 && textBitmap.height > 0)
+    if (!runtime.engine()->models[static_cast<size_t>(sceneIndex)])
     {
-        const std::vector<Vertex> textVertices =
-            motive::text::buildExtrudedTextVertices(meshBitmap, std::max(0.0f, entry.textExtrudeDepth));
-        if (textVertices.empty())
-        {
-            return;
-        }
-        if (!runtime.engine()->models[static_cast<size_t>(sceneIndex)])
-        {
-            auto model = std::make_unique<Model>(textVertices, runtime.engine());
-            model->name = entry.name.toStdString();
-            runtime.engine()->models[static_cast<size_t>(sceneIndex)] = std::move(model);
-        }
-        Model* model = runtime.engine()->models[static_cast<size_t>(sceneIndex)].get();
-        if (!model || model->meshes.empty() || model->meshes.front().primitives.empty())
-        {
-            return;
-        }
-        Primitive* primitive = model->meshes.front().primitives.front().get();
-        if (!primitive)
-        {
-            return;
-        }
-        primitive->updateVertexData(textVertices);
-        primitive->updateTextureFromPixelData(
-            textBitmap.pixels.data(),
-            textBitmap.pixels.size(),
-            textBitmap.width,
-            textBitmap.height,
-            VK_FORMAT_R8G8B8A8_UNORM);
-        primitive->alphaMode = PrimitiveAlphaMode::Blend;
-        primitive->cullMode = PrimitiveCullMode::Disabled;
-        // Default behavior should favor legibility of text overlays in 3D scenes.
-        primitive->depthTestEnabled = entry.textDepthTest;
-        primitive->depthWriteEnabled = entry.textDepthWrite;
-
-        model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
-                                 glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
-                                 glm::vec3(entry.scale.x(), entry.scale.y(), entry.scale.z()));
-        model->visible = entry.visible;
+        auto model = std::make_unique<Model>(textVertices, runtime.engine());
+        model->name = entry.name.toStdString();
+        runtime.engine()->models[static_cast<size_t>(sceneIndex)] = std::move(model);
     }
+    Model* model = runtime.engine()->models[static_cast<size_t>(sceneIndex)].get();
+    if (!model || model->meshes.empty() || model->meshes.front().primitives.empty())
+    {
+        return;
+    }
+    Primitive* primitive = model->meshes.front().primitives.front().get();
+    if (!primitive)
+    {
+        return;
+    }
+    primitive->updateVertexData(textVertices);
+    motive::text::applyExtrudedTextMaterial(*model,
+                                            vec3ColorFromString(entry.textColor, QColor(Qt::white)),
+                                            entry.textDepthTest,
+                                            entry.textDepthWrite);
+
+    model->setSceneTransform(glm::vec3(entry.translation.x(), entry.translation.y(), entry.translation.z()),
+                             glm::vec3(entry.rotation.x(), entry.rotation.y(), entry.rotation.z()),
+                             glm::vec3(entry.scale.x(), entry.scale.y(), entry.scale.z()));
+    model->visible = entry.visible;
 }
 
 void applyAnimationSettingsToModel(const ViewportHostWidget::SceneItem& entry, Model& model)
@@ -146,6 +240,54 @@ void applyAnimationSettingsToModel(const ViewportHostWidget::SceneItem& entry, M
     model.character.enableRestPointOnMoveRelease = entry.characterRestPointOnReleaseEnabled;
     model.character.restPointNormalizedOnMoveRelease =
         std::clamp(entry.characterRestPointOnReleaseNormalized, 0.0f, 1.0f);
+}
+
+PrimitiveCullMode cullModeFromString(const QString& value)
+{
+    if (value == QStringLiteral("none"))
+    {
+        return PrimitiveCullMode::Disabled;
+    }
+    if (value == QStringLiteral("front"))
+    {
+        return PrimitiveCullMode::Front;
+    }
+    return PrimitiveCullMode::Back;
+}
+
+void applyPrimitiveOverridesToModel(const ViewportHostWidget::SceneItem& entry, Model& model)
+{
+    for (const QJsonValue& value : entry.primitiveOverrides)
+    {
+        if (!value.isObject())
+        {
+            continue;
+        }
+        const QJsonObject object = value.toObject();
+        const int meshIndex = object.value(QStringLiteral("meshIndex")).toInt(-1);
+        const int primitiveIndex = object.value(QStringLiteral("primitiveIndex")).toInt(-1);
+        if (meshIndex < 0 || primitiveIndex < 0 ||
+            meshIndex >= static_cast<int>(model.meshes.size()))
+        {
+            continue;
+        }
+
+        Mesh& mesh = model.meshes[static_cast<size_t>(meshIndex)];
+        if (primitiveIndex >= static_cast<int>(mesh.primitives.size()) ||
+            !mesh.primitives[static_cast<size_t>(primitiveIndex)])
+        {
+            continue;
+        }
+
+        Primitive* primitive = mesh.primitives[static_cast<size_t>(primitiveIndex)].get();
+        primitive->cullMode = cullModeFromString(object.value(QStringLiteral("cullMode")).toString(QStringLiteral("back")));
+        primitive->forceAlphaOne = object.value(QStringLiteral("forceAlphaOne")).toBool(false);
+        if (primitive->ObjectTransformUBOMapped)
+        {
+            const ObjectTransform updated = primitive->buildObjectTransformData();
+            memcpy(primitive->ObjectTransformUBOMapped, &updated, sizeof(updated));
+        }
+    }
 }
 
 }
@@ -207,8 +349,12 @@ void ViewportSceneController::loadSceneFromItems(const QList<ViewportHostWidget:
     m_sceneEntries.clear();
     m_pendingSceneEntries.clear();
 
-    for (const auto& item : items)
+    for (auto item : items)
     {
+        if (isCoordinatePlaneIndicatorSceneItem(item))
+        {
+            canonicalizeCoordinatePlaneIndicatorItem(item);
+        }
         m_pendingSceneEntries.push_back(item);
     }
     m_currentAssetPath = items.isEmpty() ? QString() : items.back().sourcePath;
@@ -265,6 +411,7 @@ void ViewportSceneController::addAssetToScene(const QString& path)
         }
         if (!m_runtime.engine()->models.empty() && m_runtime.engine()->models.back())
         {
+            applyPrimitiveOverridesToModel(entry, *m_runtime.engine()->models.back());
             applyAnimationSettingsToModel(entry, *m_runtime.engine()->models.back());
         }
         m_sceneEntries.push_back(entry);
@@ -289,6 +436,69 @@ void ViewportSceneController::addTextOverlayItem()
     if (m_runtime.isInitialized() && m_runtime.engine())
     {
         applyTextSceneItemToModel(m_runtime, sceneIndex, m_sceneEntries[sceneIndex]);
+    }
+}
+
+bool ViewportSceneController::coordinatePlaneIndicatorsEnabled() const
+{
+    auto containsVisiblePlane = [](const QList<ViewportHostWidget::SceneItem>& entries) {
+        for (const auto& entry : entries)
+        {
+            if (isCoordinatePlaneIndicatorSceneItem(entry) && entry.visible)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    return containsVisiblePlane(m_sceneEntries) || containsVisiblePlane(m_pendingSceneEntries);
+}
+
+void ViewportSceneController::setCoordinatePlaneIndicatorsEnabled(bool enabled)
+{
+    bool found = false;
+    auto updateExisting = [&](QList<ViewportHostWidget::SceneItem>& entries, bool loaded) {
+        for (int i = 0; i < entries.size(); ++i)
+        {
+            if (!isCoordinatePlaneIndicatorSceneItem(entries[i]))
+            {
+                continue;
+            }
+            found = true;
+            canonicalizeCoordinatePlaneIndicatorItem(entries[i]);
+            entries[i].visible = enabled;
+            if (loaded && m_runtime.isInitialized() && m_runtime.engine())
+            {
+                applyCoordinatePlaneIndicatorToModel(m_runtime, i, entries[i]);
+            }
+        }
+    };
+
+    updateExisting(m_sceneEntries, true);
+    updateExisting(m_pendingSceneEntries, false);
+    if (found)
+    {
+        return;
+    }
+
+    const QStringList planes{
+        QStringLiteral("xy"),
+        QStringLiteral("xz"),
+        QStringLiteral("yz"),
+    };
+    for (const QString& plane : planes)
+    {
+        ViewportHostWidget::SceneItem item = makeCoordinatePlaneIndicatorItem(plane, enabled);
+        const int sceneIndex = m_sceneEntries.size();
+        if (m_runtime.isInitialized() && m_runtime.engine())
+        {
+            applyCoordinatePlaneIndicatorToModel(m_runtime, sceneIndex, item);
+            m_sceneEntries.push_back(item);
+        }
+        else
+        {
+            m_pendingSceneEntries.push_back(item);
+        }
     }
 }
 
@@ -329,8 +539,12 @@ void ViewportSceneController::setMeshConsolidationEnabled(bool enabled)
     m_sceneEntries.clear();
     m_pendingSceneEntries.clear();
 
-    for (const auto& item : items)
+    for (auto item : items)
     {
+        if (isCoordinatePlaneIndicatorSceneItem(item))
+        {
+            canonicalizeCoordinatePlaneIndicatorItem(item);
+        }
         m_pendingSceneEntries.push_back(item);
     }
 
@@ -355,6 +569,12 @@ void ViewportSceneController::updateSceneItemTransform(int index, const QVector3
     if (isTextOverlaySceneItem(m_sceneEntries[index]))
     {
         applyTextSceneItemToModel(m_runtime, index, m_sceneEntries[index]);
+        return;
+    }
+    if (isCoordinatePlaneIndicatorSceneItem(m_sceneEntries[index]))
+    {
+        canonicalizeCoordinatePlaneIndicatorItem(m_sceneEntries[index]);
+        applyCoordinatePlaneIndicatorToModel(m_runtime, index, m_sceneEntries[index]);
         return;
     }
 
@@ -416,6 +636,7 @@ void ViewportSceneController::setSceneItemMeshConsolidationEnabled(int index, bo
             }
             if (m_runtime.engine()->models[static_cast<size_t>(index)])
             {
+                applyPrimitiveOverridesToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
                 applyAnimationSettingsToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
             }
         }
@@ -623,6 +844,12 @@ void ViewportSceneController::setSceneItemVisible(int index, bool visible)
         applyTextSceneItemToModel(m_runtime, index, m_sceneEntries[index]);
         return;
     }
+    if (isCoordinatePlaneIndicatorSceneItem(m_sceneEntries[index]))
+    {
+        canonicalizeCoordinatePlaneIndicatorItem(m_sceneEntries[index]);
+        applyCoordinatePlaneIndicatorToModel(m_runtime, index, m_sceneEntries[index]);
+        return;
+    }
     if (!m_runtime.engine())
     {
         return;
@@ -644,6 +871,7 @@ void ViewportSceneController::setSceneItemVisible(int index, bool visible)
             }
             if (m_runtime.engine()->models[static_cast<size_t>(index)])
             {
+                applyPrimitiveOverridesToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
                 applyAnimationSettingsToModel(m_sceneEntries[index], *m_runtime.engine()->models[static_cast<size_t>(index)]);
             }
         }
@@ -759,7 +987,12 @@ void ViewportSceneController::restorePendingEntries()
         int startIndex = m_sceneEntries.size();
         for (int i = 0; i < pendingEntries.size(); ++i)
         {
-            items.push_back({startIndex + i, pendingEntries[i]});
+            auto entry = pendingEntries[i];
+            if (isCoordinatePlaneIndicatorSceneItem(entry))
+            {
+                canonicalizeCoordinatePlaneIndicatorItem(entry);
+            }
+            items.push_back({startIndex + i, entry});
         }
         
         qDebug() << "[ViewportSceneController] Batch loading" << items.size() << "models with parallel loader";
@@ -774,18 +1007,27 @@ void ViewportSceneController::restorePendingEntries()
         for (int i = 0; i < pendingEntries.size(); ++i)
         {
             auto entry = pendingEntries[i];
+            if (isCoordinatePlaneIndicatorSceneItem(entry))
+            {
+                canonicalizeCoordinatePlaneIndicatorItem(entry);
+            }
             const int sceneIndex = startIndex + i;
             
             if (m_runtime.engine() &&
                 sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
-                m_runtime.engine()->models[static_cast<size_t>(sceneIndex)] &&
-                entry.activeAnimationClip.isEmpty())
+                m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
             {
-                const auto& clips = m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]->animationClips;
-                if (!clips.empty())
+                Model& model = *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)];
+                if (entry.activeAnimationClip.isEmpty())
                 {
-                    entry.activeAnimationClip = QString::fromStdString(clips.front().name);
+                    const auto& clips = model.animationClips;
+                    if (!clips.empty())
+                    {
+                        entry.activeAnimationClip = QString::fromStdString(clips.front().name);
+                    }
                 }
+                applyPrimitiveOverridesToModel(entry, model);
+                applyAnimationSettingsToModel(entry, model);
             }
             m_sceneEntries.push_back(entry);
         }
@@ -809,6 +1051,13 @@ void ViewportSceneController::restorePendingEntries()
                 if (isTextOverlaySceneItem(entry))
                 {
                     applyTextSceneItemToModel(m_runtime, sceneIndex, entry);
+                    m_sceneEntries.push_back(entry);
+                    continue;
+                }
+                if (isCoordinatePlaneIndicatorSceneItem(entry))
+                {
+                    canonicalizeCoordinatePlaneIndicatorItem(entry);
+                    applyCoordinatePlaneIndicatorToModel(m_runtime, sceneIndex, entry);
                     m_sceneEntries.push_back(entry);
                     continue;
                 }
@@ -836,12 +1085,13 @@ void ViewportSceneController::restorePendingEntries()
                         entry.activeAnimationClip = QString::fromStdString(clips.front().name);
                     }
                 }
-                if (m_runtime.engine() &&
-                    sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
-                    m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
-                {
-                    applyAnimationSettingsToModel(entry, *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
-                }
+            if (m_runtime.engine() &&
+                sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
+                m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
+            {
+                applyPrimitiveOverridesToModel(entry, *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
+                applyAnimationSettingsToModel(entry, *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
+            }
 
                 m_sceneEntries.push_back(entry);
             }

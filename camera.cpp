@@ -267,7 +267,7 @@ void Camera::handleCursorPos(double xpos, double ypos)
             lastMousePos = currentPos;
 
             const float sensitivity = 0.003f;
-            const float horizontalSign = invertHorizontalDrag ? -1.0f : 1.0f;
+            const float horizontalSign = invertHorizontalDrag ? 1.0f : -1.0f;
             float deltaYaw = delta.x * sensitivity * horizontalSign;
             float deltaPitch = -delta.y * sensitivity;
             
@@ -287,7 +287,7 @@ void Camera::handleCursorPos(double xpos, double ypos)
                 glm::vec2 rot = getEulerRotation();
                 rot.x += deltaYaw;
                 rot.y -= delta.y * sensitivity;
-                rot.y = std::clamp(rot.y, -1.4f, 1.4f);
+                rot.y = std::clamp(rot.y, -followcam::kFreeFlyMaxPitchRadians, followcam::kFreeFlyMaxPitchRadians);
                 setEulerRotation(rot);
             }
         }
@@ -386,7 +386,6 @@ float Camera::getFullscreenPercentY() const
 
 void Camera::updateCameraMatrices()
 {
-    syncEulerCacheFromOrientation();
     CameraTransform camera0TransformUBO{};
     const glm::vec3 front = getForwardVector();
     glm::vec3 up = cameraOrientation * glm::vec3(0.0f, 1.0f, 0.0f);
@@ -811,14 +810,14 @@ bool Camera::isFreeFlyCamera() const
 
 glm::vec2 Camera::getEulerRotation() const
 {
-    return yawPitchFromQuaternion(cameraOrientation);
+    return cameraRotation;
 }
 
 void Camera::setEulerRotation(const glm::vec2& rotation)
 {
     const glm::vec2 sanitized(
         rotation.x,
-        std::clamp(rotation.y, -1.4f, 1.4f));
+        std::clamp(rotation.y, -followcam::kFreeFlyMaxPitchRadians, followcam::kFreeFlyMaxPitchRadians));
     cameraOrientation = quaternionFromYawPitch(sanitized.x, sanitized.y);
     cameraRotation = sanitized;
     orientationSyncedEuler = sanitized;

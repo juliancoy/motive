@@ -278,7 +278,8 @@ void EngineUiControlServer::handleClient(int clientFd) const
                 break;
             }
             request.append(buffer, static_cast<int>(bytesRead));
-            if (request.contains("\r\n\r\n") || request.size() >= 64 * 1024)
+            const int headerEnd = request.indexOf("\r\n\r\n");
+            if (headerEnd >= 0 || request.size() >= 64 * 1024)
             {
                 break;
             }
@@ -287,6 +288,43 @@ void EngineUiControlServer::handleClient(int clientFd) const
         if (request.isEmpty())
         {
             return;
+        }
+
+        const int headerEnd = request.indexOf("\r\n\r\n");
+        if (headerEnd >= 0)
+        {
+            int contentLength = 0;
+            const QList<QByteArray> headerLines = request.left(headerEnd).split('\n');
+            for (const QByteArray& rawLine : headerLines)
+            {
+                const int colon = rawLine.indexOf(':');
+                if (colon <= 0)
+                {
+                    continue;
+                }
+                const QByteArray name = rawLine.left(colon).trimmed().toLower();
+                if (name == "content-length")
+                {
+                    bool ok = false;
+                    const int parsed = rawLine.mid(colon + 1).trimmed().toInt(&ok);
+                    if (ok && parsed > 0)
+                    {
+                        contentLength = parsed;
+                    }
+                    break;
+                }
+            }
+
+            const int expectedRequestSize = headerEnd + 4 + contentLength;
+            while (contentLength > 0 && request.size() < expectedRequestSize && request.size() < 64 * 1024)
+            {
+                const ssize_t bytesRead = ::recv(clientFd, buffer, sizeof(buffer), 0);
+                if (bytesRead <= 0)
+                {
+                    break;
+                }
+                request.append(buffer, static_cast<int>(bytesRead));
+            }
         }
 
         QByteArray requestMethod = "UNKNOWN";
@@ -527,6 +565,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
 
             static const QStringList kAllowedCommands{
                 QStringLiteral("selection"),
+                QStringLiteral("plane_indicators"),
                 QStringLiteral("scene_item"),
                 QStringLiteral("camera"),
                 QStringLiteral("light"),
@@ -570,6 +609,19 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
                 return jsonResponse(500, compactJson(QJsonObject{
                     {QStringLiteral("ok"), false},
                     {QStringLiteral("error"), QStringLiteral("primitive control failed")}
+                }));
+            }
+            result.insert(QStringLiteral("ok"), true);
+            return jsonResponse(200, compactJson(result));
+        }
+        if (path == "/controls/plane-indicators" || path == "/controls/plane_indicators")
+        {
+            QJsonObject result;
+            if (!invokeCommandHandler(m_commandHandler, QStringLiteral("plane_indicators"), body, result))
+            {
+                return jsonResponse(500, compactJson(QJsonObject{
+                    {QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("plane indicator control failed")}
                 }));
             }
             result.insert(QStringLiteral("ok"), true);

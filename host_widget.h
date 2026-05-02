@@ -185,6 +185,7 @@ public:
     QImage primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const;
     QString animationExecutionMode(int sceneIndex, int meshIndex = -1, int primitiveIndex = -1) const;
     QString primitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex) const;
+    QString sceneItemCullMode(int sceneIndex) const;
     bool primitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex) const;
     QStringList animationClipNames(int sceneIndex) const;
     QVector3D cameraPosition() const;
@@ -206,6 +207,7 @@ public:
     void createSceneLight();
     void setSceneLight(const SceneLight& light);
     void updateSceneItemTransform(int index, const QVector3D& translation, const QVector3D& rotation, const QVector3D& scale);
+    bool alignSceneItemBottomToGround(int index, float groundY = 0.0f);
     void setSceneItemMeshConsolidationEnabled(int index, bool enabled);
     void updateSceneItemPaintOverride(int index, bool enabled, const QVector3D& color);
     void updateSceneItemAnimationState(int index, const QString& activeClip, bool playing, bool loop, float speed);
@@ -223,7 +225,10 @@ public:
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
     void setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode);
+    void setSceneItemCullMode(int sceneIndex, const QString& cullMode);
     void setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled);
+    void setCoordinatePlaneIndicatorsEnabled(bool enabled);
+    bool coordinatePlaneIndicatorsEnabled() const;
     void relocateSceneItemInFrontOfCamera(int index);
     void focusSceneItem(int index);
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);
@@ -323,6 +328,7 @@ private:
     void ensureFollowCamerasForAllSceneItems();
     void captureMotionDebugFrame(float dt);
     void updateMotionDebugOverlay();
+    void updateCameraDirectionIndicator();
 
     struct MotionDebugSample
     {
@@ -360,6 +366,7 @@ private:
     bool m_tpsBootstrapApplied = false;
     bool m_hasEmittedCameraState = false;
     QLabel* m_statusLabel = nullptr;
+    QLabel* m_cameraDirectionLabel = nullptr;
     QWidget* m_renderSurface = nullptr;
     QWidget* m_viewportSelectorPanel = nullptr;
     QGridLayout* m_viewportSelectorGrid = nullptr;

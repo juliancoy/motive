@@ -21,6 +21,68 @@ QString defaultProjectId()
     return QStringLiteral("default");
 }
 
+QString resolvedRestoredAssetPath(const QString& savedPath, const QString& projectRoot)
+{
+    if (savedPath.isEmpty() ||
+        savedPath.startsWith(QStringLiteral("text://"), Qt::CaseInsensitive) ||
+        QFileInfo::exists(savedPath))
+    {
+        return savedPath;
+    }
+
+    QStringList roots;
+    const auto addRoot = [&roots](const QString& root)
+    {
+        const QString cleaned = QDir::cleanPath(root);
+        if (!cleaned.isEmpty() && !roots.contains(cleaned))
+        {
+            roots.push_back(cleaned);
+        }
+    };
+
+    addRoot(projectRoot);
+    addRoot(QDir::currentPath());
+    addRoot(QCoreApplication::applicationDirPath());
+    addRoot(QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("..")));
+
+    QStringList suffixes;
+    if (QFileInfo(savedPath).isRelative())
+    {
+        suffixes.push_back(savedPath);
+    }
+
+    const QString normalized = QDir::fromNativeSeparators(savedPath);
+    const QStringList anchors{
+        QStringLiteral("thirdpersonshooter/"),
+        QStringLiteral("models/"),
+        QStringLiteral("projects/"),
+        QStringLiteral("LandReform/")
+    };
+    for (const QString& anchor : anchors)
+    {
+        const int pos = normalized.indexOf(anchor, 0, Qt::CaseInsensitive);
+        if (pos >= 0)
+        {
+            suffixes.push_back(normalized.mid(pos));
+        }
+    }
+    suffixes.push_back(QFileInfo(savedPath).fileName());
+
+    for (const QString& root : roots)
+    {
+        for (const QString& suffix : suffixes)
+        {
+            const QString candidate = QDir(root).absoluteFilePath(suffix);
+            if (QFileInfo::exists(candidate))
+            {
+                return QFileInfo(candidate).absoluteFilePath();
+            }
+        }
+    }
+
+    return savedPath;
+}
+
 }
 
 ProjectSession::ProjectSession()
@@ -613,8 +675,21 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
 
     m_currentGalleryPath = state.value(QStringLiteral("galleryPath")).toString();
     m_currentSelectedAssetPath = state.value(QStringLiteral("selectedAssetPath")).toString();
-    m_currentViewportAssetPath = state.value(QStringLiteral("viewportAssetPath")).toString();
+    m_currentViewportAssetPath = resolvedRestoredAssetPath(
+        state.value(QStringLiteral("viewportAssetPath")).toString(),
+        m_currentProjectRoot);
     m_currentSceneItems = state.value(QStringLiteral("sceneItems")).toArray();
+    for (int i = 0; i < m_currentSceneItems.size(); ++i)
+    {
+        QJsonObject item = m_currentSceneItems[i].toObject();
+        if (item.contains(QStringLiteral("sourcePath")))
+        {
+            item[QStringLiteral("sourcePath")] = resolvedRestoredAssetPath(
+                item.value(QStringLiteral("sourcePath")).toString(),
+                m_currentProjectRoot);
+            m_currentSceneItems[i] = item;
+        }
+    }
     m_currentCameraConfigs = state.value(QStringLiteral("cameraConfigs")).toArray();
 
     // Load camera position
@@ -659,7 +734,7 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
         {
             if (value.isString())
             {
-                const QString sourcePath = value.toString();
+                const QString sourcePath = resolvedRestoredAssetPath(value.toString(), m_currentProjectRoot);
                 m_currentSceneItems.push_back(QJsonObject{
                     {QStringLiteral("name"), QFileInfo(sourcePath).completeBaseName()},
                     {QStringLiteral("sourcePath"), sourcePath},

@@ -18,55 +18,11 @@ void Model::scaleToUnitBox()
 {
     glm::vec3 minBounds(std::numeric_limits<float>::max());
     glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-    bool foundPositions = false;
-
-    if (tgltfModel)
-    {
-        for (const auto &meshData : tgltfModel->meshes)
-        {
-            for (const auto &primitiveData : meshData.primitives)
-            {
-                auto attrIt = primitiveData.attributes.find("POSITION");
-                if (attrIt == primitiveData.attributes.end())
-                {
-                    continue;
-                }
-
-                const tinygltf::Accessor &accessor = tgltfModel->accessors[attrIt->second];
-                const tinygltf::BufferView &bufferView = tgltfModel->bufferViews[accessor.bufferView];
-                const tinygltf::Buffer &buffer = tgltfModel->buffers[bufferView.buffer];
-
-                size_t stride = accessor.ByteStride(bufferView);
-                if (stride == 0)
-                {
-                    stride = 3 * sizeof(float);
-                }
-
-                const uint8_t *dataPtr = buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
-                for (size_t i = 0; i < accessor.count; ++i)
-                {
-                    const float *position = reinterpret_cast<const float *>(dataPtr + i * stride);
-                    glm::vec3 pos(position[0], position[1], position[2]);
-                    minBounds = glm::min(minBounds, pos);
-                    maxBounds = glm::max(maxBounds, pos);
-                    foundPositions = true;
-                }
-            }
-        }
-    }
-    else
-    {
-        foundPositions = computeProceduralBounds(minBounds, maxBounds);
-        if (!foundPositions)
-        {
-            std::cerr << "[Warning] scaleToUnitBox: Unable to compute bounds for procedural model " << name << std::endl;
-            return;
-        }
-    }
+    const bool foundPositions = computeProceduralBounds(minBounds, maxBounds);
 
     if (!foundPositions)
     {
-        std::cerr << "[Warning] scaleToUnitBox: No position data found on model " << name << std::endl;
+        std::cerr << "[Warning] scaleToUnitBox: Unable to compute bounds for model " << name << std::endl;
         return;
     }
 

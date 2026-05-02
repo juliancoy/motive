@@ -17,7 +17,10 @@ struct FollowSettings
 namespace followcam
 {
 inline constexpr float kMinDistance = 1.0f;
-inline constexpr float kMaxPitchRadians = 1.4f;
+inline constexpr float kFreeFlyMaxPitchDegrees = 85.0f;
+inline constexpr float kFreeFlyMaxPitchRadians = kFreeFlyMaxPitchDegrees * 3.14159265358979323846f / 180.0f;
+inline constexpr float kMaxPitchDegrees = 80.0f;
+inline constexpr float kMaxPitchRadians = kMaxPitchDegrees * 3.14159265358979323846f / 180.0f;
 inline constexpr float kMinSmoothSpeed = 0.0f;
 inline constexpr float kDefaultSmoothSpeed = 10.0f;
 

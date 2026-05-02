@@ -124,9 +124,10 @@ void ViewportCameraController::relocateSceneItemInFrontOfCamera(int index, Camer
     m_sceneController.updateSceneItemTransform(index, translation, entry.rotation, entry.scale);
 }
 
-void ViewportCameraController::focusSceneItem(int index)
+void ViewportCameraController::focusSceneItem(int index, Camera* targetCamera)
 {
-    if (index < 0 || index >= m_sceneController.loadedEntries().size() || !m_runtime.camera() || !m_runtime.engine())
+    Camera* camera = targetCamera ? targetCamera : m_runtime.camera();
+    if (index < 0 || index >= m_sceneController.loadedEntries().size() || !camera || !m_runtime.engine())
     {
         return;
     }
@@ -146,7 +147,7 @@ void ViewportCameraController::focusSceneItem(int index)
     const float autoDistance = detail::framingDistanceForModel(*model);
     const float distance = entry.focusDistance > 0.0f ? entry.focusDistance : autoDistance;
 
-    glm::vec3 cameraPosition = m_runtime.camera()->cameraPos;
+    glm::vec3 cameraPosition = camera->cameraPos;
     if (entry.focusCameraOffsetValid)
     {
         const glm::vec3 storedOffset(entry.focusCameraOffset.x(), entry.focusCameraOffset.y(), entry.focusCameraOffset.z());
@@ -157,22 +158,30 @@ void ViewportCameraController::focusSceneItem(int index)
         }
     }
 
-    glm::vec3 toTarget = worldCenter - cameraPosition;
-    glm::vec3 front = glm::length(toTarget) > 1e-6f
+    const float desiredDistance = glm::max(distance, 0.05f);
+    const glm::vec3 defaultFront = glm::normalize(glm::vec3(0.0f, -0.35f, -1.0f));
+    const glm::vec3 toTarget = worldCenter - cameraPosition;
+    const float currentDistance = glm::length(toTarget);
+    glm::vec3 front = (currentDistance > 1e-6f)
         ? glm::normalize(toTarget)
-        : m_runtime.camera()->getForwardVector();
+        : camera->getForwardVector();
     if (glm::length(front) <= 1e-6f)
     {
-        front = glm::vec3(0.0f, 0.0f, 1.0f);
+        front = defaultFront;
+    }
+    if (!std::isfinite(currentDistance) ||
+        currentDistance > desiredDistance * 6.0f ||
+        std::abs(front.y) > 0.97f)
+    {
+        front = defaultFront;
     }
 
     if (!entry.focusCameraOffsetValid)
     {
-        cameraPosition = worldCenter - front * glm::max(distance, 0.05f);
+        cameraPosition = worldCenter - front * desiredDistance;
     }
     else
     {
-        const float desiredDistance = glm::max(distance, 0.05f);
         const float actualDistance = glm::length(worldCenter - cameraPosition);
         if (!std::isfinite(actualDistance) || actualDistance < 0.05f)
         {
@@ -180,9 +189,14 @@ void ViewportCameraController::focusSceneItem(int index)
         }
     }
 
-    m_runtime.camera()->setEulerRotation(detail::cameraRotationForDirection(front));
-    m_runtime.camera()->cameraPos = cameraPosition;
-    m_runtime.camera()->update(0.0f);
+    camera->setEulerRotation(detail::cameraRotationForDirection(front));
+    camera->cameraPos = cameraPosition;
+    const float requiredFarClip = desiredDistance + std::max(model->boundsRadius * 4.0f, 10.0f);
+    if (std::isfinite(requiredFarClip) && requiredFarClip > camera->getPerspectiveFar())
+    {
+        camera->setPerspectiveNearFar(camera->getPerspectiveNear(), requiredFarClip);
+    }
+    camera->update(0.0f);
 }
 
 }  // namespace motive::ui

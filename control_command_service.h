@@ -36,6 +36,7 @@ private:
     bool handleMotionDebugSummary(QJsonObject& result) const;
     bool handleMotionDebugOverlay(const QJsonObject& body, QJsonObject& result) const;
     bool handlePrimitive(const QJsonObject& body, QJsonObject& result) const;
+    bool handlePlaneIndicators(const QJsonObject& body, QJsonObject& result) const;
     bool handleSceneItem(const QJsonObject& body, QJsonObject& result) const;
     bool handleAnimation(const QJsonObject& body, QJsonObject& result) const;
     bool handleCharacter(const QJsonObject& body, QJsonObject& result) const;

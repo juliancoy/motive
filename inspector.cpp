@@ -256,6 +256,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             m_scaleWidget->setVisible(true);
             m_scaleWidget->setEnabled(visible);
         }
+        if (m_alignBottomToGroundButton) {
+            m_alignBottomToGroundButton->setVisible(true);
+            m_alignBottomToGroundButton->setEnabled(visible);
+        }
     };
     const auto setPrimitiveInspectorVisible = [this](bool visible, const QString& cullMode = QStringLiteral("back"))
     {
@@ -733,6 +737,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                 if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
                 if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
                 if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
+                if (m_alignBottomToGroundButton) m_alignBottomToGroundButton->setEnabled(false);
             } else {
                 // Free camera: hide follow params, show transform (but hide scale - cameras don't have scale)
                 setFollowParamsVisible(false);
@@ -750,6 +755,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                 if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
                 if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
                 if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
+                if (m_alignBottomToGroundButton) m_alignBottomToGroundButton->setEnabled(false);
                 if (m_lockScaleXYZCheck) {
                     m_lockScaleXYZCheck->setVisible(true);
                     m_lockScaleXYZCheck->setEnabled(false);
@@ -824,6 +830,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             if (m_lockScaleXYZCheck) {
                 m_lockScaleXYZCheck->setVisible(true);
                 m_lockScaleXYZCheck->setEnabled(false);
+            }
+            if (m_alignBottomToGroundButton) {
+                m_alignBottomToGroundButton->setVisible(true);
+                m_alignBottomToGroundButton->setEnabled(false);
             }
             if (m_freeFlyCameraCheck) {
                 m_freeFlyCameraCheck->setVisible(true);
@@ -914,6 +924,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             m_lockScaleXYZCheck->setVisible(true);
             m_lockScaleXYZCheck->setEnabled(false);
         }
+        if (m_alignBottomToGroundButton) {
+            m_alignBottomToGroundButton->setVisible(true);
+            m_alignBottomToGroundButton->setEnabled(false);
+        }
         setTexturePreview(QImage());
         m_updatingInspector = false;
         return;
@@ -952,6 +966,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
     if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(true);
     if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(true);
     if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(true);
+    if (m_alignBottomToGroundButton) m_alignBottomToGroundButton->setEnabled(true);
     if (m_lockScaleXYZCheck) {
         m_lockScaleXYZCheck->setVisible(true);
         m_lockScaleXYZCheck->setEnabled(true);
@@ -967,13 +982,23 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
     const QString suffix = QFileInfo(item.sourcePath).suffix().toLower();
     const bool loadVisible = suffix == QStringLiteral("gltf") || suffix == QStringLiteral("glb");
     const bool primitiveControlsVisible = m_viewportHost && meshIndex >= 0 && primitiveIndex >= 0;
+    const bool sceneCullControlsVisible = m_viewportHost &&
+        nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::SceneItem);
     setLoadInspectorVisible(!isTextItem && loadVisible, item.meshConsolidationEnabled);
-    setPrimitiveInspectorVisible(!isTextItem && primitiveControlsVisible,
-                                 (!isTextItem && m_viewportHost) ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex) : QStringLiteral("back"));
+    setPrimitiveInspectorVisible(
+        !isTextItem && (primitiveControlsVisible || sceneCullControlsVisible),
+        (!isTextItem && m_viewportHost)
+            ? (primitiveControlsVisible ? m_viewportHost->primitiveCullMode(row, meshIndex, primitiveIndex)
+                                        : m_viewportHost->sceneItemCullMode(row))
+            : QStringLiteral("back"));
+    if (m_primitiveForceAlphaButton && !primitiveControlsVisible)
+    {
+        m_primitiveForceAlphaButton->setEnabled(false);
+    }
     if (m_materialSection)
     {
         m_materialSection->setVisible(true);
-        m_materialSection->setEnabled(!isTextItem && (loadVisible || primitiveControlsVisible));
+        m_materialSection->setEnabled(!isTextItem && (loadVisible || primitiveControlsVisible || sceneCullControlsVisible));
     }
     if (m_primitiveForceAlphaButton)
     {

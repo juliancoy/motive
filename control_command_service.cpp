@@ -137,8 +137,9 @@ bool ControlCommandService::tryHandleSceneDomain(const QString& command,
         const char* name;
         CommandHandler handler;
     };
-    static const std::array<Entry, 8> kSceneCommands{{
+    static const std::array<Entry, 9> kSceneCommands{{
         {"primitive", &ControlCommandService::handlePrimitive},
+        {"plane_indicators", &ControlCommandService::handlePlaneIndicators},
         {"scene_item", &ControlCommandService::handleSceneItem},
         {"animation", &ControlCommandService::handleAnimation},
         {"character", &ControlCommandService::handleCharacter},
@@ -194,9 +195,18 @@ bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject
     }
 
     bool selected = false;
+    const bool focusRequested = body.value(QStringLiteral("focus")).toBool(false);
     if (body.contains(QStringLiteral("sceneIndex")))
     {
-        selected = m_window.selectHierarchySceneItem(body.value(QStringLiteral("sceneIndex")).toInt(-1));
+        const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
+        selected = m_window.selectHierarchySceneItem(sceneIndex);
+        if (selected && focusRequested)
+        {
+            if (auto* viewport = m_window.viewportHost())
+            {
+                viewport->focusSceneItem(sceneIndex);
+            }
+        }
     }
     else if (body.contains(QStringLiteral("cameraId")) || body.contains(QStringLiteral("cameraIndex")))
     {

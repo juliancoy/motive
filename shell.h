@@ -172,6 +172,7 @@ private:
     QDoubleSpinBox* m_inspectorScaleY = nullptr;
     QDoubleSpinBox* m_inspectorScaleZ = nullptr;
     QCheckBox* m_lockScaleXYZCheck = nullptr;
+    QPushButton* m_alignBottomToGroundButton = nullptr;
     QComboBox* m_placementTargetCombo = nullptr;
     QComboBox* m_placementLandmarkCombo = nullptr;
     QPushButton* m_placementApplyButton = nullptr;

@@ -187,6 +187,8 @@ def main() -> int:
         raise AssertionError(f"not enough rendered text coverage: {stats}")
     if stats["bbox_w"] < 420 or stats["bbox_h"] < 180:
         raise AssertionError(f"extruded text bbox too small: {stats}")
+    if stats["min_x"] <= 2 or stats["max_x"] >= width - 3:
+        raise AssertionError(f"text appears clipped against horizontal image edge: {stats}")
     if stats["bright"] < 2500:
         raise AssertionError(f"front face highlight missing: {stats}")
     if stats["dark"] + stats["bright"] < 20000:

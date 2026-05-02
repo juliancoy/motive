@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,11 +16,10 @@
 #include "camera.h"
 #include "display.h"
 #include "engine.h"
+#include "light.h"
 #include "model.h"
-#include "primitive.h"
 #include "text_mesh_extrusion.h"
 #include "text_rendering.h"
- #include "light.h"
 
 namespace {
 
@@ -32,6 +32,8 @@ struct Args
     float extrudeDepth = 0.22f;
     int canvasWidth = 1920;
     int canvasHeight = 1080;
+    int meshSupersample = 3;
+    float bevelScale = 1.0f;
 };
 
 bool parseArgs(int argc, char** argv, Args& args)
@@ -90,6 +92,18 @@ bool parseArgs(int argc, char** argv, Args& args)
             const char* v = need("--canvas-height");
             if (!v) return false;
             args.canvasHeight = std::max(64, std::stoi(v));
+        }
+        else if (a == "--mesh-supersample")
+        {
+            const char* v = need("--mesh-supersample");
+            if (!v) return false;
+            args.meshSupersample = std::clamp(std::stoi(v), 1, 6);
+        }
+        else if (a == "--bevel-scale")
+        {
+            const char* v = need("--bevel-scale");
+            if (!v) return false;
+            args.bevelScale = std::clamp(std::stof(v), 0.0f, 2.0f);
         }
         else
         {
@@ -213,7 +227,6 @@ bool captureSwapchainImageToPng(Engine& engine, Display& display, const std::str
     }
 
     std::memcpy(image.bits(), rgba.data(), rgba.size());
-    image = image.mirrored(true, true);
 
     vkDestroyBuffer(engine.logicalDevice, readbackBuffer, nullptr);
     vkFreeMemory(engine.logicalDevice, readbackMemory, nullptr);
@@ -249,50 +262,37 @@ int main(int argc, char** argv)
         engine.setLight(sceneLight);
 
         Camera* camera = display->createCamera("capture_cam",
-                                               glm::vec3(0.0f, 0.0f, 3.0f),
-                                               glm::vec2(glm::radians(0.0f), glm::radians(-2.0f)));
+                                               glm::vec3(0.0f, 0.03f, 4.8f),
+                                               glm::vec2(glm::radians(0.0f), glm::radians(-1.0f)));
         if (!camera)
         {
             throw std::runtime_error("Failed to create camera");
         }
+        camera->setOrthographicProjection(4.1f, 2.3f, 0.1f, 100.0f);
         display->setActiveCamera(camera);
 
-        motive::text::FontRenderOptions fontOptions;
-        fontOptions.fontPath = args.fontPath;
-        fontOptions.bold = true;
+        motive::text::ExtrudedTextOptions textOptions;
+        textOptions.pixelHeight = static_cast<uint32_t>(std::max(8, args.pixelHeight));
+        textOptions.meshSupersample = static_cast<uint32_t>(args.meshSupersample);
+        textOptions.font.fontPath = args.fontPath;
+        textOptions.font.bold = true;
+        textOptions.depth = args.extrudeDepth;
+        textOptions.bevelScale = args.bevelScale;
 
-        motive::text::TextOverlayStyle style;
-        style.drawBackground = false;
-        style.drawOutline = false;
-        style.drawShadow = false;
-        style.textColor = 0xFFFFFFFFu;
-
-        const uint32_t pxHeight = static_cast<uint32_t>(std::max(8, args.pixelHeight));
-        const size_t charCount = std::max<size_t>(args.text.size(), 1u);
-        const uint32_t overlayWidth = static_cast<uint32_t>(std::clamp<size_t>(charCount * static_cast<size_t>(pxHeight) * 2u,
-                                                                                1024u,
-                                                                                4096u));
-        const uint32_t overlayHeight = static_cast<uint32_t>(std::clamp<uint32_t>(pxHeight * 4u,
-                                                                                   256u,
-                                                                                   1024u));
-
-        const motive::text::OverlayBitmap bitmap = motive::text::buildStyledTextOverlay(
-            overlayWidth,
-            overlayHeight,
-            args.text,
-            pxHeight,
-            fontOptions,
-            style);
-        if (bitmap.pixels.empty() || bitmap.width == 0 || bitmap.height == 0)
-        {
-            throw std::runtime_error("Failed to build text overlay bitmap");
-        }
-
-        std::vector<Vertex> vertices = motive::text::buildExtrudedTextVertices(bitmap, args.extrudeDepth);
+        std::vector<Vertex> vertices = motive::text::buildExtrudedTextVerticesFromText(args.text, textOptions);
         if (vertices.empty())
         {
             throw std::runtime_error("Failed to build extruded text mesh");
         }
+        glm::vec3 vmin(std::numeric_limits<float>::max());
+        glm::vec3 vmax(std::numeric_limits<float>::lowest());
+        for (const Vertex& v : vertices)
+        {
+            vmin = glm::min(vmin, v.pos);
+            vmax = glm::max(vmax, v.pos);
+        }
+        std::cout << "[TextExtrusion] vertex bounds min=(" << vmin.x << "," << vmin.y << "," << vmin.z
+                  << ") max=(" << vmax.x << "," << vmax.y << "," << vmax.z << ")\n";
 
         auto model = std::make_unique<Model>(vertices, &engine);
         model->name = "text_extrusion_vulkan";
@@ -301,21 +301,11 @@ int main(int argc, char** argv)
             throw std::runtime_error("Invalid model primitive state");
         }
 
-        Primitive* primitive = model->meshes.front().primitives.front().get();
-        primitive->updateTextureFromPixelData(bitmap.pixels.data(),
-                                              bitmap.pixels.size(),
-                                              bitmap.width,
-                                              bitmap.height,
-                                              VK_FORMAT_R8G8B8A8_UNORM);
-        primitive->alphaMode = PrimitiveAlphaMode::Blend;
-        primitive->cullMode = PrimitiveCullMode::Disabled;
-        primitive->depthTestEnabled = true;
-        primitive->depthWriteEnabled = true;
-        primitive->forceAlphaOne = true;
+        motive::text::applyExtrudedTextMaterial(*model, glm::vec3(0.97f, 0.97f, 0.97f), true, true);
 
-        model->setSceneTransform(glm::vec3(0.0f, -0.1f, 0.0f),
-                                 glm::vec3(-14.0f, -24.0f, -6.0f),
-                                 glm::vec3(2.35f, 2.35f, 2.35f));
+        model->setSceneTransform(glm::vec3(0.0f, -0.04f, 0.0f),
+                                 glm::vec3(-12.0f, 20.0f, 0.0f),
+                                 glm::vec3(0.94f, 0.94f, 0.94f));
 
         engine.addModel(std::move(model));
 

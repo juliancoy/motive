@@ -737,6 +737,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_inspectorTexturePreview->setAlignment(Qt::AlignCenter);
     m_inspectorTexturePreview->setFrameShape(QFrame::StyledPanel);
     m_primitiveCullModeCombo = new QComboBox(inspectorPanel);
+    m_primitiveCullModeCombo->addItem(QStringLiteral("Mixed"), QStringLiteral("mixed"));
     m_primitiveCullModeCombo->addItem(QStringLiteral("Back"), QStringLiteral("back"));
     m_primitiveCullModeCombo->addItem(QStringLiteral("None"), QStringLiteral("none"));
     m_primitiveCullModeCombo->addItem(QStringLiteral("Front"), QStringLiteral("front"));
@@ -922,6 +923,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     scaleLayout->addWidget(m_lockScaleXYZCheck);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
 
+    m_alignBottomToGroundButton = new QPushButton(QStringLiteral("Align Bottom to Ground"), inspectorPanel);
+    m_alignBottomToGroundButton->setToolTip(
+        QStringLiteral("Move the selected object so the bottom of its world-space bounding box sits on Y=0."));
+
     m_placementTargetCombo = new QComboBox(inspectorPanel);
     m_placementLandmarkCombo = new QComboBox(inspectorPanel);
     m_placementLandmarkCombo->addItem(QStringLiteral("Ground Center"), QStringLiteral("ground_center"));
@@ -1097,6 +1102,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     transformLayout->addRow(QStringLiteral("Translation"), m_translationWidget);
     transformLayout->addRow(QStringLiteral("Rotation"), m_rotationWidget);
     transformLayout->addRow(QStringLiteral("Scale"), m_scaleWidget);
+    transformLayout->addRow(QStringLiteral("Ground Plane"), m_alignBottomToGroundButton);
 
     m_placementSection = new QGroupBox(QStringLiteral("Placement"), overviewTab);
     auto* placementLayout = new QFormLayout(m_placementSection);
@@ -1443,11 +1449,17 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
         const int meshIndex = current ? current->data(0, Qt::UserRole + 1).toInt() : -1;
         const int primitiveIndex = current ? current->data(0, Qt::UserRole + 2).toInt() : -1;
-        if (row < 0 || meshIndex < 0 || primitiveIndex < 0)
+        const QString cullMode = m_primitiveCullModeCombo->currentData().toString();
+        if (row < 0 || cullMode == QStringLiteral("mixed"))
         {
             return;
         }
-        m_viewportHost->setPrimitiveCullMode(row, meshIndex, primitiveIndex, m_primitiveCullModeCombo->currentData().toString());
+        if (meshIndex >= 0 && primitiveIndex >= 0)
+        {
+            m_viewportHost->setPrimitiveCullMode(row, meshIndex, primitiveIndex, cullMode);
+            return;
+        }
+        m_viewportHost->setSceneItemCullMode(row, cullMode);
     });
     connect(m_primitiveForceAlphaButton, &QPushButton::toggled, this, [this](bool enabled) {
         if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree)
@@ -2137,6 +2149,61 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             .arg(QString::number(maxPoint.z(), 'f', 3)));
     };
 
+    connect(m_alignBottomToGroundButton, &QPushButton::clicked, this, [this, selectedSceneItemIndex, updateBoundsSummary]() {
+        if (!m_viewportHost)
+        {
+            return;
+        }
+
+        const int row = selectedSceneItemIndex();
+        if (row < 0 || row >= m_sceneItems.size())
+        {
+            return;
+        }
+
+        const QVector3D boundsSize = m_viewportHost->sceneItemBoundsSize(row);
+        const QVector3D minPoint = m_viewportHost->sceneItemBoundsMin(row);
+        if (boundsSize.lengthSquared() <= 1e-10f || !std::isfinite(minPoint.y()))
+        {
+            return;
+        }
+
+        const QVector3D oldTranslation = m_sceneItems[row].translation;
+        const QVector3D rotation = m_sceneItems[row].rotation;
+        const QVector3D scale = m_sceneItems[row].scale;
+        const QVector3D newTranslation(
+            oldTranslation.x(),
+            oldTranslation.y() - minPoint.y(),
+            oldTranslation.z());
+        if (qFuzzyCompare(oldTranslation.y(), newTranslation.y()))
+        {
+            return;
+        }
+
+        if (!m_viewportHost->alignSceneItemBottomToGround(row, 0.0f))
+        {
+            return;
+        }
+        m_sceneItems = m_viewportHost->sceneItems();
+
+        {
+            const QSignalBlocker blockX(m_inspectorTranslationX);
+            const QSignalBlocker blockY(m_inspectorTranslationY);
+            const QSignalBlocker blockZ(m_inspectorTranslationZ);
+            if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(newTranslation.x());
+            if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(newTranslation.y());
+            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(newTranslation.z());
+        }
+
+        pushTransformCommand(row, oldTranslation, rotation, scale, newTranslation, rotation, scale);
+        updateBoundsSummary(row);
+        saveProjectState();
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
+    });
+
     // Connect spin box value changes to update scene items
     auto updateTransform = [this, updateBoundsSummary]() {
         if (m_updatingInspector) return;
@@ -2614,6 +2681,10 @@ QJsonObject MainWindowShell::inspectorDebugJson() const
     payload.insert(QStringLiteral("boundsCenterText"), m_boundsCenterValue ? m_boundsCenterValue->text() : QString());
     payload.insert(QStringLiteral("boundsMinText"), m_boundsMinValue ? m_boundsMinValue->text() : QString());
     payload.insert(QStringLiteral("boundsMaxText"), m_boundsMaxValue ? m_boundsMaxValue->text() : QString());
+    payload.insert(QStringLiteral("alignBottomToGroundVisible"),
+                   m_alignBottomToGroundButton ? !m_alignBottomToGroundButton->isHidden() : false);
+    payload.insert(QStringLiteral("alignBottomToGroundEnabled"),
+                   m_alignBottomToGroundButton ? m_alignBottomToGroundButton->isEnabled() : false);
     int placementTargetSceneIndex = -1;
     if (m_placementTargetCombo)
     {
@@ -2762,6 +2833,7 @@ QJsonObject MainWindowShell::uiDebugJson() const
     inspectorWidgets.insert(QStringLiteral("placementApplyButton"), widgetMetrics(m_placementApplyButton));
     inspectorWidgets.insert(QStringLiteral("placementLandmarksValue"), widgetMetrics(m_placementLandmarksValue));
     inspectorWidgets.insert(QStringLiteral("transformSection"), widgetMetrics(m_transformSection));
+    inspectorWidgets.insert(QStringLiteral("alignBottomToGroundButton"), widgetMetrics(m_alignBottomToGroundButton));
     inspectorWidgets.insert(QStringLiteral("materialSection"), widgetMetrics(m_materialSection));
     inspectorWidgets.insert(QStringLiteral("animationSection"), widgetMetrics(m_animationSection));
     inspectorWidgets.insert(QStringLiteral("physicsSection"), widgetMetrics(m_physicsSection));

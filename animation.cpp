@@ -341,12 +341,24 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
     }
 
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
+    bool allMeshesUseGpuSkinning = meshCount > 0;
+    for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
+    {
+        const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
+        Primitive* primitive = !model.meshes[meshIndex].primitives.empty()
+            ? model.meshes[meshIndex].primitives.front().get()
+            : nullptr;
+        if (!primitive || !primitive->gpuSkinningEnabled || !binding.gpuSkinningEligible)
+        {
+            allMeshesUseGpuSkinning = false;
+            break;
+        }
+    }
 
     ufbx_evaluate_opts evalOpts = {};
-    // Follow/orbit targeting and culling depend on model boundsCenter, which is
-    // derived from primitive CPU vertices. Those vertices must represent animated
-    // skinning every frame, including when rendering uses GPU skinning.
-    evalOpts.evaluate_skinning = true;
+    // CPU skin evaluation is expensive for high-density FBX characters. When all
+    // primitives can skin on the GPU, only evaluate animated node/joint matrices.
+    evalOpts.evaluate_skinning = !allMeshesUseGpuSkinning;
     ufbx_error error;
     ufbx_scene* evaluatedScene = ufbx_evaluate_scene(runtime.scene, clip.anim, runtime.timeSeconds, &evalOpts, &error);
     if (!evaluatedScene)
@@ -370,12 +382,6 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
             continue;
         }
 
-        // Build animated vertices for bounds computation (needed even with GPU skinning)
-        std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
-        
-        const glm::vec3 centerDelta = runtime.centroidNormalizationEnabled
-            ? normalizeControllableCharacterRootOffset(model, vertices)
-            : glm::vec3(0.0f);
         if (primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
         {
             const ufbx_skin_deformer* skin = binding.skinDeformerIndex < evaluatedMesh->skin_deformers.count
@@ -397,24 +403,16 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
                     }
                     jointMatrices.push_back(invGeometryToWorld * toGlmMat4(cluster->geometry_to_world));
                 }
-                if (glm::length(centerDelta) > 1e-6f)
-                {
-                    const glm::mat4 anchorFix = glm::translate(glm::mat4(1.0f), -centerDelta);
-                    for (glm::mat4& m : jointMatrices)
-                    {
-                        m = anchorFix * m;
-                    }
-                }
                 primitive->updateSkinningMatrices(jointMatrices);
-                // Still update CPU vertices for bounds computation, even with GPU skinning
-                if (!vertices.empty())
-                {
-                    primitive->cpuVertices = vertices;
-                }
                 updated = true;
                 continue;
             }
         }
+
+        std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
+        const glm::vec3 centerDelta = runtime.centroidNormalizationEnabled
+            ? normalizeControllableCharacterRootOffset(model, vertices)
+            : glm::vec3(0.0f);
         if (vertices.empty())
         {
             continue;

@@ -26,7 +26,7 @@ public:
     void resetCamera();
 
     void relocateSceneItemInFrontOfCamera(int index, ::Camera* referenceCamera = nullptr);
-    void focusSceneItem(int index);
+    void focusSceneItem(int index, ::Camera* targetCamera = nullptr);
 
 private:
     ViewportRuntime& m_runtime;

@@ -457,6 +457,74 @@ bool isFollowMode(CameraMode mode)
     return mode == CameraMode::CharacterFollow || mode == CameraMode::OrbitFollow;
 }
 
+QString compassFromForward(const glm::vec3& forward)
+{
+    const float horizontalLength = std::sqrt(forward.x * forward.x + forward.z * forward.z);
+    if (horizontalLength <= 1e-5f)
+    {
+        return QStringLiteral("no horizontal bearing");
+    }
+
+    const float angle = std::atan2(forward.x, -forward.z);
+    int sector = static_cast<int>(std::floor((glm::degrees(angle) + 360.0f + 22.5f) / 45.0f)) % 8;
+    static const std::array<const char*, 8> kSectors{
+        "-Z / North",
+        "+X -Z / Northeast",
+        "+X / East",
+        "+X +Z / Southeast",
+        "+Z / South",
+        "-X +Z / Southwest",
+        "-X / West",
+        "-X -Z / Northwest",
+    };
+    return QString::fromLatin1(kSectors[static_cast<size_t>(sector)]);
+}
+
+QString verticalFacingLabel(const glm::vec3& forward)
+{
+    if (forward.y <= -0.85f)
+    {
+        return QStringLiteral("LOOKING DOWN");
+    }
+    if (forward.y >= 0.85f)
+    {
+        return QStringLiteral("LOOKING UP");
+    }
+    if (forward.y <= -0.30f)
+    {
+        return QStringLiteral("LOOKING DOWNWARD");
+    }
+    if (forward.y >= 0.30f)
+    {
+        return QStringLiteral("LOOKING UPWARD");
+    }
+    return QStringLiteral("LOOKING LEVEL");
+}
+
+QJsonObject cameraDirectionObject(const Camera& camera)
+{
+    const glm::vec2 rotation = camera.getEulerRotation();
+    const glm::vec3 forward = camera.getForwardVector();
+    const float yawDegrees = glm::degrees(rotation.x);
+    const float pitchDegrees = glm::degrees(rotation.y);
+    const QString vertical = verticalFacingLabel(forward);
+    const QString compass = compassFromForward(forward);
+    return QJsonObject{
+        {QStringLiteral("visible"), true},
+        {QStringLiteral("cameraId"), QString::fromStdString(camera.getCameraId())},
+        {QStringLiteral("cameraName"), QString::fromStdString(camera.getCameraName())},
+        {QStringLiteral("cameraMode"), cameraModeToString(camera.getMode())},
+        {QStringLiteral("summary"), QStringLiteral("%1 toward %2").arg(vertical, compass)},
+        {QStringLiteral("vertical"), vertical},
+        {QStringLiteral("compass"), compass},
+        {QStringLiteral("yawDegrees"), yawDegrees},
+        {QStringLiteral("pitchDegrees"), pitchDegrees},
+        {QStringLiteral("forward"), QJsonArray{forward.x, forward.y, forward.z}},
+        {QStringLiteral("lookingDown"), forward.y <= -0.85f},
+        {QStringLiteral("lookingUp"), forward.y >= 0.85f}
+    };
+}
+
 }
 
 ViewportHostWidget::ViewportHostWidget(QWidget* parent)
@@ -491,6 +559,21 @@ ViewportHostWidget::ViewportHostWidget(QWidget* parent)
     m_statusLabel = new QLabel(QStringLiteral("Initializing viewport..."), m_renderSurface);
     m_statusLabel->setAlignment(Qt::AlignCenter);
     renderLayout->addWidget(m_statusLabel);
+    m_cameraDirectionLabel = new QLabel(m_renderSurface);
+    m_cameraDirectionLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_cameraDirectionLabel->setTextFormat(Qt::RichText);
+    m_cameraDirectionLabel->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        " background: rgba(3, 8, 13, 220);"
+        " color: #f8fafc;"
+        " border: 2px solid #fbbf24;"
+        " border-radius: 10px;"
+        " padding: 8px 10px;"
+        " font-family: 'DejaVu Sans Mono';"
+        " font-size: 13px;"
+        "}"));
+    m_cameraDirectionLabel->setMinimumWidth(260);
+    m_cameraDirectionLabel->hide();
     layout->addWidget(m_renderSurface, 1);
 
     m_renderTimer.setInterval(16);
@@ -626,6 +709,7 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     debug.insert(QStringLiteral("cameraPos"), QJsonArray{camera->cameraPos.x, camera->cameraPos.y, camera->cameraPos.z});
     debug.insert(QStringLiteral("cameraRot"), QJsonArray{rot.x, rot.y});
     debug.insert(QStringLiteral("cameraFront"), QJsonArray{front.x, front.y, front.z});
+    debug.insert(QStringLiteral("directionIndicator"), cameraDirectionObject(*camera));
     debug.insert(QStringLiteral("rightMouseDown"), camera->rightMouseDown);
     debug.insert(QStringLiteral("temporaryOrbitDrag"), camera->temporaryOrbitDrag);
     debug.insert(QStringLiteral("focusedViewportIndex"), focusedViewportIndex());
@@ -1186,6 +1270,116 @@ void ViewportHostWidget::updateMotionDebugOverlay()
     display->setCustomOverlayBitmap(bitmap, true);
 }
 
+void ViewportHostWidget::updateCameraDirectionIndicator()
+{
+    if (!m_cameraDirectionLabel)
+    {
+        return;
+    }
+
+    Camera* camera = focusedViewportCamera();
+    if (!camera && m_runtime && m_runtime->display())
+    {
+        camera = m_runtime->display()->getActiveCamera();
+    }
+    if (!camera)
+    {
+        m_cameraDirectionLabel->hide();
+        if (m_runtime && m_runtime->display())
+        {
+            m_runtime->display()->clearCustomOverlayBitmap();
+        }
+        return;
+    }
+
+    const QJsonObject direction = cameraDirectionObject(*camera);
+    const QJsonArray forward = direction.value(QStringLiteral("forward")).toArray();
+    const QString cameraName = direction.value(QStringLiteral("cameraName")).toString(QStringLiteral("Camera"));
+    const QString mode = direction.value(QStringLiteral("cameraMode")).toString();
+    const QString vertical = direction.value(QStringLiteral("vertical")).toString();
+    const QString compass = direction.value(QStringLiteral("compass")).toString();
+    const double yaw = direction.value(QStringLiteral("yawDegrees")).toDouble(0.0);
+    const double pitch = direction.value(QStringLiteral("pitchDegrees")).toDouble(0.0);
+    const double fx = forward.size() == 3 ? forward.at(0).toDouble(0.0) : 0.0;
+    const double fy = forward.size() == 3 ? forward.at(1).toDouble(0.0) : 0.0;
+    const double fz = forward.size() == 3 ? forward.at(2).toDouble(0.0) : -1.0;
+
+    if (m_runtime && m_runtime->display())
+    {
+        const uint32_t panelWidth = static_cast<uint32_t>(std::clamp(
+            m_renderSurface ? m_renderSurface->width() - 28 : width() - 28,
+            320,
+            920));
+        constexpr uint32_t kPanelHeight = 58;
+        motive::text::TextOverlayStyle style;
+        style.textColor = 0xFFFFFFFFu;
+        style.backgroundColor = 0xE005080Du;
+        style.shadowColor = 0xCC000000u;
+        style.outlineColor = 0xFF000000u;
+        style.drawShadow = true;
+        style.drawOutline = true;
+        style.drawBackground = true;
+        const std::string overlayText = QStringLiteral("%1 | %2 | yaw %3 deg pitch %4 deg | F[%5,%6,%7]")
+            .arg(vertical,
+                 compass,
+                 QString::number(yaw, 'f', 1),
+                 QString::number(pitch, 'f', 1),
+                 QString::number(fx, 'f', 2),
+                 QString::number(fy, 'f', 2),
+                 QString::number(fz, 'f', 2))
+            .toStdString();
+        glyph::OverlayBitmap overlay = motive::text::buildStyledTextOverlay(
+            panelWidth,
+            kPanelHeight,
+            overlayText,
+            22,
+            motive::text::FontRenderOptions{},
+            style);
+        overlay.offsetX = 14;
+        overlay.offsetY = 14;
+        m_runtime->display()->setCustomOverlayBitmap(overlay, true);
+    }
+
+    const QString accent = direction.value(QStringLiteral("lookingDown")).toBool(false)
+        ? QStringLiteral("#38bdf8")
+        : (direction.value(QStringLiteral("lookingUp")).toBool(false) ? QStringLiteral("#f97316")
+                                                                       : QStringLiteral("#fbbf24"));
+    m_cameraDirectionLabel->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        " background: rgba(3, 8, 13, 225);"
+        " color: #f8fafc;"
+        " border: 2px solid %1;"
+        " border-radius: 10px;"
+        " padding: 8px 10px;"
+        " font-family: 'DejaVu Sans Mono';"
+        " font-size: 13px;"
+        "}").arg(accent));
+
+    m_cameraDirectionLabel->setText(QStringLiteral(
+        "<div style='font-size:15px; font-weight:700; color:%1;'>%2</div>"
+        "<div>%3 · %4</div>"
+        "<div>Yaw %5° · Pitch %6°</div>"
+        "<div>Forward [%7, %8, %9]</div>")
+        .arg(accent,
+             vertical.toHtmlEscaped(),
+             cameraName.toHtmlEscaped(),
+             mode.toHtmlEscaped())
+        .arg(QString::number(yaw, 'f', 1),
+             QString::number(pitch, 'f', 1),
+             QString::number(fx, 'f', 2),
+             QString::number(fy, 'f', 2),
+             QString::number(fz, 'f', 2)));
+    m_cameraDirectionLabel->setToolTip(QStringLiteral("Camera is facing %1").arg(compass));
+    m_cameraDirectionLabel->adjustSize();
+
+    const int margin = 14;
+    const int maxWidth = std::max(260, (m_renderSurface ? m_renderSurface->width() : width()) - margin * 2);
+    m_cameraDirectionLabel->setMaximumWidth(maxWidth);
+    m_cameraDirectionLabel->move(margin, margin);
+    m_cameraDirectionLabel->show();
+    m_cameraDirectionLabel->raise();
+}
+
 QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
     if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
@@ -1375,6 +1569,44 @@ QString ViewportHostWidget::primitiveCullMode(int sceneIndex, int meshIndex, int
         return QStringLiteral("front");
     }
     return QStringLiteral("back");
+}
+
+QString ViewportHostWidget::sceneItemCullMode(int sceneIndex) const
+{
+    if (!m_runtime->engine() || sceneIndex < 0 ||
+        sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
+        !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
+    {
+        return QStringLiteral("back");
+    }
+
+    const auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    QString firstMode;
+    bool sawPrimitive = false;
+    for (size_t meshIndex = 0; meshIndex < model->meshes.size(); ++meshIndex)
+    {
+        const auto& mesh = model->meshes[meshIndex];
+        for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
+        {
+            if (!mesh.primitives[primitiveIndex])
+            {
+                continue;
+            }
+            const QString mode = primitiveCullMode(sceneIndex,
+                                                   static_cast<int>(meshIndex),
+                                                   static_cast<int>(primitiveIndex));
+            if (!sawPrimitive)
+            {
+                firstMode = mode;
+                sawPrimitive = true;
+            }
+            else if (mode != firstMode)
+            {
+                return QStringLiteral("mixed");
+            }
+        }
+    }
+    return sawPrimitive ? firstMode : QStringLiteral("back");
 }
 
 bool ViewportHostWidget::primitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex) const
@@ -3194,6 +3426,36 @@ void ViewportHostWidget::updateSceneItemTransform(int index, const QVector3D& tr
     notifySceneChanged();
 }
 
+bool ViewportHostWidget::alignSceneItemBottomToGround(int index, float groundY)
+{
+    auto& entries = m_sceneController->loadedEntries();
+    if (!m_runtime || !m_runtime->engine() || index < 0 || index >= entries.size())
+    {
+        return false;
+    }
+
+    const QVector3D boundsSize = sceneItemBoundsSize(index);
+    const QVector3D minPoint = sceneItemBoundsMin(index);
+    if (boundsSize.lengthSquared() <= 1e-10f || !std::isfinite(minPoint.y()) || !std::isfinite(groundY))
+    {
+        return false;
+    }
+
+    const QVector3D translation = entries[index].translation;
+    const QVector3D newTranslation(
+        translation.x(),
+        translation.y() + (groundY - minPoint.y()),
+        translation.z());
+    if (qFuzzyCompare(translation.y(), newTranslation.y()))
+    {
+        return true;
+    }
+
+    m_sceneController->updateSceneItemTransform(index, newTranslation, entries[index].rotation, entries[index].scale);
+    notifySceneChanged();
+    return true;
+}
+
 void ViewportHostWidget::setSceneItemMeshConsolidationEnabled(int index, bool enabled)
 {
     m_sceneController->setSceneItemMeshConsolidationEnabled(index, enabled);
@@ -3393,7 +3655,38 @@ void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int
                                          primitiveIndex,
                                          cullMode,
                                          mesh.primitives[static_cast<size_t>(primitiveIndex)]->forceAlphaOne);
+        notifySceneChanged();
     }
+}
+
+void ViewportHostWidget::setSceneItemCullMode(int sceneIndex, const QString& cullMode)
+{
+    if (cullMode == QStringLiteral("mixed") ||
+        !m_runtime->engine() ||
+        sceneIndex < 0 ||
+        sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()) ||
+        !m_runtime->engine()->models[static_cast<size_t>(sceneIndex)])
+    {
+        return;
+    }
+
+    auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    for (size_t meshIndex = 0; meshIndex < model->meshes.size(); ++meshIndex)
+    {
+        auto& mesh = model->meshes[meshIndex];
+        for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
+        {
+            if (!mesh.primitives[primitiveIndex])
+            {
+                continue;
+            }
+            setPrimitiveCullMode(sceneIndex,
+                                 static_cast<int>(meshIndex),
+                                 static_cast<int>(primitiveIndex),
+                                 cullMode);
+        }
+    }
+    notifySceneChanged();
 }
 
 void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled)
@@ -3432,7 +3725,19 @@ void ViewportHostWidget::setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex
                                          primitiveIndex,
                                          primitiveCullMode(sceneIndex, meshIndex, primitiveIndex),
                                          enabled);
+        notifySceneChanged();
     }
+}
+
+void ViewportHostWidget::setCoordinatePlaneIndicatorsEnabled(bool enabled)
+{
+    m_sceneController->setCoordinatePlaneIndicatorsEnabled(enabled);
+    notifySceneChanged();
+}
+
+bool ViewportHostWidget::coordinatePlaneIndicatorsEnabled() const
+{
+    return m_sceneController->coordinatePlaneIndicatorsEnabled();
 }
 
 void ViewportHostWidget::relocateSceneItemInFrontOfCamera(int index)
@@ -3448,7 +3753,12 @@ void ViewportHostWidget::relocateSceneItemInFrontOfCamera(int index)
 
 void ViewportHostWidget::focusSceneItem(int index)
 {
-    m_cameraController->focusSceneItem(index);
+    Camera* selectedCamera = focusedViewportCamera();
+    if (!selectedCamera)
+    {
+        selectedCamera = m_runtime->camera();
+    }
+    m_cameraController->focusSceneItem(index, selectedCamera);
     if (m_cameraChangedCallback)
     {
         m_cameraChangedCallback();
@@ -3496,6 +3806,7 @@ void ViewportHostWidget::resizeEvent(QResizeEvent* event)
     updateViewportLayout();
     layoutViewportSelectors();
     updateViewportBorders();
+    updateCameraDirectionIndicator();
 }
 
 void ViewportHostWidget::focusInEvent(QFocusEvent* event)
@@ -3945,6 +4256,7 @@ void ViewportHostWidget::renderFrame()
     {
         m_runtime->display()->clearCustomOverlayBitmap();
     }
+    updateCameraDirectionIndicator();
     m_runtime->render();
     notifyCameraChangedIfNeeded();
 }
