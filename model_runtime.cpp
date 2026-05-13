@@ -130,7 +130,7 @@ void Model::setSceneTransform(const glm::vec3& translation, const glm::vec3& rot
             }
         }
     }
-    recomputeBounds();
+    updateWorldBoundsFromLocalBounds();
 }
 
 void Model::setPaintOverride(bool enabled, const glm::vec3& color)
@@ -322,7 +322,7 @@ void Model::syncWorldTransformToPrimitives()
             }
         }
     }
-    recomputeBounds();
+    updateWorldBoundsFromLocalBounds();
 }
 
 void Model::recomputeBounds()
@@ -350,15 +350,35 @@ void Model::recomputeBounds()
         boundsRadius = 0.0f;
         boundsMinWorld = glm::vec3(0.0f);
         boundsMaxWorld = glm::vec3(0.0f);
+        boundsMinLocal = glm::vec3(0.0f);
+        boundsMaxLocal = glm::vec3(0.0f);
+        boundsLocalValid = false;
         return;
     }
-    glm::vec3 localCenter = (localMin + localMax) * 0.5f;
-    float localRadius = glm::length(localMax - localMin) * 0.5f;
+    boundsMinLocal = localMin;
+    boundsMaxLocal = localMax;
+    boundsLocalValid = true;
     if (!followAnchorLocalCenterInitialized)
     {
-        followAnchorLocalCenter = localCenter;
+        followAnchorLocalCenter = (localMin + localMax) * 0.5f;
         followAnchorLocalCenterInitialized = true;
     }
+
+    updateWorldBoundsFromLocalBounds();
+}
+
+void Model::updateWorldBoundsFromLocalBounds()
+{
+    if (!boundsLocalValid)
+    {
+        recomputeBounds();
+        return;
+    }
+
+    const glm::vec3 localMin = boundsMinLocal;
+    const glm::vec3 localMax = boundsMaxLocal;
+    const glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+    const float localRadius = glm::length(localMax - localMin) * 0.5f;
 
     boundsCenter = glm::vec3(worldTransform * glm::vec4(localCenter, 1.0f));
 
@@ -483,15 +503,23 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         character.currentAnimState = CharacterController::AnimState::Jump;
     }
     
-    // Apply gravity
-    character.velocity.y += character.gravity * dt;
+    // Apply gravity only when the scene item opts into it. The TPS bootstrap
+    // uses the arcade controller on a fixed ground plane.
+    if (useGravity)
+    {
+        character.velocity.y += character.gravity * dt;
+    }
+    else
+    {
+        character.velocity.y = 0.0f;
+    }
     
     // Update position
     glm::vec3 currentPos = glm::vec3(worldTransform[3]);
     currentPos += character.velocity * dt;
     
     // Ground collision
-    if (currentPos.y < character.groundHeight)
+    if (currentPos.y <= character.groundHeight + 0.001f)
     {
         currentPos.y = character.groundHeight;
         character.velocity.y = 0.0f;

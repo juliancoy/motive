@@ -92,6 +92,7 @@ public:
     VkDeviceMemory indexBufferMemory;
     uint32_t indexCount;
     std::vector<Vertex> cpuVertices;
+    std::vector<uint32_t> cpuIndices;
 
     // Transformation data
     glm::mat4 transform;

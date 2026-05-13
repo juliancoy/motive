@@ -151,6 +151,124 @@ bool pathLooksLikeEnvironmentScene(const QString& sourcePath)
            p.contains(QStringLiteral("scene.gltf"));
 }
 
+bool barycentricInTriangleXZ(const glm::vec3& a,
+                             const glm::vec3& b,
+                             const glm::vec3& c,
+                             const glm::vec2& p,
+                             float& u,
+                             float& v,
+                             float& w)
+{
+    const glm::vec2 a2(a.x, a.z);
+    const glm::vec2 b2(b.x, b.z);
+    const glm::vec2 c2(c.x, c.z);
+    const glm::vec2 v0 = b2 - a2;
+    const glm::vec2 v1 = c2 - a2;
+    const glm::vec2 v2 = p - a2;
+    const float d00 = glm::dot(v0, v0);
+    const float d01 = glm::dot(v0, v1);
+    const float d11 = glm::dot(v1, v1);
+    const float d20 = glm::dot(v2, v0);
+    const float d21 = glm::dot(v2, v1);
+    const float denom = d00 * d11 - d01 * d01;
+    if (std::abs(denom) < 1e-7f)
+    {
+        return false;
+    }
+
+    v = (d11 * d20 - d01 * d21) / denom;
+    w = (d00 * d21 - d01 * d20) / denom;
+    u = 1.0f - v - w;
+    constexpr float kEpsilon = -0.0005f;
+    return u >= kEpsilon && v >= kEpsilon && w >= kEpsilon;
+}
+
+bool sampleModelSurfaceYAtXZ(const Model& surfaceModel,
+                             const glm::vec2& xz,
+                             float maxSurfaceY,
+                             float& outSurfaceY)
+{
+    if (xz.x < surfaceModel.boundsMinWorld.x || xz.x > surfaceModel.boundsMaxWorld.x ||
+        xz.y < surfaceModel.boundsMinWorld.z || xz.y > surfaceModel.boundsMaxWorld.z)
+    {
+        return false;
+    }
+
+    bool found = false;
+    float bestY = -std::numeric_limits<float>::infinity();
+    for (const Mesh& mesh : surfaceModel.meshes)
+    {
+        for (const auto& primitive : mesh.primitives)
+        {
+            if (!primitive || primitive->cpuVertices.empty() || primitive->cpuIndices.size() < 3)
+            {
+                continue;
+            }
+
+            const size_t triangleIndexCount = primitive->cpuIndices.size() - (primitive->cpuIndices.size() % 3);
+            for (size_t i = 0; i < triangleIndexCount; i += 3)
+            {
+                const uint32_t ia = primitive->cpuIndices[i + 0];
+                const uint32_t ib = primitive->cpuIndices[i + 1];
+                const uint32_t ic = primitive->cpuIndices[i + 2];
+                if (ia >= primitive->cpuVertices.size() ||
+                    ib >= primitive->cpuVertices.size() ||
+                    ic >= primitive->cpuVertices.size())
+                {
+                    continue;
+                }
+
+                const glm::vec3 a = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ia].pos, 1.0f));
+                const glm::vec3 b = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ib].pos, 1.0f));
+                const glm::vec3 c = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ic].pos, 1.0f));
+                const glm::vec3 normal = glm::cross(b - a, c - a);
+                const float normalLength = glm::length(normal);
+                if (normalLength < 1e-6f || std::abs(normal.y / normalLength) < 0.25f)
+                {
+                    continue;
+                }
+
+                float u = 0.0f;
+                float v = 0.0f;
+                float w = 0.0f;
+                if (!barycentricInTriangleXZ(a, b, c, xz, u, v, w))
+                {
+                    continue;
+                }
+
+                const float y = u * a.y + v * b.y + w * c.y;
+                if (y <= maxSurfaceY && y > bestY)
+                {
+                    bestY = y;
+                    found = true;
+                }
+            }
+        }
+    }
+
+    if (found)
+    {
+        outSurfaceY = bestY;
+    }
+    return found;
+}
+
+void updateCharacterGroundFromSceneSurface(Model& character, const Model& surfaceModel)
+{
+    constexpr float kMaxStepUp = 0.45f;
+    constexpr float kPhysicsFloorY = 0.0f;
+    const glm::vec3 origin = glm::vec3(character.worldTransform[3]);
+    const float footOffset = std::max(0.0f, origin.y - character.boundsMinWorld.y);
+    character.character.groundHeight = kPhysicsFloorY + footOffset;
+
+    const float maxSurfaceY = character.boundsMinWorld.y + kMaxStepUp;
+    float surfaceY = 0.0f;
+    if (sampleModelSurfaceYAtXZ(surfaceModel, glm::vec2(origin.x, origin.z), maxSurfaceY, surfaceY))
+    {
+        character.character.groundHeight = std::max(kPhysicsFloorY, surfaceY) + footOffset;
+    }
+}
+
 int findFollowCameraIndexForScene(Display* display, int sceneIndex)
 {
     if (!display || sceneIndex < 0)
@@ -1791,22 +1909,9 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
              << " for model" << sceneIndex << "(was:" << model->character.isControllable << ")";
     model->character.isControllable = enabled;
     
-    // When enabling character control with physics (WASD movement), ensure physics coupling is set
-    // to "Kinematic" if it's currently "AnimationOnly" (the default)
-    // Note: Free fly camera must be disabled for WASD to control the character
-    if (enabled)
-    {
-        auto& entries = m_sceneController->loadedEntries();
-        if (sceneIndex < static_cast<int>(entries.size()))
-        {
-            QString currentCoupling = entries[sceneIndex].animationPhysicsCoupling;
-            if (currentCoupling == QStringLiteral("AnimationOnly"))
-            {
-                qDebug() << "[ViewportHost] Enabling physics for character control - switching from AnimationOnly to Kinematic";
-                updateSceneItemAnimationPhysicsCoupling(sceneIndex, QStringLiteral("Kinematic"));
-            }
-        }
-    }
+    // Character controllability controls input ownership only. Physics coupling
+    // is explicit scene state; the default TPS setup uses the arcade controller
+    // because imported environments do not necessarily have collision bodies.
     
     // Only the explicit editor character-control action should reposition the model.
     if (enabled && repositionForCharacterMode)
@@ -2041,16 +2146,93 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
         return false;
     }
 
-    // Ensure ownership + physics coupling are configured for WASD character control.
+    // Gameplay convention: Motive editor/world uses Y-up with the XZ plane at Y=0
+    // as the authoritative walkable ground. Imported environments may have large
+    // visual bounds, but TPS character placement should be deterministic.
+    const float worldGroundY = 0.0f;
+
+    if (environmentIndex >= 0 &&
+        environmentIndex < static_cast<int>(m_runtime->engine()->models.size()) &&
+        m_runtime->engine()->models[static_cast<size_t>(environmentIndex)])
+    {
+        Model* environment = m_runtime->engine()->models[static_cast<size_t>(environmentIndex)].get();
+        const float environmentBottomDelta = worldGroundY - environment->boundsMinWorld.y;
+        if (std::isfinite(environmentBottomDelta) && std::abs(environmentBottomDelta) > 0.0001f &&
+            environmentIndex < entries.size())
+        {
+            const auto& environmentEntry = entries[environmentIndex];
+            m_sceneController->updateSceneItemTransform(
+                environmentIndex,
+                QVector3D(environmentEntry.translation.x(),
+                          environmentEntry.translation.y() + environmentBottomDelta,
+                          environmentEntry.translation.z()),
+                environmentEntry.rotation,
+                environmentEntry.scale);
+        }
+    }
+
+    auto entriesBeforePlacement = m_sceneController->loadedEntries();
+    if (nathanIndex < entriesBeforePlacement.size())
+    {
+        const auto& entry = entriesBeforePlacement[nathanIndex];
+        m_sceneController->updateSceneItemTransform(nathanIndex,
+                                                    entry.translation,
+                                                    QVector3D(0.0f, 0.0f, 0.0f),
+                                                    entry.scale);
+        nathan = m_runtime->engine()->models[static_cast<size_t>(nathanIndex)].get();
+        if (nathan)
+        {
+            const float bottomDelta = worldGroundY - nathan->boundsMinWorld.y;
+            if (std::isfinite(bottomDelta) && std::abs(bottomDelta) > 0.0001f)
+            {
+                const auto entriesAfterRotation = m_sceneController->loadedEntries();
+                if (nathanIndex < entriesAfterRotation.size())
+                {
+                    const QVector3D translation = entriesAfterRotation[nathanIndex].translation;
+                    m_sceneController->updateSceneItemTransform(
+                        nathanIndex,
+                        QVector3D(translation.x(), translation.y() + bottomDelta, translation.z()),
+                        QVector3D(0.0f, 0.0f, 0.0f),
+                        entriesAfterRotation[nathanIndex].scale);
+                    nathan = m_runtime->engine()->models[static_cast<size_t>(nathanIndex)].get();
+                }
+            }
+        }
+    }
+
+    // Ensure ownership + arcade controller state are configured for WASD character control.
     setCharacterControlState(nathanIndex, true, false);
-    updateSceneItemAnimationPhysicsCoupling(nathanIndex, QStringLiteral("Kinematic"));
+    updateSceneItemAnimationPhysicsCoupling(nathanIndex, QStringLiteral("AnimationOnly"));
     updateSceneItemPhysicsGravity(nathanIndex, true, QVector3D(0.0f, 0.0f, 0.0f));
     updateSceneItemCharacterTurnResponsiveness(nathanIndex, 4.0f);
 
     // Reasonable gameplay defaults.
+    nathan->character.velocity = glm::vec3(0.0f);
+    nathan->character.inputDir = glm::vec3(0.0f);
+    // The rendered feet are aligned to worldGroundY, but Nathan's imported
+    // transform origin sits around the body center. Clamp the controller origin
+    // at its current Y so the visual bottom remains on the XZ ground plane.
+    nathan->character.groundHeight = nathan->worldTransform[3].y;
+    nathan->character.isGrounded = true;
+    nathan->character.wasGroundedLastFrame = true;
+    nathan->character.jumpRequested = false;
+    nathan->character.jumpPhase = Model::CharacterController::JumpPhase::None;
+    nathan->character.jumpPhaseTimer = 0.0f;
+    nathan->character.currentAnimState = Model::CharacterController::AnimState::Idle;
+    nathan->character.keyW = false;
+    nathan->character.keyA = false;
+    nathan->character.keyS = false;
+    nathan->character.keyD = false;
+    nathan->character.comeToRestTimer = 0.0f;
+    nathan->character.moveIntentGraceTimer = 0.0f;
+    nathan->character.pendingRestPointLatch = false;
     nathan->character.moveSpeed = 3.2f;
     nathan->character.runSpeedThreshold = 4.5f;
     nathan->character.walkSpeedThreshold = 0.08f;
+    if (InputRouter* inputRouter = m_runtime->getInputRouter())
+    {
+        inputRouter->clearInput();
+    }
 
     // Prefer a walk-forward clip when present.
     QString walkClip;
@@ -4200,6 +4382,16 @@ void ViewportHostWidget::renderFrame()
 
         auto* physicsWorld = m_runtime->engine()->getPhysicsWorld();
         auto& entries = m_sceneController->loadedEntries();
+        Model* environmentSurface = nullptr;
+        for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
+        {
+            if (pathLooksLikeEnvironmentScene(entries[static_cast<int>(i)].sourcePath) &&
+                m_runtime->engine()->models[i])
+            {
+                environmentSurface = m_runtime->engine()->models[i].get();
+                break;
+            }
+        }
         for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
         {
             const auto& entry = entries[static_cast<int>(i)];
@@ -4215,6 +4407,11 @@ void ViewportHostWidget::renderFrame()
                 // Update character/controller state before stepping the world.
                 if (model->character.isControllable)
                 {
+                    if (environmentSurface && environmentSurface != model.get())
+                    {
+                        updateCharacterGroundFromSceneSurface(*model, *environmentSurface);
+                    }
+
                     if (physicsWorld && couplingRequiresPhysics(*model))
                     {
                         model->updateCharacterPhysics(dt, *physicsWorld);

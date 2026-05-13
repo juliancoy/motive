@@ -243,6 +243,9 @@ public:
     float boundsRadius = 0.0f;
     glm::vec3 boundsMinWorld = glm::vec3(0.0f);
     glm::vec3 boundsMaxWorld = glm::vec3(0.0f);
+    glm::vec3 boundsMinLocal = glm::vec3(0.0f);
+    glm::vec3 boundsMaxLocal = glm::vec3(0.0f);
+    bool boundsLocalValid = false;
     // Stable follow-anchor reference captured from mesh-local bounds.
     // Used for controllable characters to avoid animation AABB jitter/root-loop snaps.
     glm::vec3 followAnchorLocalCenter = glm::vec3(0.0f);
@@ -289,6 +292,7 @@ public:
 private:
     void applyTransformToPrimitives(const glm::mat4& transform);
     void syncWorldTransformToPrimitives();
+    void updateWorldBoundsFromLocalBounds();
     bool computeProceduralBounds(glm::vec3& minBounds, glm::vec3& maxBounds) const;
 
     std::unordered_map<int, std::weak_ptr<SharedTextureResources>> gltfMaterialTextureCache;

@@ -11,6 +11,7 @@
 #include <QSaveFile>
 
 #include <algorithm>
+#include <chrono>
 
 namespace motive::ui {
 
@@ -108,7 +109,18 @@ ProjectSession::ProjectSession()
     }
 }
 
-ProjectSession::~ProjectSession() = default;
+ProjectSession::~ProjectSession()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_saveMutex);
+        m_stopSaveWorker = true;
+    }
+    m_saveCv.notify_one();
+    if (m_saveWorker.joinable())
+    {
+        m_saveWorker.join();
+    }
+}
 
 QString ProjectSession::currentProjectId() const
 {
@@ -436,12 +448,69 @@ void ProjectSession::saveCurrentProject() const
         return;
     }
 
-    ensureProjectsDirectory();
-    QDir().mkpath(projectPath(m_currentProjectId));
+    flushPendingSave();
+    writeSaveRequest(buildSaveRequest());
+}
 
-    const QString projectFilePath = projectFilePathForProject(m_currentProjectId);
+void ProjectSession::requestSaveCurrentProject() const
+{
+    if (m_currentProjectId.isEmpty())
+    {
+        return;
+    }
+
+    ensureSaveWorkerStarted();
+    {
+        std::lock_guard<std::mutex> lock(m_saveMutex);
+        m_pendingSave = buildSaveRequest();
+        m_hasPendingSave = true;
+        ++m_saveGeneration;
+    }
+    m_saveCv.notify_one();
+}
+
+void ProjectSession::flushPendingSave() const
+{
+    {
+        std::unique_lock<std::mutex> lock(m_saveMutex);
+        if (!m_hasPendingSave && !m_saveInProgress)
+        {
+            return;
+        }
+        ++m_saveGeneration;
+    }
+    m_saveCv.notify_one();
+
+    std::unique_lock<std::mutex> lock(m_saveMutex);
+    m_saveIdleCv.wait(lock, [this]()
+    {
+        return !m_hasPendingSave && !m_saveInProgress;
+    });
+}
+
+ProjectSession::SaveRequest ProjectSession::buildSaveRequest() const
+{
+    SaveRequest request;
+    request.projectId = m_currentProjectId;
+    request.projectDirPath = projectPath(m_currentProjectId);
+    request.projectFilePath = projectFilePathForProject(m_currentProjectId);
+    request.legacyStateFilePath = legacyStateFilePathForProject(m_currentProjectId);
+    request.state = buildBaseStateObject();
+    return request;
+}
+
+void ProjectSession::writeSaveRequest(const SaveRequest& request) const
+{
+    if (request.projectId.isEmpty())
+    {
+        return;
+    }
+
+    ensureProjectsDirectory();
+    QDir().mkpath(request.projectDirPath);
+
     QJsonObject existingRoot;
-    QFile existingFile(projectFilePath);
+    QFile existingFile(request.projectFilePath);
     if (existingFile.exists() && existingFile.open(QIODevice::ReadOnly))
     {
         const QJsonDocument existingDoc = QJsonDocument::fromJson(existingFile.readAll());
@@ -451,14 +520,76 @@ void ProjectSession::saveCurrentProject() const
         }
     }
 
-    QFile file(projectFilePath);
+    QFile file(request.projectFilePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
     {
         return;
     }
 
-    file.write(QJsonDocument(buildProjectDocument(existingRoot)).toJson(QJsonDocument::Indented));
-    QFile::remove(legacyStateFilePathForProject(m_currentProjectId));
+    file.write(QJsonDocument(buildProjectDocumentForState(request.projectId, request.state, existingRoot)).toJson(QJsonDocument::Indented));
+    QFile::remove(request.legacyStateFilePath);
+}
+
+void ProjectSession::ensureSaveWorkerStarted() const
+{
+    std::lock_guard<std::mutex> lock(m_saveMutex);
+    if (m_saveWorker.joinable())
+    {
+        return;
+    }
+    m_saveWorker = std::thread([this]()
+    {
+        saveWorkerLoop();
+    });
+}
+
+void ProjectSession::saveWorkerLoop() const
+{
+    constexpr auto kDebounceDelay = std::chrono::milliseconds(250);
+
+    while (true)
+    {
+        SaveRequest request;
+        {
+            std::unique_lock<std::mutex> lock(m_saveMutex);
+            m_saveCv.wait(lock, [this]()
+            {
+                return m_hasPendingSave || m_stopSaveWorker;
+            });
+
+            if (m_stopSaveWorker && !m_hasPendingSave)
+            {
+                break;
+            }
+
+            const uint64_t targetGeneration = m_saveGeneration;
+            if (!m_stopSaveWorker)
+            {
+                m_saveCv.wait_for(lock, kDebounceDelay, [this, targetGeneration]()
+                {
+                    return m_stopSaveWorker || m_saveGeneration != targetGeneration;
+                });
+                if (!m_stopSaveWorker && m_saveGeneration != targetGeneration)
+                {
+                    continue;
+                }
+            }
+
+            request = m_pendingSave;
+            m_hasPendingSave = false;
+            m_saveInProgress = true;
+        }
+
+        writeSaveRequest(request);
+
+        {
+            std::lock_guard<std::mutex> lock(m_saveMutex);
+            m_saveInProgress = false;
+        }
+        m_saveIdleCv.notify_all();
+    }
+
+    m_saveIdleCv.notify_all();
 }
 
 bool ProjectSession::loadProject(const QString& projectId)
@@ -549,27 +680,33 @@ QJsonObject ProjectSession::buildBaseStateObject() const
 
 QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot) const
 {
+    return buildProjectDocumentForState(m_currentProjectId, buildBaseStateObject(), existingRoot);
+}
+
+QJsonObject ProjectSession::buildProjectDocumentForState(const QString& projectId,
+                                                         const QJsonObject& state,
+                                                         const QJsonObject& existingRoot) const
+{
     QJsonObject root = existingRoot;
     if (root.isEmpty())
     {
         root = QJsonObject{
-            {QStringLiteral("projectId"), m_currentProjectId},
-            {QStringLiteral("base"), buildBaseStateObject()},
+            {QStringLiteral("projectId"), projectId},
+            {QStringLiteral("base"), state},
             {QStringLiteral("changes"), QJsonArray{}}
         };
         return root;
     }
 
-    root[QStringLiteral("projectId")] = m_currentProjectId;
+    root[QStringLiteral("projectId")] = projectId;
     if (!root.contains(QStringLiteral("base")) || !root.value(QStringLiteral("base")).isObject())
     {
         root[QStringLiteral("base")] = QJsonObject{
-            {QStringLiteral("projectRoot"), currentStateFromDocument(m_currentProjectId, root).value(QStringLiteral("projectRoot")).toString(rootDirPath())}
+            {QStringLiteral("projectRoot"), currentStateFromDocument(projectId, root).value(QStringLiteral("projectRoot")).toString(state.value(QStringLiteral("projectRoot")).toString(rootDirPath()))}
         };
     }
 
-    QJsonObject currentState = currentStateFromDocument(m_currentProjectId, root);
-    const QString currentStoredRoot = currentState.value(QStringLiteral("projectRoot")).toString();
+    QJsonObject currentState = currentStateFromDocument(projectId, root);
     QJsonArray changes = root.value(QStringLiteral("changes")).toArray();
 
     const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
@@ -586,23 +723,23 @@ QJsonObject ProjectSession::buildProjectDocument(const QJsonObject& existingRoot
         }
     };
 
-    appendSetIfChanged(QStringLiteral("projectRoot"), m_currentProjectRoot);
-    appendSetIfChanged(QStringLiteral("galleryPath"), m_currentGalleryPath);
-    appendSetIfChanged(QStringLiteral("selectedAssetPath"), m_currentSelectedAssetPath);
-    appendSetIfChanged(QStringLiteral("viewportAssetPath"), m_currentViewportAssetPath);
-    appendSetIfChanged(QStringLiteral("sceneItems"), m_currentSceneItems);
-    appendSetIfChanged(QStringLiteral("cameraConfigs"), m_currentCameraConfigs);
-    appendSetIfChanged(QStringLiteral("cameraPosition"), QJsonArray{m_currentCameraPosition.x(), m_currentCameraPosition.y(), m_currentCameraPosition.z()});
-    appendSetIfChanged(QStringLiteral("cameraRotation"), QJsonArray{m_currentCameraRotation.x(), m_currentCameraRotation.y(), m_currentCameraRotation.z()});
-    appendSetIfChanged(QStringLiteral("cameraSpeed"), m_currentCameraSpeed);
-    appendSetIfChanged(QStringLiteral("sceneLight"), m_currentSceneLight);
-    appendSetIfChanged(QStringLiteral("renderPath"), m_currentRenderPath);
-    appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled);
-    appendSetIfChanged(QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled);
-    appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled);
-    appendSetIfChanged(QStringLiteral("minPreviewTriangleAreaPx"), m_currentMinPreviewTriangleAreaPx);
-    appendSetIfChanged(QStringLiteral("viewportCount"), m_currentViewportCount);
-    appendSetIfChanged(QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds);
+    appendSetIfChanged(QStringLiteral("projectRoot"), state.value(QStringLiteral("projectRoot")));
+    appendSetIfChanged(QStringLiteral("galleryPath"), state.value(QStringLiteral("galleryPath")));
+    appendSetIfChanged(QStringLiteral("selectedAssetPath"), state.value(QStringLiteral("selectedAssetPath")));
+    appendSetIfChanged(QStringLiteral("viewportAssetPath"), state.value(QStringLiteral("viewportAssetPath")));
+    appendSetIfChanged(QStringLiteral("sceneItems"), state.value(QStringLiteral("sceneItems")));
+    appendSetIfChanged(QStringLiteral("cameraConfigs"), state.value(QStringLiteral("cameraConfigs")));
+    appendSetIfChanged(QStringLiteral("cameraPosition"), state.value(QStringLiteral("cameraPosition")));
+    appendSetIfChanged(QStringLiteral("cameraRotation"), state.value(QStringLiteral("cameraRotation")));
+    appendSetIfChanged(QStringLiteral("cameraSpeed"), state.value(QStringLiteral("cameraSpeed")));
+    appendSetIfChanged(QStringLiteral("sceneLight"), state.value(QStringLiteral("sceneLight")));
+    appendSetIfChanged(QStringLiteral("renderPath"), state.value(QStringLiteral("renderPath")));
+    appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), state.value(QStringLiteral("meshConsolidationEnabled")));
+    appendSetIfChanged(QStringLiteral("validationLayersEnabled"), state.value(QStringLiteral("validationLayersEnabled")));
+    appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), state.value(QStringLiteral("freeFlyCameraEnabled")));
+    appendSetIfChanged(QStringLiteral("minPreviewTriangleAreaPx"), state.value(QStringLiteral("minPreviewTriangleAreaPx")));
+    appendSetIfChanged(QStringLiteral("viewportCount"), state.value(QStringLiteral("viewportCount")));
+    appendSetIfChanged(QStringLiteral("viewportCameraIds"), state.value(QStringLiteral("viewportCameraIds")));
 
     root[QStringLiteral("changes")] = changes;
     return root;

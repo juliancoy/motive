@@ -431,6 +431,7 @@ Primitive::Primitive(Engine *engine, Mesh *mesh, tinygltf::Primitive tprimitive)
 
 void Primitive::createIndexBuffer(const std::vector<uint32_t> &indices)
 {
+    cpuIndices = indices;
     if (indices.empty())
     {
         indexCount = 0;

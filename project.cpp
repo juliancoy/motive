@@ -330,7 +330,7 @@ void MainWindowShell::saveProjectState()
              << "projectId=" << m_projectSession.currentProjectId()
              << "root=" << (m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath())
              << "sceneCount=" << (m_viewportHost ? m_viewportHost->sceneItems().size() : 0);
-    m_projectSession.saveCurrentProject();
+    m_projectSession.requestSaveCurrentProject();
 }
 
 }  // namespace motive::ui

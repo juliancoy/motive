@@ -7,6 +7,10 @@
 #include <QStringList>
 #include <QVector3D>
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace motive::ui {
 
 class ProjectSession
@@ -66,13 +70,31 @@ public:
     void setCurrentViewportCount(int count);
     void setCurrentViewportCameraIds(const QJsonArray& ids);
     void saveCurrentProject() const;
+    void requestSaveCurrentProject() const;
+    void flushPendingSave() const;
 
 private:
+    struct SaveRequest
+    {
+        QString projectId;
+        QString projectDirPath;
+        QString projectFilePath;
+        QString legacyStateFilePath;
+        QJsonObject state;
+    };
+
     QString legacyStateFilePathForProject(const QString& projectId) const;
     bool loadProject(const QString& projectId);
     void saveCurrentProjectMarker() const;
     QJsonObject buildBaseStateObject() const;
     QJsonObject buildProjectDocument(const QJsonObject& existingRoot = QJsonObject{}) const;
+    QJsonObject buildProjectDocumentForState(const QString& projectId,
+                                             const QJsonObject& state,
+                                             const QJsonObject& existingRoot = QJsonObject{}) const;
+    SaveRequest buildSaveRequest() const;
+    void writeSaveRequest(const SaveRequest& request) const;
+    void ensureSaveWorkerStarted() const;
+    void saveWorkerLoop() const;
     QJsonObject currentStateFromDocument(const QString& projectId, const QJsonObject& root) const;
     void applyStateObject(const QString& projectId, const QJsonObject& state);
 
@@ -94,6 +116,16 @@ private:
     float m_currentMinPreviewTriangleAreaPx = 0.25f;
     int m_currentViewportCount = 1;
     QJsonArray m_currentViewportCameraIds;
+
+    mutable std::mutex m_saveMutex;
+    mutable std::condition_variable m_saveCv;
+    mutable std::condition_variable m_saveIdleCv;
+    mutable std::thread m_saveWorker;
+    mutable SaveRequest m_pendingSave;
+    mutable uint64_t m_saveGeneration = 0;
+    mutable bool m_hasPendingSave = false;
+    mutable bool m_saveInProgress = false;
+    mutable bool m_stopSaveWorker = false;
 };
 
 }  // namespace motive::ui
