@@ -6,6 +6,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QDockWidget>
 #include <QImage>
 #include <QJsonArray>
 #include <QLabel>
@@ -58,10 +59,19 @@ private:
     void setMediaDirProjects();
     void saveProjectState();
     void saveUiState();
+    QJsonObject captureUiState() const;
+    void applyUiState(const QJsonObject& state);
     void maybePromptForGltfConversion(const QString& rootPath);
     void refreshHierarchy(const QList<ViewportHostWidget::SceneItem>& items);
     void appendHierarchyNode(QTreeWidgetItem* parent, const ViewportHostWidget::HierarchyNode& node, bool ancestorHidden = false);
     void updateInspectorForSelection(QTreeWidgetItem* item, bool focusContextTab = false);
+    void configureElementInspectorForSelection(int nodeType,
+                                               int sceneIndex,
+                                               int meshIndex,
+                                               int primitiveIndex,
+                                               bool hasAnimation,
+                                               bool isTextItem,
+                                               bool focusContextTab);
     void setupCameraSettingsPanel();
     void updateCameraSettingsPanel();
     void applyCameraSettings();
@@ -80,6 +90,8 @@ private:
     ViewportHostWidget* m_viewportHost = nullptr;
     QWidget* m_leftPane = nullptr;
     QSplitter* m_splitter = nullptr;
+    QSplitter* m_leftVerticalSplitter = nullptr;
+    QDockWidget* m_inspectorDock = nullptr;
     QTabWidget* m_rightTabs = nullptr;
     QPushButton* m_profileAvatarButton = nullptr;
     QString m_authApiBaseUrl;

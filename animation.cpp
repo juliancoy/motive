@@ -341,7 +341,9 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
     }
 
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
-    bool allMeshesUseGpuSkinning = meshCount > 0;
+    const bool forceCpuNormalizedPose =
+        model.character.isControllable && runtime.centroidNormalizationEnabled;
+    bool allMeshesUseGpuSkinning = meshCount > 0 && !forceCpuNormalizedPose;
     for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {
         const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
@@ -366,6 +368,50 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
         return false;
     }
 
+    std::vector<std::vector<Vertex>> normalizedPoseVertices;
+    glm::vec3 globalCenterDelta(0.0f);
+    if (forceCpuNormalizedPose)
+    {
+        normalizedPoseVertices.resize(meshCount);
+        glm::vec3 globalMin(std::numeric_limits<float>::max());
+        glm::vec3 globalMax(std::numeric_limits<float>::lowest());
+        bool foundVertex = false;
+
+        for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
+        {
+            const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
+            const ufbx_mesh* evaluatedMesh = findMeshByElementId(evaluatedScene, binding.meshElementId);
+            if (!evaluatedMesh)
+            {
+                continue;
+            }
+
+            normalizedPoseVertices[meshIndex] = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
+            for (const Vertex& vertex : normalizedPoseVertices[meshIndex])
+            {
+                globalMin = glm::min(globalMin, vertex.pos);
+                globalMax = glm::max(globalMax, vertex.pos);
+                foundVertex = true;
+            }
+        }
+
+        if (foundVertex && model.followAnchorLocalCenterInitialized)
+        {
+            const glm::vec3 animatedCenter = (globalMin + globalMax) * 0.5f;
+            globalCenterDelta = animatedCenter - model.followAnchorLocalCenter;
+            if (glm::length(globalCenterDelta) > 1e-6f)
+            {
+                for (std::vector<Vertex>& vertices : normalizedPoseVertices)
+                {
+                    for (Vertex& vertex : vertices)
+                    {
+                        vertex.pos -= globalCenterDelta;
+                    }
+                }
+            }
+        }
+    }
+
     bool updated = false;
     for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {
@@ -382,7 +428,7 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
             continue;
         }
 
-        if (primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
+        if (!forceCpuNormalizedPose && primitive->gpuSkinningEnabled && binding.gpuSkinningEligible)
         {
             const ufbx_skin_deformer* skin = binding.skinDeformerIndex < evaluatedMesh->skin_deformers.count
                 ? evaluatedMesh->skin_deformers.data[binding.skinDeformerIndex]
@@ -409,16 +455,19 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
             }
         }
 
-        std::vector<Vertex> vertices = buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
-        const glm::vec3 centerDelta = runtime.centroidNormalizationEnabled
-            ? normalizeControllableCharacterRootOffset(model, vertices)
-            : glm::vec3(0.0f);
+        std::vector<Vertex> vertices = forceCpuNormalizedPose
+            ? std::move(normalizedPoseVertices[meshIndex])
+            : buildAnimatedVerticesFromFbxMesh(evaluatedMesh, binding.vertexIndices);
+        if (!forceCpuNormalizedPose && runtime.centroidNormalizationEnabled)
+        {
+            normalizeControllableCharacterRootOffset(model, vertices);
+        }
         if (vertices.empty())
         {
             continue;
         }
 
-        if (binding.gpuSkinningEligible)
+        if (binding.gpuSkinningEligible && !forceCpuNormalizedPose)
         {
             const size_t count = std::min(vertices.size(), binding.jointIndices.size());
             for (size_t i = 0; i < count; ++i)

@@ -133,6 +133,12 @@ void Model::setSceneTransform(const glm::vec3& translation, const glm::vec3& rot
     updateWorldBoundsFromLocalBounds();
 }
 
+void Model::setWorldTransform(const glm::mat4& transform)
+{
+    worldTransform = transform;
+    syncWorldTransformToPrimitives();
+}
+
 void Model::setPaintOverride(bool enabled, const glm::vec3& color)
 {
     for (auto& mesh : meshes)

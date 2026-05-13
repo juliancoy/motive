@@ -212,6 +212,11 @@ QJsonArray ProjectSession::currentViewportCameraIds() const
     return m_currentViewportCameraIds;
 }
 
+QJsonObject ProjectSession::currentUiState() const
+{
+    return m_currentUiState;
+}
+
 QString ProjectSession::projectsDirPath() const
 {
     return QDir(rootDirPath()).filePath(QStringLiteral("projects"));
@@ -441,6 +446,11 @@ void ProjectSession::setCurrentViewportCameraIds(const QJsonArray& ids)
     m_currentViewportCameraIds = ids;
 }
 
+void ProjectSession::setCurrentUiState(const QJsonObject& state)
+{
+    m_currentUiState = state;
+}
+
 void ProjectSession::saveCurrentProject() const
 {
     if (m_currentProjectId.isEmpty())
@@ -545,7 +555,7 @@ void ProjectSession::ensureSaveWorkerStarted() const
 
 void ProjectSession::saveWorkerLoop() const
 {
-    constexpr auto kDebounceDelay = std::chrono::milliseconds(250);
+    constexpr auto kDebounceDelay = std::chrono::milliseconds(50);
 
     while (true)
     {
@@ -674,7 +684,8 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled},
         {QStringLiteral("minPreviewTriangleAreaPx"), m_currentMinPreviewTriangleAreaPx},
         {QStringLiteral("viewportCount"), m_currentViewportCount},
-        {QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds}
+        {QStringLiteral("viewportCameraIds"), m_currentViewportCameraIds},
+        {QStringLiteral("uiState"), m_currentUiState}
     };
 }
 
@@ -687,62 +698,12 @@ QJsonObject ProjectSession::buildProjectDocumentForState(const QString& projectI
                                                          const QJsonObject& state,
                                                          const QJsonObject& existingRoot) const
 {
-    QJsonObject root = existingRoot;
-    if (root.isEmpty())
-    {
-        root = QJsonObject{
-            {QStringLiteral("projectId"), projectId},
-            {QStringLiteral("base"), state},
-            {QStringLiteral("changes"), QJsonArray{}}
-        };
-        return root;
-    }
-
-    root[QStringLiteral("projectId")] = projectId;
-    if (!root.contains(QStringLiteral("base")) || !root.value(QStringLiteral("base")).isObject())
-    {
-        root[QStringLiteral("base")] = QJsonObject{
-            {QStringLiteral("projectRoot"), currentStateFromDocument(projectId, root).value(QStringLiteral("projectRoot")).toString(state.value(QStringLiteral("projectRoot")).toString(rootDirPath()))}
-        };
-    }
-
-    QJsonObject currentState = currentStateFromDocument(projectId, root);
-    QJsonArray changes = root.value(QStringLiteral("changes")).toArray();
-
-    const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
-    const auto appendSetIfChanged = [&](const QString& field, const QJsonValue& value)
-    {
-        if (currentState.value(field) != value)
-        {
-            changes.append(QJsonObject{
-                {QStringLiteral("op"), QStringLiteral("set")},
-                {QStringLiteral("field"), field},
-                {QStringLiteral("value"), value},
-                {QStringLiteral("ts_ms"), tsMs}
-            });
-        }
+    (void)existingRoot;
+    return QJsonObject{
+        {QStringLiteral("projectId"), projectId},
+        {QStringLiteral("base"), state},
+        {QStringLiteral("changes"), QJsonArray{}}
     };
-
-    appendSetIfChanged(QStringLiteral("projectRoot"), state.value(QStringLiteral("projectRoot")));
-    appendSetIfChanged(QStringLiteral("galleryPath"), state.value(QStringLiteral("galleryPath")));
-    appendSetIfChanged(QStringLiteral("selectedAssetPath"), state.value(QStringLiteral("selectedAssetPath")));
-    appendSetIfChanged(QStringLiteral("viewportAssetPath"), state.value(QStringLiteral("viewportAssetPath")));
-    appendSetIfChanged(QStringLiteral("sceneItems"), state.value(QStringLiteral("sceneItems")));
-    appendSetIfChanged(QStringLiteral("cameraConfigs"), state.value(QStringLiteral("cameraConfigs")));
-    appendSetIfChanged(QStringLiteral("cameraPosition"), state.value(QStringLiteral("cameraPosition")));
-    appendSetIfChanged(QStringLiteral("cameraRotation"), state.value(QStringLiteral("cameraRotation")));
-    appendSetIfChanged(QStringLiteral("cameraSpeed"), state.value(QStringLiteral("cameraSpeed")));
-    appendSetIfChanged(QStringLiteral("sceneLight"), state.value(QStringLiteral("sceneLight")));
-    appendSetIfChanged(QStringLiteral("renderPath"), state.value(QStringLiteral("renderPath")));
-    appendSetIfChanged(QStringLiteral("meshConsolidationEnabled"), state.value(QStringLiteral("meshConsolidationEnabled")));
-    appendSetIfChanged(QStringLiteral("validationLayersEnabled"), state.value(QStringLiteral("validationLayersEnabled")));
-    appendSetIfChanged(QStringLiteral("freeFlyCameraEnabled"), state.value(QStringLiteral("freeFlyCameraEnabled")));
-    appendSetIfChanged(QStringLiteral("minPreviewTriangleAreaPx"), state.value(QStringLiteral("minPreviewTriangleAreaPx")));
-    appendSetIfChanged(QStringLiteral("viewportCount"), state.value(QStringLiteral("viewportCount")));
-    appendSetIfChanged(QStringLiteral("viewportCameraIds"), state.value(QStringLiteral("viewportCameraIds")));
-
-    root[QStringLiteral("changes")] = changes;
-    return root;
 }
 
 QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, const QJsonObject& root) const
@@ -791,7 +752,8 @@ QJsonObject ProjectSession::currentStateFromDocument(const QString& projectId, c
         {QStringLiteral("freeFlyCameraEnabled"), root.contains(QStringLiteral("freeFlyCameraEnabled")) ? root.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true) : true},
         {QStringLiteral("minPreviewTriangleAreaPx"), root.value(QStringLiteral("minPreviewTriangleAreaPx")).toDouble(0.25)},
         {QStringLiteral("viewportCount"), root.contains(QStringLiteral("viewportCount")) ? root.value(QStringLiteral("viewportCount")).toInt(1) : 1},
-        {QStringLiteral("viewportCameraIds"), root.value(QStringLiteral("viewportCameraIds")).toArray()}
+        {QStringLiteral("viewportCameraIds"), root.value(QStringLiteral("viewportCameraIds")).toArray()},
+        {QStringLiteral("uiState"), root.value(QStringLiteral("uiState")).toObject()}
     };
 }
 
@@ -863,6 +825,7 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
         16.0f);
     m_currentViewportCount = std::clamp(state.value(QStringLiteral("viewportCount")).toInt(1), 1, 4);
     m_currentViewportCameraIds = state.value(QStringLiteral("viewportCameraIds")).toArray();
+    m_currentUiState = state.value(QStringLiteral("uiState")).toObject();
     m_currentSceneLight = state.value(QStringLiteral("sceneLight")).toObject();
     if (m_currentSceneItems.isEmpty())
     {

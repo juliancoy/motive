@@ -93,6 +93,7 @@ void MainWindowShell::restoreSessionState()
         m_viewportHost->normalizeSceneScaleForMeters();
         updateCameraSettingsPanel();
     }
+    applyUiState(m_projectSession.currentUiState());
 
     m_restoringSessionState = false;
 
@@ -207,6 +208,7 @@ void MainWindowShell::createProject()
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
         m_viewportHost->normalizeSceneScaleForMeters();
     }
+    applyUiState(m_projectSession.currentUiState());
     refreshWindowTitle();
 }
 
@@ -277,6 +279,7 @@ void MainWindowShell::switchProject()
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
         m_viewportHost->normalizeSceneScaleForMeters();
     }
+    applyUiState(m_projectSession.currentUiState());
     refreshWindowTitle();
 }
 
@@ -304,8 +307,13 @@ void MainWindowShell::saveProjectState()
     m_projectSession.setCurrentGalleryPath(m_assetBrowser ? m_assetBrowser->galleryPath() : QString());
     m_projectSession.setCurrentSelectedAssetPath(m_assetBrowser ? m_assetBrowser->selectedAssetPath() : QString());
     m_projectSession.setCurrentViewportAssetPath(m_viewportHost ? m_viewportHost->currentAssetPath() : QString());
-    m_projectSession.setCurrentSceneItems(sceneItemsToJson(
-        m_viewportHost ? m_viewportHost->sceneItems() : QList<ViewportHostWidget::SceneItem>{}));
+    const QJsonArray previousSceneItems = m_projectSession.currentSceneItems();
+    const QJsonArray currentSceneItems = sceneItemsToJson(
+        m_viewportHost ? m_viewportHost->sceneItems() : QList<ViewportHostWidget::SceneItem>{});
+    if (!currentSceneItems.isEmpty() || previousSceneItems.isEmpty())
+    {
+        m_projectSession.setCurrentSceneItems(currentSceneItems);
+    }
     m_projectSession.setCurrentCameraConfigs(cameraConfigsToJson(
         m_viewportHost ? m_viewportHost->cameraConfigs() : QList<ViewportHostWidget::CameraConfig>{}));
     m_projectSession.setCurrentCameraPosition(m_viewportHost ? m_viewportHost->cameraPosition() : QVector3D(0.0f, 0.0f, 3.0f));
@@ -326,6 +334,7 @@ void MainWindowShell::saveProjectState()
         m_projectSession.setCurrentViewportCount(1);
         m_projectSession.setCurrentViewportCameraIds(QJsonArray{});
     }
+    m_projectSession.setCurrentUiState(captureUiState());
     qDebug() << "[MainWindowShell] Saving project state"
              << "projectId=" << m_projectSession.currentProjectId()
              << "root=" << (m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath())

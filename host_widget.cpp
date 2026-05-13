@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -183,20 +184,86 @@ bool barycentricInTriangleXZ(const glm::vec3& a,
     return u >= kEpsilon && v >= kEpsilon && w >= kEpsilon;
 }
 
-bool sampleModelSurfaceYAtXZ(const Model& surfaceModel,
-                             const glm::vec2& xz,
-                             float maxSurfaceY,
-                             float& outSurfaceY)
+struct CollisionTriangle
 {
-    if (xz.x < surfaceModel.boundsMinWorld.x || xz.x > surfaceModel.boundsMaxWorld.x ||
-        xz.y < surfaceModel.boundsMinWorld.z || xz.y > surfaceModel.boundsMaxWorld.z)
-    {
-        return false;
-    }
+    glm::vec3 a = glm::vec3(0.0f);
+    glm::vec3 b = glm::vec3(0.0f);
+    glm::vec3 c = glm::vec3(0.0f);
+    glm::vec3 normal = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec2 minXZ = glm::vec2(0.0f);
+    glm::vec2 maxXZ = glm::vec2(0.0f);
+    float minY = 0.0f;
+    float maxY = 0.0f;
+};
 
-    bool found = false;
-    float bestY = -std::numeric_limits<float>::infinity();
-    for (const Mesh& mesh : surfaceModel.meshes)
+struct StaticCollisionCache
+{
+    glm::mat4 worldTransform = glm::mat4(1.0f);
+    std::vector<CollisionTriangle> groundTriangles;
+    std::vector<CollisionTriangle> wallTriangles;
+    std::unordered_map<std::int64_t, std::vector<size_t>> groundGrid;
+    std::unordered_map<std::int64_t, std::vector<size_t>> wallGrid;
+    bool valid = false;
+};
+
+std::unordered_map<const Model*, StaticCollisionCache> g_staticCollisionCaches;
+
+bool matricesApproximatelyEqual(const glm::mat4& a, const glm::mat4& b)
+{
+    for (int col = 0; col < 4; ++col)
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            if (std::abs(a[col][row] - b[col][row]) > 1e-5f)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+int collisionCellFor(float value)
+{
+    constexpr float kCellSize = 1.0f;
+    return static_cast<int>(std::floor(value / kCellSize));
+}
+
+std::int64_t collisionCellKey(int x, int z)
+{
+    const std::uint64_t ux = static_cast<std::uint32_t>(x);
+    const std::uint64_t uz = static_cast<std::uint32_t>(z);
+    return static_cast<std::int64_t>((ux << 32u) | uz);
+}
+
+void insertTriangleIntoGrid(std::unordered_map<std::int64_t, std::vector<size_t>>& grid,
+                            const CollisionTriangle& triangle,
+                            size_t triangleIndex,
+                            float expansion = 0.0f)
+{
+    const int minX = collisionCellFor(triangle.minXZ.x - expansion);
+    const int maxX = collisionCellFor(triangle.maxXZ.x + expansion);
+    const int minZ = collisionCellFor(triangle.minXZ.y - expansion);
+    const int maxZ = collisionCellFor(triangle.maxXZ.y + expansion);
+    for (int x = minX; x <= maxX; ++x)
+    {
+        for (int z = minZ; z <= maxZ; ++z)
+        {
+            grid[collisionCellKey(x, z)].push_back(triangleIndex);
+        }
+    }
+}
+
+bool buildStaticCollisionCache(const Model& model, StaticCollisionCache& cache)
+{
+    constexpr float kGroundNormalMinY = 0.25f;
+    constexpr float kWallSlopeMaxAbsY = 0.55f;
+    constexpr float kWallGridExpansion = 0.4f;
+
+    cache = StaticCollisionCache{};
+    cache.worldTransform = model.worldTransform;
+
+    for (const Mesh& mesh : model.meshes)
     {
         for (const auto& primitive : mesh.primitives)
         {
@@ -218,31 +285,133 @@ bool sampleModelSurfaceYAtXZ(const Model& surfaceModel,
                     continue;
                 }
 
-                const glm::vec3 a = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ia].pos, 1.0f));
-                const glm::vec3 b = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ib].pos, 1.0f));
-                const glm::vec3 c = glm::vec3(surfaceModel.worldTransform * glm::vec4(primitive->cpuVertices[ic].pos, 1.0f));
-                const glm::vec3 normal = glm::cross(b - a, c - a);
+                CollisionTriangle triangle;
+                triangle.a = glm::vec3(model.worldTransform * glm::vec4(primitive->cpuVertices[ia].pos, 1.0f));
+                triangle.b = glm::vec3(model.worldTransform * glm::vec4(primitive->cpuVertices[ib].pos, 1.0f));
+                triangle.c = glm::vec3(model.worldTransform * glm::vec4(primitive->cpuVertices[ic].pos, 1.0f));
+
+                const glm::vec3 normal = glm::cross(triangle.b - triangle.a, triangle.c - triangle.a);
                 const float normalLength = glm::length(normal);
-                if (normalLength < 1e-6f || std::abs(normal.y / normalLength) < 0.25f)
+                if (normalLength < 1e-6f)
                 {
                     continue;
                 }
 
-                float u = 0.0f;
-                float v = 0.0f;
-                float w = 0.0f;
-                if (!barycentricInTriangleXZ(a, b, c, xz, u, v, w))
-                {
-                    continue;
-                }
+                triangle.normal = normal / normalLength;
+                triangle.minXZ = glm::min(glm::min(glm::vec2(triangle.a.x, triangle.a.z),
+                                                   glm::vec2(triangle.b.x, triangle.b.z)),
+                                          glm::vec2(triangle.c.x, triangle.c.z));
+                triangle.maxXZ = glm::max(glm::max(glm::vec2(triangle.a.x, triangle.a.z),
+                                                   glm::vec2(triangle.b.x, triangle.b.z)),
+                                          glm::vec2(triangle.c.x, triangle.c.z));
+                triangle.minY = std::min({triangle.a.y, triangle.b.y, triangle.c.y});
+                triangle.maxY = std::max({triangle.a.y, triangle.b.y, triangle.c.y});
 
-                const float y = u * a.y + v * b.y + w * c.y;
-                if (y <= maxSurfaceY && y > bestY)
+                if (std::abs(triangle.normal.y) >= kGroundNormalMinY)
                 {
-                    bestY = y;
-                    found = true;
+                    const size_t index = cache.groundTriangles.size();
+                    cache.groundTriangles.push_back(triangle);
+                    insertTriangleIntoGrid(cache.groundGrid, triangle, index);
+                }
+                if (std::abs(triangle.normal.y) <= kWallSlopeMaxAbsY)
+                {
+                    const size_t index = cache.wallTriangles.size();
+                    cache.wallTriangles.push_back(triangle);
+                    insertTriangleIntoGrid(cache.wallGrid, triangle, index, kWallGridExpansion);
                 }
             }
+        }
+    }
+
+    cache.valid = !cache.groundTriangles.empty() || !cache.wallTriangles.empty();
+    return cache.valid;
+}
+
+const StaticCollisionCache* staticCollisionCacheForModel(const Model& model)
+{
+    StaticCollisionCache& cache = g_staticCollisionCaches[&model];
+    if (!cache.valid || !matricesApproximatelyEqual(cache.worldTransform, model.worldTransform))
+    {
+        if (!buildStaticCollisionCache(model, cache))
+        {
+            return nullptr;
+        }
+        qDebug() << "[ViewportHost] Static collision cache built for"
+                 << QString::fromStdString(model.name)
+                 << "groundTris=" << static_cast<qint64>(cache.groundTriangles.size())
+                 << "wallTris=" << static_cast<qint64>(cache.wallTriangles.size());
+    }
+    return &cache;
+}
+
+void appendGridCandidates(const std::unordered_map<std::int64_t, std::vector<size_t>>& grid,
+                          const glm::vec2& xz,
+                          float radius,
+                          std::vector<size_t>& outCandidates)
+{
+    const int minX = collisionCellFor(xz.x - radius);
+    const int maxX = collisionCellFor(xz.x + radius);
+    const int minZ = collisionCellFor(xz.y - radius);
+    const int maxZ = collisionCellFor(xz.y + radius);
+    for (int x = minX; x <= maxX; ++x)
+    {
+        for (int z = minZ; z <= maxZ; ++z)
+        {
+            const auto found = grid.find(collisionCellKey(x, z));
+            if (found == grid.end())
+            {
+                continue;
+            }
+            outCandidates.insert(outCandidates.end(), found->second.begin(), found->second.end());
+        }
+    }
+}
+
+bool sampleModelSurfaceYAtXZ(const Model& surfaceModel,
+                             const glm::vec2& xz,
+                             float maxSurfaceY,
+                             float& outSurfaceY)
+{
+    if (xz.x < surfaceModel.boundsMinWorld.x || xz.x > surfaceModel.boundsMaxWorld.x ||
+        xz.y < surfaceModel.boundsMinWorld.z || xz.y > surfaceModel.boundsMaxWorld.z)
+    {
+        return false;
+    }
+
+    const StaticCollisionCache* cache = staticCollisionCacheForModel(surfaceModel);
+    if (!cache)
+    {
+        return false;
+    }
+
+    std::vector<size_t> candidates;
+    appendGridCandidates(cache->groundGrid, xz, 0.0f, candidates);
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+    bool found = false;
+    float bestY = -std::numeric_limits<float>::infinity();
+    for (size_t candidate : candidates)
+    {
+        if (candidate >= cache->groundTriangles.size())
+        {
+            continue;
+        }
+
+        const CollisionTriangle& triangle = cache->groundTriangles[candidate];
+        float u = 0.0f;
+        float v = 0.0f;
+        float w = 0.0f;
+        if (!barycentricInTriangleXZ(triangle.a, triangle.b, triangle.c, xz, u, v, w))
+        {
+            continue;
+        }
+
+        const float y = u * triangle.a.y + v * triangle.b.y + w * triangle.c.y;
+        if (y <= maxSurfaceY && y > bestY)
+        {
+            bestY = y;
+            found = true;
         }
     }
 
@@ -251,6 +420,155 @@ bool sampleModelSurfaceYAtXZ(const Model& surfaceModel,
         outSurfaceY = bestY;
     }
     return found;
+}
+
+glm::vec2 closestPointOnSegmentXZ(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b)
+{
+    const glm::vec2 ab = b - a;
+    const float denom = glm::dot(ab, ab);
+    if (denom <= 1e-8f)
+    {
+        return a;
+    }
+    const float t = std::clamp(glm::dot(p - a, ab) / denom, 0.0f, 1.0f);
+    return a + ab * t;
+}
+
+bool closestPointOnTriangleEdgesXZ(const glm::vec2& p,
+                                   const glm::vec2& a,
+                                   const glm::vec2& b,
+                                   const glm::vec2& c,
+                                   glm::vec2& outClosest)
+{
+    const glm::vec2 candidates[3] = {
+        closestPointOnSegmentXZ(p, a, b),
+        closestPointOnSegmentXZ(p, b, c),
+        closestPointOnSegmentXZ(p, c, a)
+    };
+
+    float bestDist2 = std::numeric_limits<float>::max();
+    bool found = false;
+    for (const glm::vec2& candidate : candidates)
+    {
+        const float dist2 = glm::dot(p - candidate, p - candidate);
+        if (dist2 < bestDist2)
+        {
+            bestDist2 = dist2;
+            outClosest = candidate;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool resolveCharacterWallsFromScene(Model& character, const Model& sceneModel)
+{
+    constexpr float kCharacterRadius = 0.32f;
+    constexpr float kCollisionSkin = 0.025f;
+    constexpr int kIterations = 3;
+
+    const StaticCollisionCache* cache = staticCollisionCacheForModel(sceneModel);
+    if (!cache)
+    {
+        return false;
+    }
+
+    glm::vec3 origin = glm::vec3(character.worldTransform[3]);
+    const float feetY = character.boundsMinWorld.y - 0.05f;
+    const float headY = character.boundsMaxWorld.y + 0.05f;
+    bool resolved = false;
+
+    for (int iteration = 0; iteration < kIterations; ++iteration)
+    {
+        glm::vec2 totalCorrection(0.0f);
+        const glm::vec2 posXZ(origin.x, origin.z);
+        std::vector<size_t> candidates;
+        appendGridCandidates(cache->wallGrid, posXZ, kCharacterRadius + kCollisionSkin, candidates);
+        std::sort(candidates.begin(), candidates.end());
+        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+        for (size_t candidate : candidates)
+        {
+            if (candidate >= cache->wallTriangles.size())
+            {
+                continue;
+            }
+
+            const CollisionTriangle& triangle = cache->wallTriangles[candidate];
+            if (triangle.maxY < feetY || triangle.minY > headY)
+            {
+                continue;
+            }
+
+            glm::vec2 closest(0.0f);
+            if (!closestPointOnTriangleEdgesXZ(posXZ,
+                                               glm::vec2(triangle.a.x, triangle.a.z),
+                                               glm::vec2(triangle.b.x, triangle.b.z),
+                                               glm::vec2(triangle.c.x, triangle.c.z),
+                                               closest))
+            {
+                continue;
+            }
+
+            glm::vec2 away = posXZ - closest;
+            const float dist = glm::length(away);
+            const float minDistance = kCharacterRadius + kCollisionSkin;
+            if (dist >= minDistance)
+            {
+                continue;
+            }
+
+            if (dist <= 1e-5f)
+            {
+                away = glm::normalize(glm::vec2(triangle.normal.x, triangle.normal.z));
+                if (glm::length(away) <= 1e-5f)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                away /= dist;
+            }
+
+            totalCorrection += away * (minDistance - std::max(dist, 0.0f));
+        }
+
+        if (glm::length(totalCorrection) <= 1e-5f)
+        {
+            break;
+        }
+
+        origin.x += totalCorrection.x;
+        origin.z += totalCorrection.y;
+        resolved = true;
+    }
+
+    if (!resolved)
+    {
+        return false;
+    }
+
+    const glm::vec3 previousPos = glm::vec3(character.worldTransform[3]);
+    glm::mat4 resolvedTransform = character.worldTransform;
+    resolvedTransform[3] = glm::vec4(origin, 1.0f);
+
+    glm::vec2 correction(origin.x - previousPos.x, origin.z - previousPos.z);
+    if (glm::length(correction) > 1e-5f)
+    {
+        const glm::vec2 normal = glm::normalize(correction);
+        const glm::vec2 planarVelocity(character.character.velocity.x, character.character.velocity.z);
+        const float inwardSpeed = glm::dot(planarVelocity, -normal);
+        if (inwardSpeed > 0.0f)
+        {
+            const glm::vec2 adjustedVelocity = planarVelocity + normal * inwardSpeed;
+            character.character.velocity.x = adjustedVelocity.x;
+            character.character.velocity.z = adjustedVelocity.y;
+        }
+    }
+
+    character.setWorldTransform(resolvedTransform);
+    return true;
 }
 
 void updateCharacterGroundFromSceneSurface(Model& character, const Model& surfaceModel)
@@ -4419,6 +4737,11 @@ void ViewportHostWidget::renderFrame()
                     else
                     {
                         model->updateCharacterPhysics(dt);
+                    }
+
+                    if (environmentSurface && environmentSurface != model.get())
+                    {
+                        resolveCharacterWallsFromScene(*model, *environmentSurface);
                     }
                 }
                 else if (physicsWorld && model->getPhysicsBody() && couplingUsesKinematicBody(*model))

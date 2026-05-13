@@ -37,6 +37,7 @@ public:
     float currentMinPreviewTriangleAreaPx() const;
     int currentViewportCount() const;
     QJsonArray currentViewportCameraIds() const;
+    QJsonObject currentUiState() const;
     QString configFilePath() const;
     QString rootDirPath() const;
     void setRootDirPath(const QString& path);
@@ -69,6 +70,7 @@ public:
     void setCurrentMinPreviewTriangleAreaPx(float areaPx);
     void setCurrentViewportCount(int count);
     void setCurrentViewportCameraIds(const QJsonArray& ids);
+    void setCurrentUiState(const QJsonObject& state);
     void saveCurrentProject() const;
     void requestSaveCurrentProject() const;
     void flushPendingSave() const;
@@ -116,6 +118,7 @@ private:
     float m_currentMinPreviewTriangleAreaPx = 0.25f;
     int m_currentViewportCount = 1;
     QJsonArray m_currentViewportCameraIds;
+    QJsonObject m_currentUiState;
 
     mutable std::mutex m_saveMutex;
     mutable std::condition_variable m_saveCv;

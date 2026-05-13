@@ -19,6 +19,209 @@
 
 namespace motive::ui {
 
+namespace {
+
+constexpr int kOverviewTabIndex = 0;
+constexpr int kVisualTabIndex = 1;
+constexpr int kMotionTabIndex = 2;
+constexpr int kCameraTabIndex = 3;
+constexpr int kAnimationTabIndex = 4;
+constexpr int kRuntimeTabIndex = 5;
+
+QString elementPanelLabelForNodeType(int nodeType)
+{
+    using NodeType = ViewportHostWidget::HierarchyNode::Type;
+    switch (static_cast<NodeType>(nodeType))
+    {
+    case NodeType::Camera:
+        return QStringLiteral("Camera Element");
+    case NodeType::Light:
+        return QStringLiteral("Light Element");
+    case NodeType::SceneItem:
+        return QStringLiteral("Object Element");
+    case NodeType::Mesh:
+        return QStringLiteral("Mesh Element");
+    case NodeType::Primitive:
+        return QStringLiteral("Primitive Element");
+    case NodeType::Material:
+        return QStringLiteral("Material Element");
+    case NodeType::Texture:
+        return QStringLiteral("Texture Element");
+    case NodeType::AnimationGroup:
+        return QStringLiteral("Animation Element");
+    case NodeType::AnimationClip:
+        return QStringLiteral("Clip Element");
+    case NodeType::PendingSceneItem:
+        return QStringLiteral("Pending Element");
+    }
+    return QStringLiteral("Element");
+}
+
+}  // namespace
+
+void MainWindowShell::configureElementInspectorForSelection(int nodeType,
+                                                           int sceneIndex,
+                                                           int meshIndex,
+                                                           int primitiveIndex,
+                                                           bool hasAnimation,
+                                                           bool isTextItem,
+                                                           bool focusContextTab)
+{
+    Q_UNUSED(meshIndex);
+    Q_UNUSED(primitiveIndex);
+
+    if (m_rightTabs)
+    {
+        for (int i = 0; i < m_rightTabs->count(); ++i)
+        {
+            if (m_rightTabs->tabText(i).endsWith(QStringLiteral("Element")) ||
+                m_rightTabs->tabText(i) == QStringLiteral("Element"))
+            {
+                m_rightTabs->setTabText(i, elementPanelLabelForNodeType(nodeType));
+                break;
+            }
+        }
+    }
+
+    if (!m_elementDetailTabs)
+    {
+        return;
+    }
+
+    bool showOverview = true;
+    bool showVisual = false;
+    bool showMotion = false;
+    bool showCamera = false;
+    bool showAnimation = false;
+    bool showRuntime = false;
+    int preferredTab = kOverviewTabIndex;
+
+    using NodeType = ViewportHostWidget::HierarchyNode::Type;
+    switch (static_cast<NodeType>(nodeType))
+    {
+    case NodeType::Camera:
+        showCamera = true;
+        showRuntime = true;
+        preferredTab = focusContextTab ? kCameraTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::Light:
+        showVisual = true;
+        preferredTab = focusContextTab ? kVisualTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::SceneItem:
+        showVisual = true;
+        showMotion = !isTextItem;
+        showCamera = !isTextItem;
+        showAnimation = hasAnimation;
+        showRuntime = !isTextItem;
+        preferredTab = kOverviewTabIndex;
+        break;
+    case NodeType::Mesh:
+        showVisual = true;
+        showRuntime = true;
+        preferredTab = focusContextTab ? kVisualTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::Primitive:
+        showVisual = true;
+        showRuntime = true;
+        preferredTab = focusContextTab ? kVisualTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::Material:
+        showVisual = true;
+        preferredTab = focusContextTab ? kVisualTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::Texture:
+        showVisual = true;
+        preferredTab = focusContextTab ? kVisualTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::AnimationGroup:
+    case NodeType::AnimationClip:
+        showAnimation = hasAnimation;
+        showRuntime = true;
+        preferredTab = focusContextTab && showAnimation ? kAnimationTabIndex : kOverviewTabIndex;
+        break;
+    case NodeType::PendingSceneItem:
+        preferredTab = kOverviewTabIndex;
+        break;
+    }
+
+    const bool hasSceneObject = sceneIndex >= 0 && sceneIndex < m_sceneItems.size();
+    if (!hasSceneObject)
+    {
+        showAnimation = false;
+    }
+
+    const bool visibleByIndex[] = {
+        showOverview,
+        showVisual,
+        showMotion,
+        showCamera,
+        showAnimation,
+        showRuntime
+    };
+    for (int i = 0; i < m_elementDetailTabs->count() && i < 6; ++i)
+    {
+        m_elementDetailTabs->setTabVisible(i, visibleByIndex[i]);
+    }
+
+    if (!m_elementDetailTabs->isTabVisible(m_elementDetailTabs->currentIndex()) ||
+        (focusContextTab && m_elementDetailTabs->isTabVisible(preferredTab)))
+    {
+        m_elementDetailTabs->setCurrentIndex(
+            m_elementDetailTabs->isTabVisible(preferredTab) ? preferredTab : kOverviewTabIndex);
+    }
+
+    const bool sceneItemNode = nodeType == static_cast<int>(NodeType::SceneItem);
+    const bool meshNode = nodeType == static_cast<int>(NodeType::Mesh);
+    const bool primitiveNode = nodeType == static_cast<int>(NodeType::Primitive);
+    const bool materialNode = nodeType == static_cast<int>(NodeType::Material);
+    const bool textureNode = nodeType == static_cast<int>(NodeType::Texture);
+    const bool animationNode = nodeType == static_cast<int>(NodeType::AnimationGroup) ||
+                               nodeType == static_cast<int>(NodeType::AnimationClip);
+
+    if (m_transformSection)
+    {
+        m_transformSection->setVisible(sceneItemNode || nodeType == static_cast<int>(NodeType::Camera));
+    }
+    if (m_placementSection)
+    {
+        m_placementSection->setVisible(sceneItemNode && !isTextItem);
+    }
+    if (m_textSection)
+    {
+        m_textSection->setVisible(sceneItemNode && isTextItem);
+    }
+    if (m_materialSection)
+    {
+        m_materialSection->setVisible(sceneItemNode || meshNode || primitiveNode || materialNode || textureNode);
+    }
+    if (m_animationSection)
+    {
+        m_animationSection->setVisible((sceneItemNode || animationNode) && hasAnimation);
+    }
+    if (m_physicsSection)
+    {
+        m_physicsSection->setVisible(sceneItemNode && !isTextItem);
+    }
+    if (m_cameraSection)
+    {
+        m_cameraSection->setVisible(sceneItemNode || nodeType == static_cast<int>(NodeType::Camera));
+    }
+    if (m_lightSection)
+    {
+        m_lightSection->setVisible(nodeType == static_cast<int>(NodeType::Light));
+    }
+    if (m_runtimeSection)
+    {
+        m_runtimeSection->setVisible(sceneItemNode || meshNode || primitiveNode || animationNode ||
+                                     nodeType == static_cast<int>(NodeType::Camera));
+    }
+    if (m_motionDebugOverlaySection)
+    {
+        m_motionDebugOverlaySection->setVisible(sceneItemNode || nodeType == static_cast<int>(NodeType::Camera));
+    }
+}
+
 void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, bool focusContextTab)
 {
     m_updatingInspector = true;
@@ -787,6 +990,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             setMotionOverlayInspector(true);
             setTextInspector(false);
             setTexturePreview(QImage());
+            configureElementInspectorForSelection(
+                static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera),
+                row,
+                meshIndex,
+                primitiveIndex,
+                false,
+                false,
+                focusContextTab);
             
             // Show follow target selector for all cameras
             setFollowTargetInspectorVisible(true, followTargetIndex);
@@ -871,6 +1082,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                 }
             }
             setTexturePreview(QImage());
+            configureElementInspectorForSelection(
+                static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Light),
+                row,
+                meshIndex,
+                primitiveIndex,
+                false,
+                false,
+                focusContextTab);
             m_updatingInspector = false;
             return;
         }
@@ -929,6 +1148,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             m_alignBottomToGroundButton->setEnabled(false);
         }
         setTexturePreview(QImage());
+        configureElementInspectorForSelection(
+            nodeType,
+            row,
+            meshIndex,
+            primitiveIndex,
+            false,
+            false,
+            focusContextTab);
         m_updatingInspector = false;
         return;
     }
@@ -1021,6 +1248,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         setObjectRuntimeInspector(false);
         setMotionOverlayInspector(true);
         setTexturePreview(QImage());
+        configureElementInspectorForSelection(
+            nodeType,
+            row,
+            meshIndex,
+            primitiveIndex,
+            false,
+            true,
+            focusContextTab);
         m_updatingInspector = false;
         return;
     }
@@ -1240,6 +1475,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
     {
         setTexturePreview(QImage());
     }
+    configureElementInspectorForSelection(
+        nodeType,
+        row,
+        meshIndex,
+        primitiveIndex,
+        !animationClips.isEmpty(),
+        false,
+        focusContextTab);
     m_updatingInspector = false;
 }
 

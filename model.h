@@ -200,6 +200,7 @@ public:
     void rotate(float angleRadians, const glm::vec3& axis);
     void rotate(float xDegrees, float yDegrees, float zDegrees);
     void setSceneTransform(const glm::vec3& translation, const glm::vec3& rotationDegrees, const glm::vec3& scaleFactors);
+    void setWorldTransform(const glm::mat4& transform);
     void setPaintOverride(bool enabled, const glm::vec3& color);
     void setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed);
     void setAnimationProcessingOptions(bool centroidNormalizationEnabled,

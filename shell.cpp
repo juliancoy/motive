@@ -250,6 +250,37 @@ QJsonObject splitterMetrics(const QSplitter* splitter)
     return object;
 }
 
+QJsonArray intListToJsonArray(const QList<int>& values)
+{
+    QJsonArray array;
+    for (const int value : values)
+    {
+        array.append(value);
+    }
+    return array;
+}
+
+QList<int> intListFromJsonArray(const QJsonValue& value, int expectedCount)
+{
+    QList<int> sizes;
+    const QJsonArray array = value.toArray();
+    if (array.size() != expectedCount)
+    {
+        return sizes;
+    }
+    for (const QJsonValue& item : array)
+    {
+        const int size = item.toInt(-1);
+        if (size < 0)
+        {
+            sizes.clear();
+            return sizes;
+        }
+        sizes.push_back(size);
+    }
+    return sizes;
+}
+
 }  // namespace
 
 MainWindowShell::MainWindowShell(QWidget* parent)
@@ -265,14 +296,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     leftLayout->setSpacing(0);
 
     // Create a vertical splitter for adjustable boundary between file chooser and hierarchy
-    auto* leftVerticalSplitter = new QSplitter(Qt::Vertical, m_leftPane);
-    leftVerticalSplitter->setChildrenCollapsible(false);
+    m_leftVerticalSplitter = new QSplitter(Qt::Vertical, m_leftPane);
+    m_leftVerticalSplitter->setChildrenCollapsible(false);
     
-    m_assetBrowser = new AssetBrowserWidget(leftVerticalSplitter);
-    leftVerticalSplitter->addWidget(m_assetBrowser);
+    m_assetBrowser = new AssetBrowserWidget(m_leftVerticalSplitter);
+    m_leftVerticalSplitter->addWidget(m_assetBrowser);
     
     // Create a container for hierarchy section
-    auto* hierarchyContainer = new QWidget(leftVerticalSplitter);
+    auto* hierarchyContainer = new QWidget(m_leftVerticalSplitter);
     auto* hierarchyLayout = new QVBoxLayout(hierarchyContainer);
     hierarchyLayout->setContentsMargins(0, 0, 0, 0);
     hierarchyLayout->setSpacing(8);
@@ -307,6 +338,21 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
             saveProjectState();
         };
+        const auto createAndSelectLight = [this]() {
+            if (!m_viewportHost || m_viewportHost->hasSceneLight())
+            {
+                return;
+            }
+            m_viewportHost->createSceneLight();
+            refreshHierarchy(m_viewportHost->sceneItems());
+            QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("Directional Light"), Qt::MatchExactly | Qt::MatchRecursive);
+            if (!matches.isEmpty())
+            {
+                m_hierarchyTree->setCurrentItem(matches.front());
+                updateInspectorForSelection(matches.front(), true);
+            }
+            saveProjectState();
+        };
 
         QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
         const int row = item ? item->data(0, Qt::UserRole).toInt() : -1;
@@ -326,13 +372,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
             if (chosen == createLightAction && m_viewportHost)
             {
-                m_viewportHost->createSceneLight();
-                refreshHierarchy(m_viewportHost->sceneItems());
-                QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("Directional Light"), Qt::MatchExactly | Qt::MatchRecursive);
-                if (!matches.isEmpty())
-                {
-                    m_hierarchyTree->setCurrentItem(matches.front());
-                }
+                createAndSelectLight();
             }
             else if (chosen == createTextAction && m_viewportHost)
             {
@@ -350,11 +390,20 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             if (!m_viewportHost) return;
             
             QMenu menu(this);
+            QAction* createLightAction = menu.addAction(QStringLiteral("Create Light"));
+            if (m_viewportHost->hasSceneLight())
+            {
+                createLightAction->setEnabled(false);
+            }
             QAction* renameAction = menu.addAction(QStringLiteral("Rename"));
             QAction* deleteAction = menu.addAction(QStringLiteral("Delete"));
             
             QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
-            if (chosen == renameAction)
+            if (chosen == createLightAction)
+            {
+                createAndSelectLight();
+            }
+            else if (chosen == renameAction)
             {
                 // Get current camera name
                 QList<ViewportHostWidget::CameraConfig> configs = m_viewportHost->cameraConfigs();
@@ -438,11 +487,17 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             return;
         }
         QMenu menu(this);
+        QAction* createLightAction = menu.addAction(QStringLiteral("Create Light"));
+        if (m_viewportHost->hasSceneLight())
+        {
+            createLightAction->setEnabled(false);
+        }
+        QAction* createTextAction = menu.addAction(QStringLiteral("Create Text"));
+        menu.addSeparator();
         QAction* renameAction = menu.addAction(QStringLiteral("Rename"));
         QAction* focusAction = menu.addAction(QStringLiteral("Focus"));
         QAction* setFocusPointAction = menu.addAction(QStringLiteral("Set Focus Point"));
         QAction* relocateAction = menu.addAction(QStringLiteral("Relocate 5m in front of camera"));
-        QAction* createTextAction = menu.addAction(QStringLiteral("Create Text"));
         
         // Add Follow submenu
         QMenu* followMenu = menu.addMenu(QStringLiteral("Follow"));
@@ -453,7 +508,15 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         QAction* visibilityAction = menu.addAction(m_sceneItems[row].visible ? QStringLiteral("Hide") : QStringLiteral("Show"));
         QAction* deleteAction = menu.addAction(QStringLiteral("Delete"));
         QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
-        if (chosen == renameAction)
+        if (chosen == createLightAction)
+        {
+            createAndSelectLight();
+        }
+        else if (chosen == createTextAction)
+        {
+            createAndSelectTextItem();
+        }
+        else if (chosen == renameAction)
         {
             const QString currentName = m_sceneItems[row].name;
             bool ok = false;
@@ -483,10 +546,6 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         {
             m_viewportHost->relocateSceneItemInFrontOfCamera(row);
             updateInspectorForSelection(m_hierarchyTree->currentItem());
-        }
-        else if (chosen == createTextAction)
-        {
-            createAndSelectTextItem();
         }
         else if (chosen == createFollowAction)
         {
@@ -594,11 +653,11 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     });
     hierarchyLayout->addWidget(m_hierarchyTree, 1);
     
-    leftVerticalSplitter->addWidget(hierarchyContainer);
-    leftVerticalSplitter->setStretchFactor(0, 3); // File chooser gets more space initially
-    leftVerticalSplitter->setStretchFactor(1, 1); // Hierarchy gets less space initially
+    m_leftVerticalSplitter->addWidget(hierarchyContainer);
+    m_leftVerticalSplitter->setStretchFactor(0, 3); // File chooser gets more space initially
+    m_leftVerticalSplitter->setStretchFactor(1, 1); // Hierarchy gets less space initially
     
-    leftLayout->addWidget(leftVerticalSplitter, 1);
+    leftLayout->addWidget(m_leftVerticalSplitter, 1);
 
     // Apply validation layers setting before viewport initializes
     if (!m_projectSession.currentValidationLayersEnabled())
@@ -707,11 +766,20 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 1);
     setCentralWidget(m_splitter);
+    connect(m_splitter, &QSplitter::splitterMoved, this, [this]()
+    {
+        saveProjectState();
+    });
+    connect(m_leftVerticalSplitter, &QSplitter::splitterMoved, this, [this]()
+    {
+        saveProjectState();
+    });
 
-    auto* inspectorDock = new QDockWidget(QStringLiteral("Inspector"), this);
-    inspectorDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    inspectorDock->setFeatures(QDockWidget::DockWidgetMovable);
-    m_rightTabs = new QTabWidget(inspectorDock);
+    m_inspectorDock = new QDockWidget(QStringLiteral("Inspector"), this);
+    m_inspectorDock->setObjectName(QStringLiteral("InspectorDock"));
+    m_inspectorDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_inspectorDock->setFeatures(QDockWidget::DockWidgetMovable);
+    m_rightTabs = new QTabWidget(m_inspectorDock);
     m_profileAvatarButton = new QPushButton(m_rightTabs);
     m_profileAvatarButton->setCursor(Qt::PointingHandCursor);
     m_profileAvatarButton->setMinimumHeight(28);
@@ -1197,8 +1265,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     inspectorLayout->addWidget(m_elementDetailTabs);
     inspectorLayout->addStretch(1);
     m_rightTabs->addTab(wrapTabInScrollArea(inspectorPanel), QStringLiteral("Element"));
-    inspectorDock->setWidget(m_rightTabs);
-    addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
+    connect(m_rightTabs, &QTabWidget::currentChanged, this, [this]()
+    {
+        saveProjectState();
+    });
+    connect(m_elementDetailTabs, &QTabWidget::currentChanged, this, [this]()
+    {
+        saveProjectState();
+    });
+    m_inspectorDock->setWidget(m_rightTabs);
+    addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
 
     setupCameraSettingsPanel();
 
@@ -2760,6 +2836,82 @@ QWidget* MainWindowShell::wrapTabInScrollArea(QWidget* content) const
     return scroll;
 }
 
+QJsonObject MainWindowShell::captureUiState() const
+{
+    QJsonObject state;
+    state.insert(QStringLiteral("windowGeometry"), QString::fromLatin1(saveGeometry().toBase64()));
+    state.insert(QStringLiteral("windowState"), QString::fromLatin1(saveState().toBase64()));
+    if (m_splitter)
+    {
+        state.insert(QStringLiteral("mainSplitterSizes"), intListToJsonArray(m_splitter->sizes()));
+    }
+    if (m_leftVerticalSplitter)
+    {
+        state.insert(QStringLiteral("leftVerticalSplitterSizes"), intListToJsonArray(m_leftVerticalSplitter->sizes()));
+    }
+    if (m_rightTabs)
+    {
+        state.insert(QStringLiteral("rightTabsIndex"), m_rightTabs->currentIndex());
+    }
+    if (m_elementDetailTabs)
+    {
+        state.insert(QStringLiteral("elementDetailTabsIndex"), m_elementDetailTabs->currentIndex());
+    }
+    return state;
+}
+
+void MainWindowShell::applyUiState(const QJsonObject& state)
+{
+    if (state.isEmpty())
+    {
+        return;
+    }
+
+    const QByteArray geometry = QByteArray::fromBase64(state.value(QStringLiteral("windowGeometry")).toString().toLatin1());
+    if (!geometry.isEmpty())
+    {
+        restoreGeometry(geometry);
+    }
+    const QByteArray windowState = QByteArray::fromBase64(state.value(QStringLiteral("windowState")).toString().toLatin1());
+    if (!windowState.isEmpty())
+    {
+        restoreState(windowState);
+    }
+
+    if (m_splitter)
+    {
+        const QList<int> sizes = intListFromJsonArray(state.value(QStringLiteral("mainSplitterSizes")), m_splitter->count());
+        if (!sizes.isEmpty())
+        {
+            m_splitter->setSizes(sizes);
+        }
+    }
+    if (m_leftVerticalSplitter)
+    {
+        const QList<int> sizes = intListFromJsonArray(state.value(QStringLiteral("leftVerticalSplitterSizes")), m_leftVerticalSplitter->count());
+        if (!sizes.isEmpty())
+        {
+            m_leftVerticalSplitter->setSizes(sizes);
+        }
+    }
+    if (m_rightTabs)
+    {
+        const int index = state.value(QStringLiteral("rightTabsIndex")).toInt(m_rightTabs->currentIndex());
+        if (index >= 0 && index < m_rightTabs->count())
+        {
+            m_rightTabs->setCurrentIndex(index);
+        }
+    }
+    if (m_elementDetailTabs)
+    {
+        const int index = state.value(QStringLiteral("elementDetailTabsIndex")).toInt(m_elementDetailTabs->currentIndex());
+        if (index >= 0 && index < m_elementDetailTabs->count())
+        {
+            m_elementDetailTabs->setCurrentIndex(index);
+        }
+    }
+}
+
 QJsonObject MainWindowShell::uiDebugJson() const
 {
     QJsonObject payload;
@@ -2812,11 +2964,14 @@ QJsonObject MainWindowShell::uiDebugJson() const
         elementTabsObject.insert(QStringLiteral("currentTabLabel"), m_elementDetailTabs->tabText(m_elementDetailTabs->currentIndex()));
         elementTabsObject.insert(QStringLiteral("tabCount"), m_elementDetailTabs->count());
         QJsonArray tabNames;
+        QJsonArray tabVisible;
         for (int i = 0; i < m_elementDetailTabs->count(); ++i)
         {
             tabNames.append(m_elementDetailTabs->tabText(i));
+            tabVisible.append(m_elementDetailTabs->isTabVisible(i));
         }
         elementTabsObject.insert(QStringLiteral("tabNames"), tabNames);
+        elementTabsObject.insert(QStringLiteral("tabVisible"), tabVisible);
     }
     payload.insert(QStringLiteral("elementDetailTabs"), elementTabsObject);
 
