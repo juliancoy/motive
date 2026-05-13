@@ -3610,7 +3610,11 @@ void ViewportHostWidget::deleteSceneItem(int index)
     notifySceneChanged();
 }
 
-void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode)
+void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex,
+                                              int meshIndex,
+                                              int primitiveIndex,
+                                              const QString& cullMode,
+                                              bool notify)
 {
     if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
     {
@@ -3655,7 +3659,10 @@ void ViewportHostWidget::setPrimitiveCullMode(int sceneIndex, int meshIndex, int
                                          primitiveIndex,
                                          cullMode,
                                          mesh.primitives[static_cast<size_t>(primitiveIndex)]->forceAlphaOne);
-        notifySceneChanged();
+        if (notify)
+        {
+            notifySceneChanged();
+        }
     }
 }
 
@@ -3683,7 +3690,8 @@ void ViewportHostWidget::setSceneItemCullMode(int sceneIndex, const QString& cul
             setPrimitiveCullMode(sceneIndex,
                                  static_cast<int>(meshIndex),
                                  static_cast<int>(primitiveIndex),
-                                 cullMode);
+                                 cullMode,
+                                 false);
         }
     }
     notifySceneChanged();

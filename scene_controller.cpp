@@ -134,7 +134,8 @@ void applyCoordinatePlaneIndicatorToModel(ViewportRuntime& runtime, int sceneInd
                 continue;
             }
             primitive->cullMode = PrimitiveCullMode::Disabled;
-            primitive->depthTestEnabled = false;
+            primitive->alphaMode = PrimitiveAlphaMode::Blend;
+            primitive->depthTestEnabled = true;
             primitive->depthWriteEnabled = false;
         }
     }

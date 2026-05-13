@@ -320,7 +320,7 @@ void Display::render()
                     for (const auto& primitive : mesh.primitives)
                     {
                         const bool blendAlpha = primitive->alphaMode == PrimitiveAlphaMode::Blend;
-                        const bool isTransparent = blendAlpha && !primitive->depthWriteEnabled;
+                        const bool isTransparent = blendAlpha;
                         if (isTransparent != transparentPass)
                         {
                             continue;

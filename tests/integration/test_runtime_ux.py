@@ -275,18 +275,23 @@ def run_suite(base_url: str) -> None:
         expect_origin_locked_plane(plane)
 
     cull_target_index = -1
+    cull_target_modes = []
     for index, item in enumerate(scene_without_planes.get("sceneItems", [])):
-        if item.get("name") == "china" and primitive_cull_modes(item):
+        modes = primitive_cull_modes(item)
+        if 0 < len(modes) <= 8:
             cull_target_index = index
+            cull_target_modes = modes
             break
     if cull_target_index < 0:
         for index, item in enumerate(scene_without_planes.get("sceneItems", [])):
-            if primitive_cull_modes(item):
+            modes = primitive_cull_modes(item)
+            if modes:
                 cull_target_index = index
+                cull_target_modes = modes
                 break
     if cull_target_index >= 0:
-        original_item = scene_without_planes["sceneItems"][cull_target_index]
-        original_culls = primitive_cull_modes(original_item)
+        original_culls = cull_target_modes
+        original_cull_modes = {cull_mode for _, _, cull_mode in original_culls}
         object_cull = api_post(base_url, "/controls/scene-item", {"sceneIndex": cull_target_index, "cullMode": "none"})
         expect(object_cull.get("ok") is True, f"object-level cull command failed: {object_cull}")
         cull_scene = api_get(base_url, "/profile/scene_state")
@@ -296,18 +301,26 @@ def run_suite(base_url: str) -> None:
             all(cull_mode == "none" for _, _, cull_mode in cull_modes_after),
             f"object-level cull did not apply to every primitive: {cull_modes_after}",
         )
-        for mesh_index, primitive_index, cull_mode in original_culls:
+        if len(original_cull_modes) == 1:
             restore_cull = api_post(
                 base_url,
-                "/controls/primitive",
-                {
-                    "sceneIndex": cull_target_index,
-                    "meshIndex": mesh_index,
-                    "primitiveIndex": primitive_index,
-                    "cullMode": cull_mode,
-                },
+                "/controls/scene-item",
+                {"sceneIndex": cull_target_index, "cullMode": next(iter(original_cull_modes))},
             )
-            expect(restore_cull.get("ok") is True, f"failed to restore primitive cull: {restore_cull}")
+            expect(restore_cull.get("ok") is True, f"failed to restore object cull: {restore_cull}")
+        else:
+            for mesh_index, primitive_index, cull_mode in original_culls:
+                restore_cull = api_post(
+                    base_url,
+                    "/controls/primitive",
+                    {
+                        "sceneIndex": cull_target_index,
+                        "meshIndex": mesh_index,
+                        "primitiveIndex": primitive_index,
+                        "cullMode": cull_mode,
+                    },
+                )
+                expect(restore_cull.get("ok") is True, f"failed to restore primitive cull: {restore_cull}")
 
     bootstrap = api_post(base_url, "/controls/bootstrap_tps", {"force": True})
     expect(bootstrap.get("ok") is True, f"bootstrap_tps failed: {bootstrap}")

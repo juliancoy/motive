@@ -224,7 +224,7 @@ public:
     void renameSceneItem(int index, const QString& name);
     void setSceneItemVisible(int index, bool visible);
     void deleteSceneItem(int index);
-    void setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode);
+    void setPrimitiveCullMode(int sceneIndex, int meshIndex, int primitiveIndex, const QString& cullMode, bool notify = true);
     void setSceneItemCullMode(int sceneIndex, const QString& cullMode);
     void setPrimitiveForceAlphaOne(int sceneIndex, int meshIndex, int primitiveIndex, bool enabled);
     void setCoordinatePlaneIndicatorsEnabled(bool enabled);

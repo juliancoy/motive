@@ -323,14 +323,17 @@ void Primitive::createTextureResources(const tinygltf::Model* model, const tinyg
                 if (material.alphaMode == "MASK")
                 {
                     alphaMode = PrimitiveAlphaMode::Mask;
+                    depthWriteEnabled = true;
                 }
                 else if (material.alphaMode == "BLEND")
                 {
                     alphaMode = PrimitiveAlphaMode::Blend;
+                    depthWriteEnabled = false;
                 }
                 else
                 {
                     alphaMode = PrimitiveAlphaMode::Opaque;
+                    depthWriteEnabled = true;
                 }
 
                 assignSharedTextureResources(this, shared);
@@ -903,14 +906,17 @@ bool Primitive::createTextureFromGLTF(const tinygltf::Model* model, const tinygl
     if (material.alphaMode == "MASK")
     {
         alphaMode = PrimitiveAlphaMode::Mask;
+        depthWriteEnabled = true;
     }
     else if (material.alphaMode == "BLEND")
     {
         alphaMode = PrimitiveAlphaMode::Blend;
+        depthWriteEnabled = false;
     }
     else
     {
         alphaMode = PrimitiveAlphaMode::Opaque;
+        depthWriteEnabled = true;
     }
 
     auto applyBaseColorFactor = [&](std::vector<uint8_t>& rgbaData, size_t pixelCount)

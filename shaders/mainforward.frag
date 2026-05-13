@@ -84,16 +84,18 @@ void main() {
 
     if (forceAlphaOne) {
         sampledColor.a = 1.0;
-    } else if (useColorOverride) {
-        sampledColor = vec4(objectUBO.colorOverride.rgb, 1.0);
     } else {
-        if (alphaMode == 1u && sampledColor.a < alphaCutoff) {
+        if ((alphaMode == 1u || (alphaMode == 2u && useColorOverride)) && sampledColor.a < alphaCutoff) {
             discard;
         }
 
-        if (alphaMode == 0u || alphaMode == 1u) {
+        if (alphaMode == 0u || alphaMode == 1u || (alphaMode == 2u && useColorOverride)) {
             sampledColor.a = 1.0;
         }
+    }
+
+    if (useColorOverride) {
+        sampledColor.rgb = objectUBO.colorOverride.rgb;
     }
 
     outColor = vec4(sampledColor.rgb * lighting, sampledColor.a);
