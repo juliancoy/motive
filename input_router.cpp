@@ -76,7 +76,9 @@ void InputRouter::handleKey(int key, int action)
         m_characterTarget->character.keyA = m_inputState.keysPressed[1];
         m_characterTarget->character.keyS = m_inputState.keysPressed[2];
         m_characterTarget->character.keyD = m_inputState.keysPressed[3];
+        m_characterTarget->character.keyQ = m_inputState.keysPressed[4];
         m_characterTarget->character.keyShift = m_inputState.sprintRequested;
+        m_characterTarget->character.phaseThroughWalls = m_inputState.keysPressed[4];
     }
 }
 
@@ -169,7 +171,9 @@ void InputRouter::clearSimulatedInput()
         m_characterTarget->character.keyA = false;
         m_characterTarget->character.keyS = false;
         m_characterTarget->character.keyD = false;
+        m_characterTarget->character.keyQ = false;
         m_characterTarget->character.keyShift = false;
+        m_characterTarget->character.phaseThroughWalls = false;
         m_characterTarget->setCharacterInput(glm::vec3(0.0f));
     }
 }
@@ -220,7 +224,9 @@ void InputRouter::updateForMode(float deltaTime,
             m_characterTarget->character.keyA = m_inputState.keysPressed[1];
             m_characterTarget->character.keyS = m_inputState.keysPressed[2];
             m_characterTarget->character.keyD = m_inputState.keysPressed[3];
+            m_characterTarget->character.keyQ = m_inputState.keysPressed[4];
             m_characterTarget->character.keyShift = m_inputState.sprintRequested;
+            m_characterTarget->character.phaseThroughWalls = m_inputState.keysPressed[4];
             m_characterTarget->setCharacterInput(inputDir);
 
             // Handle jump
@@ -244,7 +250,9 @@ void InputRouter::updateForMode(float deltaTime,
             m_characterTarget->character.keyA = false;
             m_characterTarget->character.keyS = false;
             m_characterTarget->character.keyD = false;
+            m_characterTarget->character.keyQ = false;
             m_characterTarget->character.keyShift = false;
+            m_characterTarget->character.phaseThroughWalls = false;
         }
     }
 
@@ -296,6 +304,8 @@ void InputRouter::clearInput()
         m_characterTarget->character.keyA = false;
         m_characterTarget->character.keyS = false;
         m_characterTarget->character.keyD = false;
+        m_characterTarget->character.keyQ = false;
         m_characterTarget->character.keyShift = false;
+        m_characterTarget->character.phaseThroughWalls = false;
     }
 }

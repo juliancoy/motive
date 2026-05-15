@@ -363,6 +363,8 @@ Model* modelForSceneIndex(Engine* engine, int sceneIndex)
     return model ? model.get() : nullptr;
 }
 
+bool pathLooksLikeEnvironmentScene(const QString& sourcePath);
+
 Model* firstControllableModel(Engine* engine)
 {
     if (!engine)
@@ -376,6 +378,33 @@ Model* firstControllableModel(Engine* engine)
             return model.get();
         }
     }
+    return nullptr;
+}
+
+Model* firstEnvironmentSurfaceModel(Engine* engine,
+                                    const QList<ViewportHostWidget::SceneItem>* entries = nullptr)
+{
+    if (!engine)
+    {
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < engine->models.size(); ++i)
+    {
+        Model* model = engine->models[i].get();
+        if (!model)
+        {
+            continue;
+        }
+
+        if (entries &&
+            static_cast<int>(i) < entries->size() &&
+            pathLooksLikeEnvironmentScene(entries->at(static_cast<int>(i)).sourcePath))
+        {
+            return model;
+        }
+    }
+
     return nullptr;
 }
 
@@ -2559,7 +2588,9 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
             other->character.keyA = false;
             other->character.keyS = false;
             other->character.keyD = false;
+            other->character.keyQ = false;
             other->character.keyShift = false;
+            other->character.phaseThroughWalls = false;
         }
     }
 
@@ -2592,7 +2623,9 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
         model->character.keyA = false;
         model->character.keyS = false;
         model->character.keyD = false;
+        model->character.keyQ = false;
         model->character.keyShift = false;
+        model->character.phaseThroughWalls = false;
     }
     
     // Character controllability should not directly mutate camera follow/mode state.
@@ -2830,6 +2863,7 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
                           environmentEntry.translation.z()),
                 environmentEntry.rotation,
                 environmentEntry.scale);
+            syncControllableCharacterTransformState(environmentIndex);
         }
     }
 
@@ -2841,6 +2875,7 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
                                                     entry.translation,
                                                     QVector3D(0.0f, 0.0f, 0.0f),
                                                     entry.scale);
+        syncControllableCharacterTransformState(nathanIndex);
         nathan = m_runtime->engine()->models[static_cast<size_t>(nathanIndex)].get();
         if (nathan)
         {
@@ -2856,6 +2891,7 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
                         QVector3D(translation.x(), translation.y() + bottomDelta, translation.z()),
                         QVector3D(0.0f, 0.0f, 0.0f),
                         entriesAfterRotation[nathanIndex].scale);
+                    syncControllableCharacterTransformState(nathanIndex);
                     nathan = m_runtime->engine()->models[static_cast<size_t>(nathanIndex)].get();
                 }
             }
@@ -2885,7 +2921,9 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
     nathan->character.keyA = false;
     nathan->character.keyS = false;
     nathan->character.keyD = false;
+    nathan->character.keyQ = false;
     nathan->character.keyShift = false;
+    nathan->character.phaseThroughWalls = false;
     nathan->character.comeToRestTimer = 0.0f;
     nathan->character.moveIntentGraceTimer = 0.0f;
     nathan->character.pendingRestPointLatch = false;
@@ -3222,6 +3260,7 @@ bool ViewportHostWidget::normalizeSceneScaleForMeters(float targetCharacterRadiu
         entries[i].translation *= scaleFactor;
         entries[i].scale *= scaleFactor;
         m_sceneController->updateSceneItemTransform(i, entries[i].translation, entries[i].rotation, entries[i].scale);
+        syncControllableCharacterTransformState(i);
     }
 
     QList<CameraConfig> configs = cameraConfigs();
@@ -4278,6 +4317,7 @@ void ViewportHostWidget::setSceneLight(const SceneLight& light)
 void ViewportHostWidget::updateSceneItemTransform(int index, const QVector3D& translation, const QVector3D& rotation, const QVector3D& scale)
 {
     m_sceneController->updateSceneItemTransform(index, translation, rotation, scale);
+    syncControllableCharacterTransformState(index);
     notifySceneChanged();
 }
 
@@ -4307,6 +4347,7 @@ bool ViewportHostWidget::alignSceneItemBottomToGround(int index, float groundY)
     }
 
     m_sceneController->updateSceneItemTransform(index, newTranslation, entries[index].rotation, entries[index].scale);
+    syncControllableCharacterTransformState(index);
     notifySceneChanged();
     return true;
 }
@@ -5134,7 +5175,10 @@ void ViewportHostWidget::renderFrame()
 
                     if (environmentSurface && environmentSurface != model.get())
                     {
-                        resolveCharacterWallsFromScene(*model, *environmentSurface);
+                        if (!model->character.phaseThroughWalls)
+                        {
+                            resolveCharacterWallsFromScene(*model, *environmentSurface);
+                        }
                     }
                 }
                 else if (physicsWorld && model->getPhysicsBody() && couplingUsesKinematicBody(*model))
@@ -5151,6 +5195,17 @@ void ViewportHostWidget::renderFrame()
                                                      entry.animationPlaying,
                                                      entry.animationLoop,
                                                      entry.animationSpeed);
+                }
+                if (model->character.isControllable && model->character.phaseThroughWalls)
+                {
+                    model->setPaintOverride(true, glm::vec3(1.0f, 0.15f, 0.15f));
+                }
+                else
+                {
+                    model->setPaintOverride(entry.paintOverrideEnabled,
+                                            glm::vec3(entry.paintOverrideColor.x(),
+                                                      entry.paintOverrideColor.y(),
+                                                      entry.paintOverrideColor.z()));
                 }
                 model->updateAnimation(deltaSeconds);
             }
@@ -5222,6 +5277,74 @@ void ViewportHostWidget::notifySceneChanged()
             m_sceneChangedCallback(sceneItems());
         }
     });
+}
+
+void ViewportHostWidget::syncControllableCharacterTransformState(int sceneIndex)
+{
+    constexpr float kMaxStepUp = 0.45f;
+    constexpr float kGroundSnapTolerance = 0.08f;
+
+    if (!m_runtime || !m_runtime->engine() ||
+        sceneIndex < 0 ||
+        sceneIndex >= static_cast<int>(m_runtime->engine()->models.size()))
+    {
+        return;
+    }
+
+    auto& model = m_runtime->engine()->models[static_cast<size_t>(sceneIndex)];
+    if (!model || !model->character.isControllable)
+    {
+        return;
+    }
+
+    model->recomputeBounds();
+
+    const auto& entries = m_sceneController->loadedEntries();
+    Model* environmentSurface = firstEnvironmentSurfaceModel(m_runtime->engine(), &entries);
+    const glm::vec3 origin = glm::vec3(model->worldTransform[3]);
+    const float footOffset = std::max(0.0f, origin.y - model->boundsMinWorld.y);
+
+    float resolvedGroundHeight = origin.y;
+    bool grounded = true;
+    bool usedEnvironmentSupport = false;
+
+    if (environmentSurface && environmentSurface != model.get())
+    {
+        const float maxSurfaceY = model->boundsMinWorld.y + kMaxStepUp;
+        float surfaceY = 0.0f;
+        if (sampleModelSurfaceYAtXZ(*environmentSurface,
+                                    glm::vec2(origin.x, origin.z),
+                                    maxSurfaceY,
+                                    surfaceY))
+        {
+            usedEnvironmentSupport = true;
+            resolvedGroundHeight = std::max(0.0f, surfaceY) + footOffset;
+            grounded = std::abs(origin.y - resolvedGroundHeight) <= kGroundSnapTolerance ||
+                       origin.y <= resolvedGroundHeight + 0.001f;
+        }
+    }
+
+    model->character.groundHeight = resolvedGroundHeight;
+    model->character.velocity.y = 0.0f;
+    model->character.isGrounded = grounded;
+    model->character.wasGroundedLastFrame = grounded;
+    model->character.jumpRequested = false;
+    model->character.airborneTimer = 0.0f;
+    model->character.lastAirborneVerticalVelocity = 0.0f;
+
+    if (grounded || !usedEnvironmentSupport)
+    {
+        model->character.jumpStartedFromInput = false;
+        model->character.jumpPhase = Model::CharacterController::JumpPhase::None;
+        model->character.jumpPhaseTimer = 0.0f;
+        if (!model->character.keyW &&
+            !model->character.keyA &&
+            !model->character.keyS &&
+            !model->character.keyD)
+        {
+            model->character.currentAnimState = Model::CharacterController::AnimState::Idle;
+        }
+    }
 }
 
 void ViewportHostWidget::applySceneLightToRuntime()

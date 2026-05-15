@@ -656,6 +656,7 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
             physicsBody->applyCentralImpulse(glm::vec3(0, character.jumpSpeed * physicsBody->getMass(), 0));
             character.jumpRequested = false;
             character.isGrounded = false;
+            character.jumpStartedFromInput = true;
             character.jumpPhase = CharacterController::JumpPhase::Start;
             character.jumpPhaseTimer = character.jumpStartMinDuration;
             character.currentAnimState = CharacterController::AnimState::Jump;
@@ -669,6 +670,16 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
             : character.moveSpeed;
         glm::vec3 airControl = character.inputDir * targetMoveSpeed * 0.1f;
         physicsBody->applyCentralForce(airControl * physicsBody->getMass());
+    }
+
+    if (character.isGrounded)
+    {
+        character.airborneTimer = 0.0f;
+    }
+    else
+    {
+        character.airborneTimer += deltaTime;
+        character.lastAirborneVerticalVelocity = velocity.y;
     }
     
     // Sync transform from physics to model

@@ -104,7 +104,9 @@ public:
         bool keyA = false;
         bool keyS = false;
         bool keyD = false;
+        bool keyQ = false;
         bool keyShift = false;
+        bool phaseThroughWalls = false;
         
         // Animation state
         enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
@@ -183,6 +185,9 @@ public:
         float jumpFallVelocityThreshold = -0.5f;
         float jumpApexVelocityThreshold = 0.5f;
         float jumpPhaseTimer = 0.0f;
+        float airborneTimer = 0.0f;
+        float lastAirborneVerticalVelocity = 0.0f;
+        bool jumpStartedFromInput = false;
         float proceduralIdleTime = 0.0f;
         float proceduralJumpTime = 0.0f;
         bool wasGroundedLastFrame = true;

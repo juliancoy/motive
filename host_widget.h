@@ -357,6 +357,7 @@ private:
     void setFocusedViewportIndex(int index);
     void setCharacterControlState(int sceneIndex, bool enabled, bool repositionForCharacterMode);
     void ensureFollowCamerasForAllSceneItems();
+    void syncControllableCharacterTransformState(int sceneIndex);
     void captureMotionDebugFrame(float dt);
     void updateMotionDebugOverlay();
     void updateCameraDirectionIndicator();

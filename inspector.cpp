@@ -226,6 +226,10 @@ void MainWindowShell::configureElementInspectorForSelection(int nodeType,
 void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, bool focusContextTab)
 {
     m_updatingInspector = true;
+    if (m_viewportHost)
+    {
+        m_sceneItems = m_viewportHost->sceneItems();
+    }
     const int row = currentItem ? currentItem->data(0, Qt::UserRole).toInt() : -1;
     const int meshIndex = currentItem ? currentItem->data(0, Qt::UserRole + 1).toInt() : -1;
     const int primitiveIndex = currentItem ? currentItem->data(0, Qt::UserRole + 2).toInt() : -1;

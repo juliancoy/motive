@@ -239,8 +239,21 @@ void Model::updateCharacterAnimationSemanticState(float dt)
         if (character.jumpPhase == CharacterController::JumpPhase::None ||
             character.jumpPhase == CharacterController::JumpPhase::Land)
         {
-            character.jumpPhase = CharacterController::JumpPhase::Start;
-            character.jumpPhaseTimer = character.jumpStartMinDuration;
+            if (character.jumpStartedFromInput)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::Start;
+                character.jumpPhaseTimer = character.jumpStartMinDuration;
+            }
+            else if (character.velocity.y > character.jumpApexVelocityThreshold)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::Apex;
+                character.jumpPhaseTimer = 0.0f;
+            }
+            else
+            {
+                character.jumpPhase = CharacterController::JumpPhase::Fall;
+                character.jumpPhaseTimer = 0.0f;
+            }
         }
 
         if (character.jumpPhase == CharacterController::JumpPhase::Start)
@@ -266,7 +279,11 @@ void Model::updateCharacterAnimationSemanticState(float dt)
             character.jumpPhase != CharacterController::JumpPhase::None)
         {
             character.jumpPhase = CharacterController::JumpPhase::Land;
-            character.jumpPhaseTimer = character.jumpLandMinDuration;
+            const float impactSpeed = std::max(0.0f, -character.lastAirborneVerticalVelocity);
+            const float landingDuration = character.jumpLandMinDuration +
+                                          std::min(0.14f, impactSpeed * 0.02f);
+            character.jumpPhaseTimer = landingDuration;
+            character.jumpStartedFromInput = false;
         }
         else if (character.jumpPhase == CharacterController::JumpPhase::Land)
         {
@@ -280,6 +297,11 @@ void Model::updateCharacterAnimationSemanticState(float dt)
                  character.jumpPhase != CharacterController::JumpPhase::Land)
         {
             character.jumpPhase = CharacterController::JumpPhase::None;
+        }
+
+        if (character.jumpPhase == CharacterController::JumpPhase::None)
+        {
+            character.jumpStartedFromInput = false;
         }
     }
     character.wasGroundedLastFrame = character.isGrounded;
@@ -800,6 +822,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         character.velocity.y = character.jumpSpeed;
         character.isGrounded = false;
         character.jumpRequested = false;
+        character.jumpStartedFromInput = true;
         character.jumpPhase = CharacterController::JumpPhase::Start;
         character.jumpPhaseTimer = character.jumpStartMinDuration;
         character.currentAnimState = CharacterController::AnimState::Jump;
@@ -826,10 +849,13 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         currentPos.y = character.groundHeight;
         character.velocity.y = 0.0f;
         character.isGrounded = true;
+        character.airborneTimer = 0.0f;
     }
     else
     {
         character.isGrounded = false;
+        character.airborneTimer += dt;
+        character.lastAirborneVerticalVelocity = character.velocity.y;
     }
 
     auto normalizeAngle = [](float angle) -> float {
@@ -937,6 +963,42 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 }
             }
             return "";
+        };
+
+        auto lowerCopy = [](std::string value) -> std::string {
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        };
+
+        auto findClipExact = [&](const std::vector<std::string>& searchTerms) -> std::string {
+            for (const auto& term : searchTerms)
+            {
+                if (term.empty())
+                {
+                    continue;
+                }
+                const std::string loweredTerm = lowerCopy(term);
+                for (size_t i = 0; i < animationClips.size(); ++i)
+                {
+                    const auto& name = animationClips[i].name;
+                    if (lowerCopy(name) == loweredTerm)
+                    {
+                        return name;
+                    }
+                }
+            }
+            return "";
+        };
+
+        auto findPhaseClip = [&](const std::vector<std::string>& exactTerms,
+                                 const std::vector<std::string>& broadTerms) -> std::string {
+            std::string clip = findClipExact(exactTerms);
+            if (!clip.empty())
+            {
+                return clip;
+            }
+            return findClip(broadTerms);
         };
         
         switch (targetState)
@@ -1053,15 +1115,20 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             case CharacterController::AnimState::Jump:
                 if (character.jumpPhase == CharacterController::JumpPhase::Start)
                 {
-                    targetClip = findClip({
-                        character.animJump,
-                        "jump_start", "jump_takeoff", "takeoff", "jump_up"
+                    targetClip = findPhaseClip({
+                        "jump_takeoff", "jump_start", "takeoff", "jump_up"
+                    }, {
+                        "jump_takeoff", "jump_start", "takeoff", "jump_up",
+                        character.animJump
                     });
                     targetLoop = false;
                 }
                 else if (character.jumpPhase == CharacterController::JumpPhase::Land)
                 {
-                    targetClip = findClip({
+                    targetClip = findPhaseClip({
+                        character.animLand,
+                        "jump_land", "landing", "land_to_idle"
+                    }, {
                         character.animLand,
                         "jump_land", "landing", "land", "land_to_idle"
                     });
@@ -1069,7 +1136,10 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 }
                 else if (character.jumpPhase == CharacterController::JumpPhase::Fall)
                 {
-                    targetClip = findClip({
+                    targetClip = findPhaseClip({
+                        character.animFall,
+                        "jump_fall", "fall_loop", "falling"
+                    }, {
                         character.animFall,
                         "jump_fall", "fall_loop", "falling", "fall"
                     });
@@ -1077,10 +1147,28 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 }
                 else
                 {
-                    targetClip = findClip({
-                        "jump_apex", "jump_loop", character.animJump, "jump",
-                        "Jumping", "JUMPING", "jumping", "Jump", "JUMP"
+                    targetClip = findPhaseClip({
+                        "jump_apex", "jump_loop"
+                    }, {
+                        "jump_apex", "jump_loop"
                     });
+                    if (targetClip.empty())
+                    {
+                        targetClip = findPhaseClip({
+                            character.animFall,
+                            "jump_fall", "fall_loop", "falling"
+                        }, {
+                            character.animFall,
+                            "jump_fall", "fall_loop", "falling", "fall"
+                        });
+                    }
+                    if (targetClip.empty())
+                    {
+                        targetClip = findClip({
+                            character.animJump, "jump",
+                            "Jumping", "JUMPING", "jumping", "Jump", "JUMP"
+                        });
+                    }
                     targetLoop = true;
                 }
                 break;

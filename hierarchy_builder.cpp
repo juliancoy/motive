@@ -465,6 +465,12 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
         {
             const auto& model = m_runtime.engine()->models[static_cast<size_t>(sceneIndex)];
+            const glm::vec3 runtimeTranslation = glm::vec3(model->worldTransform[3]);
+            const glm::vec3 runtimeFollowAnchor = model->getFollowAnchorPosition();
+            sceneItem.insert(QStringLiteral("runtimeTranslation"),
+                             QJsonArray{runtimeTranslation.x, runtimeTranslation.y, runtimeTranslation.z});
+            sceneItem.insert(QStringLiteral("runtimeFollowAnchor"),
+                             QJsonArray{runtimeFollowAnchor.x, runtimeFollowAnchor.y, runtimeFollowAnchor.z});
             sceneItem.insert(QStringLiteral("boundsCenter"), QJsonArray{model->boundsCenter.x, model->boundsCenter.y, model->boundsCenter.z});
             sceneItem.insert(QStringLiteral("boundsRadius"), model->boundsRadius);
             sceneItem.insert(QStringLiteral("boundsMin"), QJsonArray{model->boundsMinWorld.x, model->boundsMinWorld.y, model->boundsMinWorld.z});
@@ -479,7 +485,9 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("keyA"), character.keyA);
             sceneItem.insert(QStringLiteral("keyS"), character.keyS);
             sceneItem.insert(QStringLiteral("keyD"), character.keyD);
+            sceneItem.insert(QStringLiteral("keyQ"), character.keyQ);
             sceneItem.insert(QStringLiteral("keyShift"), character.keyShift);
+            sceneItem.insert(QStringLiteral("phaseThroughWalls"), character.phaseThroughWalls);
             sceneItem.insert(QStringLiteral("inputDir"), QJsonArray{character.inputDir.x, character.inputDir.y, character.inputDir.z});
             sceneItem.insert(QStringLiteral("velocity"), QJsonArray{character.velocity.x, character.velocity.y, character.velocity.z});
             sceneItem.insert(QStringLiteral("characterMoveSpeed"), character.moveSpeed);
