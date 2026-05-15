@@ -17,6 +17,7 @@ struct InputState
     bool keysPressed[6] = {false, false, false, false, false, false}; // W,A,S,D,Q,E
     glm::vec3 inputDir = glm::vec3(0.0f);
     bool jumpRequested = false;
+    bool sprintRequested = false;
 };
 
 class InputRouter
@@ -44,7 +45,10 @@ public:
 
     bool isCharacterInputActive() const { return m_isCharacterInputActive; }
 
-    void setSimulatedInput(const std::array<bool, 6>& keys, bool jumpRequested, float durationSeconds);
+    void setSimulatedInput(const std::array<bool, 6>& keys,
+                           bool jumpRequested,
+                           bool sprintRequested,
+                           float durationSeconds);
     void clearSimulatedInput();
 
     void clearInput();
@@ -57,6 +61,7 @@ private:
     std::array<bool, 6> m_simulatedKeys = {false, false, false, false, false, false};
     bool m_simulatedInputActive = false;
     bool m_simulatedJumpRequested = false;
+    bool m_simulatedSprintRequested = false;
     std::chrono::steady_clock::time_point m_simulatedInputExpiry = std::chrono::steady_clock::time_point::min();
 };
 

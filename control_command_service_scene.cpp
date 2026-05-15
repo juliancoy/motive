@@ -579,6 +579,9 @@ bool ControlCommandService::handleCharacter(const QJsonObject& body, QJsonObject
         body.contains(QStringLiteral("keyA")) ||
         body.contains(QStringLiteral("keyS")) ||
         body.contains(QStringLiteral("keyD")) ||
+        body.contains(QStringLiteral("keyShift")) ||
+        body.contains(QStringLiteral("shift")) ||
+        body.contains(QStringLiteral("sprint")) ||
         body.contains(QStringLiteral("jump")) ||
         body.contains(QStringLiteral("durationMs")) ||
         body.contains(QStringLiteral("move"));
@@ -588,6 +591,10 @@ bool ControlCommandService::handleCharacter(const QJsonObject& body, QJsonObject
         bool keyA = body.value(QStringLiteral("keyA")).toBool(false);
         bool keyS = body.value(QStringLiteral("keyS")).toBool(false);
         bool keyD = body.value(QStringLiteral("keyD")).toBool(false);
+        const bool sprint =
+            body.value(QStringLiteral("sprint")).toBool(
+                body.value(QStringLiteral("shift")).toBool(
+                    body.value(QStringLiteral("keyShift")).toBool(false)));
         const bool jump = body.value(QStringLiteral("jump")).toBool(false);
         const int durationMs = body.value(QStringLiteral("durationMs")).toInt(250);
 
@@ -600,12 +607,13 @@ bool ControlCommandService::handleCharacter(const QJsonObject& body, QJsonObject
             keyD = move.contains(QStringLiteral("D"));
         }
 
-        const bool injected = viewport->injectCharacterInput(sceneIndex, keyW, keyA, keyS, keyD, jump, durationMs);
+        const bool injected = viewport->injectCharacterInput(sceneIndex, keyW, keyA, keyS, keyD, jump, sprint, durationMs);
         result.insert(QStringLiteral("inputInjected"), injected);
         result.insert(QStringLiteral("keyW"), keyW);
         result.insert(QStringLiteral("keyA"), keyA);
         result.insert(QStringLiteral("keyS"), keyS);
         result.insert(QStringLiteral("keyD"), keyD);
+        result.insert(QStringLiteral("sprint"), sprint);
         result.insert(QStringLiteral("jump"), jump);
         result.insert(QStringLiteral("durationMs"), durationMs);
     }
@@ -642,6 +650,10 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
         const QString type = body.value(QStringLiteral("type")).toString().trimmed().toLower();
         if (type == QStringLiteral("directional") ||
             type == QStringLiteral("ambient") ||
+            type == QStringLiteral("point") ||
+            type == QStringLiteral("spot") ||
+            type == QStringLiteral("area") ||
+            type == QStringLiteral("sun") ||
             type == QStringLiteral("hemispherical"))
         {
             light.type = type;
@@ -649,7 +661,7 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
         else
         {
             result.insert(QStringLiteral("error"),
-                          QStringLiteral("type must be one of: directional, ambient, hemispherical"));
+                          QStringLiteral("type must be one of: directional, ambient, point, spot, area, sun, hemispherical"));
             return false;
         }
     }
@@ -658,6 +670,60 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
     {
         light.brightness = static_cast<float>(body.value(QStringLiteral("brightness")).toDouble(light.brightness));
     }
+
+    QVector3D proxyPosition = light.editorProxyPosition;
+    if (body.contains(QStringLiteral("editorProxyPosition")) || body.contains(QStringLiteral("position")))
+    {
+        const QJsonArray value = body.contains(QStringLiteral("editorProxyPosition"))
+            ? body.value(QStringLiteral("editorProxyPosition")).toArray()
+            : body.value(QStringLiteral("position")).toArray();
+        if (value.size() != 3)
+        {
+            result.insert(QStringLiteral("error"), QStringLiteral("editorProxyPosition must be an array of 3 numbers"));
+            return false;
+        }
+        proxyPosition = QVector3D(
+            static_cast<float>(value.at(0).toDouble(proxyPosition.x())),
+            static_cast<float>(value.at(1).toDouble(proxyPosition.y())),
+            static_cast<float>(value.at(2).toDouble(proxyPosition.z())));
+    }
+    if (body.contains(QStringLiteral("editorProxyPositionX")) || body.contains(QStringLiteral("positionX")))
+    {
+        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionX"))
+            ? body.value(QStringLiteral("editorProxyPositionX"))
+            : body.value(QStringLiteral("positionX"));
+        proxyPosition.setX(static_cast<float>(value.toDouble(proxyPosition.x())));
+    }
+    if (body.contains(QStringLiteral("editorProxyPositionY")) || body.contains(QStringLiteral("positionY")))
+    {
+        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionY"))
+            ? body.value(QStringLiteral("editorProxyPositionY"))
+            : body.value(QStringLiteral("positionY"));
+        proxyPosition.setY(static_cast<float>(value.toDouble(proxyPosition.y())));
+    }
+    if (body.contains(QStringLiteral("editorProxyPositionZ")) || body.contains(QStringLiteral("positionZ")))
+    {
+        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionZ"))
+            ? body.value(QStringLiteral("editorProxyPositionZ"))
+            : body.value(QStringLiteral("positionZ"));
+        proxyPosition.setZ(static_cast<float>(value.toDouble(proxyPosition.z())));
+    }
+    if (body.contains(QStringLiteral("translation")) || body.contains(QStringLiteral("editorTranslation")))
+    {
+        const QJsonArray value = body.contains(QStringLiteral("editorTranslation"))
+            ? body.value(QStringLiteral("editorTranslation")).toArray()
+            : body.value(QStringLiteral("translation")).toArray();
+        if (value.size() != 3)
+        {
+            result.insert(QStringLiteral("error"), QStringLiteral("editorTranslation must be an array of 3 numbers"));
+            return false;
+        }
+        proxyPosition = QVector3D(
+            static_cast<float>(value.at(0).toDouble(proxyPosition.x())),
+            static_cast<float>(value.at(1).toDouble(proxyPosition.y())),
+            static_cast<float>(value.at(2).toDouble(proxyPosition.z())));
+    }
+    light.editorProxyPosition = proxyPosition;
 
     QVector3D color = light.color;
     if (body.contains(QStringLiteral("color")))
@@ -692,6 +758,8 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
     const auto applied = viewport->sceneLight();
     result.insert(QStringLiteral("exists"), applied.exists);
     result.insert(QStringLiteral("type"), applied.type);
+    result.insert(QStringLiteral("editorProxyPosition"), QJsonArray{applied.editorProxyPosition.x(), applied.editorProxyPosition.y(), applied.editorProxyPosition.z()});
+    result.insert(QStringLiteral("position"), QJsonArray{applied.editorProxyPosition.x(), applied.editorProxyPosition.y(), applied.editorProxyPosition.z()});
     result.insert(QStringLiteral("brightness"), applied.brightness);
     result.insert(QStringLiteral("color"), QJsonArray{applied.color.x(), applied.color.y(), applied.color.z()});
     return true;

@@ -984,6 +984,14 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         return jsonResponse(200, compactJson(payload));
     }
 
+    if (path == "/profile/ui_tree")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.uiTree;
+        payload.insert(QStringLiteral("ok"), true);
+        return jsonResponse(200, compactJson(payload));
+    }
+
     if (path == "/profile/inspector")
     {
         const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);

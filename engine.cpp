@@ -228,6 +228,24 @@ void Engine::setPhysicsEngine(motive::PhysicsEngineType type)
     std::cout << "[Engine] Switched physics engine to: " << motive::PhysicsFactory::getBackendName(type) << std::endl;
 }
 
+void Engine::applyPhysicsSettings(const motive::PhysicsSettings& settings)
+{
+    const bool engineChanged = physicsSettings.engineType != settings.engineType;
+
+    if (engineChanged)
+    {
+        setPhysicsEngine(settings.engineType);
+    }
+
+    physicsSettings = settings;
+
+    if (physicsWorld)
+    {
+        physicsWorld->setGravity(physicsSettings.gravity);
+        physicsWorld->setDebugDrawEnabled(physicsSettings.debugDraw);
+    }
+}
+
 // Image to buffer copy for frame capture
 void Engine::copyImageToBuffer(VkImage srcImage, VkBuffer dstBuffer, 
                               uint32_t width, uint32_t height, 

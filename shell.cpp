@@ -16,7 +16,10 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QAbstractButton>
+#include <QAbstractSpinBox>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -27,6 +30,7 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -250,6 +254,137 @@ QJsonObject splitterMetrics(const QSplitter* splitter)
     return object;
 }
 
+QJsonObject widgetStateObject(const QWidget* widget)
+{
+    QJsonObject state;
+    if (!widget)
+    {
+        return state;
+    }
+
+    if (const auto* label = qobject_cast<const QLabel*>(widget))
+    {
+        state.insert(QStringLiteral("text"), label->text());
+    }
+    if (const auto* lineEdit = qobject_cast<const QLineEdit*>(widget))
+    {
+        state.insert(QStringLiteral("text"), lineEdit->text());
+        state.insert(QStringLiteral("placeholderText"), lineEdit->placeholderText());
+        state.insert(QStringLiteral("readOnly"), lineEdit->isReadOnly());
+    }
+    if (const auto* abstractButton = qobject_cast<const QAbstractButton*>(widget))
+    {
+        state.insert(QStringLiteral("text"), abstractButton->text());
+        state.insert(QStringLiteral("checked"), abstractButton->isChecked());
+        state.insert(QStringLiteral("checkable"), abstractButton->isCheckable());
+    }
+    if (const auto* combo = qobject_cast<const QComboBox*>(widget))
+    {
+        state.insert(QStringLiteral("currentIndex"), combo->currentIndex());
+        state.insert(QStringLiteral("currentText"), combo->currentText());
+        state.insert(QStringLiteral("currentData"), combo->currentData().toString());
+        state.insert(QStringLiteral("count"), combo->count());
+        QJsonArray items;
+        for (int i = 0; i < combo->count(); ++i)
+        {
+            items.append(QJsonObject{
+                {QStringLiteral("index"), i},
+                {QStringLiteral("text"), combo->itemText(i)},
+                {QStringLiteral("data"), combo->itemData(i).toString()}
+            });
+        }
+        state.insert(QStringLiteral("items"), items);
+    }
+    if (const auto* spin = qobject_cast<const QSpinBox*>(widget))
+    {
+        state.insert(QStringLiteral("value"), spin->value());
+        state.insert(QStringLiteral("minimum"), spin->minimum());
+        state.insert(QStringLiteral("maximum"), spin->maximum());
+        state.insert(QStringLiteral("singleStep"), spin->singleStep());
+    }
+    if (const auto* spin = qobject_cast<const QDoubleSpinBox*>(widget))
+    {
+        state.insert(QStringLiteral("value"), spin->value());
+        state.insert(QStringLiteral("minimum"), spin->minimum());
+        state.insert(QStringLiteral("maximum"), spin->maximum());
+        state.insert(QStringLiteral("singleStep"), spin->singleStep());
+        state.insert(QStringLiteral("decimals"), spin->decimals());
+    }
+    if (const auto* tabs = qobject_cast<const QTabWidget*>(widget))
+    {
+        state.insert(QStringLiteral("currentIndex"), tabs->currentIndex());
+        state.insert(QStringLiteral("currentTabLabel"),
+                     tabs->currentIndex() >= 0 ? tabs->tabText(tabs->currentIndex()) : QString());
+        state.insert(QStringLiteral("count"), tabs->count());
+        QJsonArray tabNames;
+        QJsonArray tabVisible;
+        for (int i = 0; i < tabs->count(); ++i)
+        {
+            tabNames.append(tabs->tabText(i));
+            tabVisible.append(tabs->isTabVisible(i));
+        }
+        state.insert(QStringLiteral("tabNames"), tabNames);
+        state.insert(QStringLiteral("tabVisible"), tabVisible);
+    }
+    if (const auto* tree = qobject_cast<const QTreeWidget*>(widget))
+    {
+        state.insert(QStringLiteral("topLevelItemCount"), tree->topLevelItemCount());
+        state.insert(QStringLiteral("columnCount"), tree->columnCount());
+        if (const QTreeWidgetItem* current = tree->currentItem())
+        {
+            state.insert(QStringLiteral("currentItemText"), current->text(0));
+            state.insert(QStringLiteral("currentItemSceneIndex"), current->data(0, Qt::UserRole).toInt());
+            state.insert(QStringLiteral("currentItemNodeType"), current->data(0, Qt::UserRole + 3).toInt());
+        }
+    }
+    if (const auto* splitter = qobject_cast<const QSplitter*>(widget))
+    {
+        QJsonArray sizes;
+        for (const int value : splitter->sizes())
+        {
+            sizes.append(value);
+        }
+        state.insert(QStringLiteral("orientation"),
+                     splitter->orientation() == Qt::Horizontal ? QStringLiteral("horizontal")
+                                                               : QStringLiteral("vertical"));
+        state.insert(QStringLiteral("handleWidth"), splitter->handleWidth());
+        state.insert(QStringLiteral("childrenCollapsible"), splitter->childrenCollapsible());
+        state.insert(QStringLiteral("opaqueResize"), splitter->opaqueResize());
+        state.insert(QStringLiteral("sizes"), sizes);
+    }
+    return state;
+}
+
+QJsonObject widgetTreeObject(const QWidget* widget)
+{
+    QJsonObject object = widgetMetrics(widget);
+    if (!widget)
+    {
+        return object;
+    }
+
+    const QJsonObject state = widgetStateObject(widget);
+    if (!state.isEmpty())
+    {
+        object.insert(QStringLiteral("state"), state);
+    }
+
+    QJsonArray children;
+    const QObjectList childObjects = widget->children();
+    for (QObject* childObject : childObjects)
+    {
+        QWidget* childWidget = qobject_cast<QWidget*>(childObject);
+        if (!childWidget || childWidget->parentWidget() != widget)
+        {
+            continue;
+        }
+        children.append(widgetTreeObject(childWidget));
+    }
+    object.insert(QStringLiteral("children"), children);
+    object.insert(QStringLiteral("childCount"), children.size());
+    return object;
+}
+
 QJsonArray intListToJsonArray(const QList<int>& values)
 {
     QJsonArray array;
@@ -345,11 +480,26 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             }
             m_viewportHost->createSceneLight();
             refreshHierarchy(m_viewportHost->sceneItems());
-            QList<QTreeWidgetItem*> matches = m_hierarchyTree->findItems(QStringLiteral("Directional Light"), Qt::MatchExactly | Qt::MatchRecursive);
-            if (!matches.isEmpty())
+            QTreeWidgetItem* lightItem = nullptr;
+            const QList<QTreeWidgetItem*> allItems =
+                m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+            for (QTreeWidgetItem* candidate : allItems)
             {
-                m_hierarchyTree->setCurrentItem(matches.front());
-                updateInspectorForSelection(matches.front(), true);
+                if (!candidate)
+                {
+                    continue;
+                }
+                const int nodeType = candidate->data(0, Qt::UserRole + 3).toInt();
+                if (nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Light))
+                {
+                    lightItem = candidate;
+                    break;
+                }
+            }
+            if (lightItem)
+            {
+                m_hierarchyTree->setCurrentItem(lightItem);
+                updateInspectorForSelection(lightItem, true);
             }
             saveProjectState();
         };
@@ -477,6 +627,24 @@ MainWindowShell::MainWindowShell(QWidget* parent)
                 }
                 refreshHierarchy(m_viewportHost->sceneItems());
                 saveProjectState();
+            }
+            return;
+        }
+
+        if (nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Light))
+        {
+            if (!m_viewportHost)
+            {
+                return;
+            }
+
+            QMenu menu(this);
+            QAction* focusAction = menu.addAction(QStringLiteral("Focus"));
+            QAction* chosen = menu.exec(m_hierarchyTree->mapToGlobal(pos));
+            if (chosen == focusAction)
+            {
+                m_viewportHost->focusSceneLight();
+                updateInspectorForSelection(item);
             }
             return;
         }
@@ -828,6 +996,8 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     auto* animationControlsLayout = new QVBoxLayout(m_animationControlsWidget);
     animationControlsLayout->setContentsMargins(0, 0, 0, 0);
     animationControlsLayout->setSpacing(6);
+    m_animationClipSummaryValue = new QLabel(QStringLiteral("-"), m_animationControlsWidget);
+    m_animationClipSummaryValue->setWordWrap(true);
     m_animationClipCombo = new QComboBox(m_animationControlsWidget);
     m_animationPlayingCheck = new QCheckBox(QStringLiteral("Playing"), m_animationControlsWidget);
     m_animationLoopCheck = new QCheckBox(QStringLiteral("Loop"), m_animationControlsWidget);
@@ -843,6 +1013,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_animationTrimEndSpin->setValue(1.0);
     m_animationTrimEndSpin->setToolTip(
         QStringLiteral("Normalized clip end [0..1]. Values are relative to the active animation clip duration."));
+    m_characterIdleClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterComeToRestClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterWalkForwardClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterWalkBackwardClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterWalkLeftClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterWalkRightClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterRunClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterJumpClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterFallClipCombo = new QComboBox(m_animationControlsWidget);
+    m_characterLandClipCombo = new QComboBox(m_animationControlsWidget);
     auto* animationFlagsWidget = new QWidget(m_animationControlsWidget);
     auto* animationFlagsLayout = new QHBoxLayout(animationFlagsWidget);
     animationFlagsLayout->setContentsMargins(0, 0, 0, 0);
@@ -866,6 +1046,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Partial Ragdoll"), QStringLiteral("PartialRagdoll"));
     m_animationPhysicsCouplingCombo->addItem(QStringLiteral("Active Ragdoll"), QStringLiteral("ActiveRagdoll"));
     
+    animationControlsLayout->addWidget(m_animationClipSummaryValue);
     animationControlsLayout->addWidget(m_animationClipCombo);
     animationControlsLayout->addWidget(animationFlagsWidget);
     animationControlsLayout->addWidget(animationSpeedWidget);
@@ -880,18 +1061,34 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     animationTrimLayout->addWidget(m_animationTrimEndSpin);
     animationTrimLayout->addStretch(1);
     animationControlsLayout->addWidget(animationTrimWidget);
-    animationControlsLayout->addWidget(new QLabel(QStringLiteral("Physics Coupling:"), m_animationControlsWidget));
-    animationControlsLayout->addWidget(m_animationPhysicsCouplingCombo);
+    m_characterBindingsWidget = new QWidget(inspectorPanel);
+    auto* characterBindingLayout = new QFormLayout(m_characterBindingsWidget);
+    characterBindingLayout->setContentsMargins(0, 6, 0, 0);
+    characterBindingLayout->addRow(QStringLiteral("Idle"), m_characterIdleClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Stop / Rest"), m_characterComeToRestClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Walk Forward"), m_characterWalkForwardClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Walk Backward"), m_characterWalkBackwardClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Strafe Left"), m_characterWalkLeftClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Strafe Right"), m_characterWalkRightClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Run"), m_characterRunClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Jump Takeoff"), m_characterJumpClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Air / Fall"), m_characterFallClipCombo);
+    characterBindingLayout->addRow(QStringLiteral("Landing"), m_characterLandClipCombo);
 
     m_lightTypeCombo = new QComboBox(inspectorPanel);
     m_lightTypeCombo->addItem(QStringLiteral("Directional"), QStringLiteral("directional"));
     m_lightTypeCombo->addItem(QStringLiteral("Ambient"), QStringLiteral("ambient"));
+    m_lightTypeCombo->addItem(QStringLiteral("Point"), QStringLiteral("point"));
+    m_lightTypeCombo->addItem(QStringLiteral("Spot"), QStringLiteral("spot"));
+    m_lightTypeCombo->addItem(QStringLiteral("Area"), QStringLiteral("area"));
+    m_lightTypeCombo->addItem(QStringLiteral("Sun"), QStringLiteral("sun"));
     m_lightTypeCombo->addItem(QStringLiteral("Hemispherical"), QStringLiteral("hemispherical"));
     m_lightBrightnessSpin = createSpinBox(inspectorPanel, 0.0, 100.0, 0.01);
     m_lightColorWidget = new QWidget(inspectorPanel);
     m_lightColorWidget->setFixedSize(60, 24);
     m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: #ffffff; border: 1px solid #888;"));
     auto* lightColorButton = new QPushButton(QStringLiteral("Change"), inspectorPanel);
+    m_lightFocusButton = new QPushButton(QStringLiteral("Focus"), inspectorPanel);
     m_lightColorContainer = new QWidget(inspectorPanel);
     auto* lightColorLayout = new QHBoxLayout(m_lightColorContainer);
     lightColorLayout->setContentsMargins(0, 0, 0, 0);
@@ -1065,6 +1262,18 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_characterTurnResponsivenessSpin = createSpinBox(inspectorPanel, 0.1, 50.0, 0.1);
     m_characterTurnResponsivenessSpin->setValue(10.0);
     m_characterTurnResponsivenessSpin->setToolTip(QStringLiteral("How quickly this target rotates to face movement direction."));
+    m_characterMoveSpeedSpin = createSpinBox(inspectorPanel, 0.0, 50.0, 0.1);
+    m_characterMoveSpeedSpin->setValue(3.0);
+    m_characterMoveSpeedSpin->setToolTip(QStringLiteral("World-units-per-second target speed used by WASD character translation."));
+    m_characterIdleAnimationSpeedSpin = createSpinBox(inspectorPanel, 0.0, 10.0, 0.01);
+    m_characterIdleAnimationSpeedSpin->setValue(1.0);
+    m_characterIdleAnimationSpeedSpin->setToolTip(QStringLiteral("Playback multiplier for the mapped idle clip."));
+    m_characterWalkAnimationSpeedSpin = createSpinBox(inspectorPanel, 0.0, 10.0, 0.01);
+    m_characterWalkAnimationSpeedSpin->setValue(1.0);
+    m_characterWalkAnimationSpeedSpin->setToolTip(QStringLiteral("Playback multiplier for walking animation while character translation speed stays unchanged."));
+    m_characterProceduralIdleCheck = new QCheckBox(QStringLiteral("Enable procedural idle"), inspectorPanel);
+    m_characterProceduralIdleCheck->setChecked(true);
+    m_characterProceduralIdleCheck->setToolTip(QStringLiteral("When no authored idle clip exists, synthesize a subtle local-space idle pose."));
     m_objectFollowCamInfoValue = new QLabel(QStringLiteral("-"), inspectorPanel);
     m_objectFollowCamInfoValue->setWordWrap(true);
     m_objectKinematicInfoValue = new QLabel(QStringLiteral("-"), inspectorPanel);
@@ -1104,11 +1313,6 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     cameraTabLayout->setContentsMargins(6, 6, 6, 6);
     cameraTabLayout->setSpacing(8);
 
-    auto* animationTab = new QWidget(m_elementDetailTabs);
-    auto* animationTabLayout = new QVBoxLayout(animationTab);
-    animationTabLayout->setContentsMargins(6, 6, 6, 6);
-    animationTabLayout->setSpacing(8);
-
     auto* runtimeTab = new QWidget(m_elementDetailTabs);
     auto* runtimeTabLayout = new QVBoxLayout(runtimeTab);
     runtimeTabLayout->setContentsMargins(6, 6, 6, 6);
@@ -1133,9 +1337,9 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     materialLayout->addRow(QStringLiteral("Paint Override"), m_paintOverrideCheck);
     materialLayout->addRow(QStringLiteral("Paint Color"), m_paintColorContainer);
 
-    m_animationSection = new QGroupBox(QStringLiteral("Animation"), animationTab);
+    m_animationSection = new QGroupBox(QStringLiteral("Clip Preview"), motionTab);
     auto* animationLayout = new QFormLayout(m_animationSection);
-    animationLayout->addRow(QStringLiteral("Controls"), m_animationControlsWidget);
+    animationLayout->addRow(QStringLiteral("Preview"), m_animationControlsWidget);
 
     m_cameraSection = new QGroupBox(QStringLiteral("Camera"), cameraTab);
     auto* cameraLayout = new QFormLayout(m_cameraSection);
@@ -1164,6 +1368,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     lightLayout->addRow(QStringLiteral("Light Type"), m_lightTypeCombo);
     lightLayout->addRow(QStringLiteral("Brightness"), m_lightBrightnessSpin);
     lightLayout->addRow(QStringLiteral("Color"), m_lightColorContainer);
+    lightLayout->addRow(QStringLiteral("Actions"), m_lightFocusButton);
 
     m_transformSection = new QGroupBox(QStringLiteral("Transform"), overviewTab);
     auto* transformLayout = new QFormLayout(m_transformSection);
@@ -1210,12 +1415,18 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     textLayout->addRow(QStringLiteral("Depth"), textDepthRow);
     textLayout->addRow(QStringLiteral("Colors"), textColorRow);
 
-    m_physicsSection = new QGroupBox(QStringLiteral("Physics & Motion"), motionTab);
+    m_physicsSection = new QGroupBox(QStringLiteral("Locomotion"), motionTab);
     auto* physicsLayout = new QFormLayout(m_physicsSection);
     physicsLayout->addRow(QStringLiteral("WASD Enablement"), m_freeFlyCameraCheck);
     physicsLayout->addRow(QStringLiteral("Physics Gravity"), m_elementUseGravityCheck);
     physicsLayout->addRow(QStringLiteral("Custom Gravity"), m_elementGravityWidget);
+    physicsLayout->addRow(QStringLiteral("Walk Translation Speed"), m_characterMoveSpeedSpin);
+    physicsLayout->addRow(QStringLiteral("Idle Animation Speed"), m_characterIdleAnimationSpeedSpin);
+    physicsLayout->addRow(QStringLiteral("Walk Animation Speed"), m_characterWalkAnimationSpeedSpin);
+    physicsLayout->addRow(QStringLiteral("Procedural Idle"), m_characterProceduralIdleCheck);
     physicsLayout->addRow(QStringLiteral("Turn Responsiveness"), m_characterTurnResponsivenessSpin);
+    physicsLayout->addRow(QStringLiteral("Runtime Coupling"), m_animationPhysicsCouplingCombo);
+    physicsLayout->addRow(QStringLiteral("Clip Map"), m_characterBindingsWidget);
 
     m_runtimeSection = new QGroupBox(QStringLiteral("Runtime Diagnostics"), runtimeTab);
     auto* runtimeLayout = new QFormLayout(m_runtimeSection);
@@ -1242,14 +1453,12 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     visualLayout->addWidget(m_lightSection);
     visualLayout->addStretch(1);
 
+    motionLayout->addWidget(m_animationSection);
     motionLayout->addWidget(m_physicsSection);
     motionLayout->addStretch(1);
 
     cameraTabLayout->addWidget(m_cameraSection);
     cameraTabLayout->addStretch(1);
-
-    animationTabLayout->addWidget(m_animationSection);
-    animationTabLayout->addStretch(1);
 
     runtimeTabLayout->addWidget(m_runtimeSection);
     runtimeTabLayout->addWidget(m_motionDebugOverlaySection);
@@ -1259,7 +1468,6 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_elementDetailTabs->addTab(visualTab, QStringLiteral("Visual"));
     m_elementDetailTabs->addTab(motionTab, QStringLiteral("Motion"));
     m_elementDetailTabs->addTab(cameraTab, QStringLiteral("Camera"));
-    m_elementDetailTabs->addTab(animationTab, QStringLiteral("Animation"));
     m_elementDetailTabs->addTab(runtimeTab, QStringLiteral("Runtime"));
 
     inspectorLayout->addWidget(m_elementDetailTabs);
@@ -1442,6 +1650,27 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         }
         saveProjectState();
     };
+    auto applyCharacterAnimationBindings = [this]() {
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree) return;
+        QTreeWidgetItem* current = m_hierarchyTree->currentItem();
+        const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (row < 0 || row >= m_sceneItems.size()) return;
+
+        auto& item = m_sceneItems[row];
+        item.characterIdleClip = m_characterIdleClipCombo ? m_characterIdleClipCombo->currentData().toString() : QString();
+        item.characterComeToRestClip = m_characterComeToRestClipCombo ? m_characterComeToRestClipCombo->currentData().toString() : QString();
+        item.characterWalkForwardClip = m_characterWalkForwardClipCombo ? m_characterWalkForwardClipCombo->currentData().toString() : QString();
+        item.characterWalkBackwardClip = m_characterWalkBackwardClipCombo ? m_characterWalkBackwardClipCombo->currentData().toString() : QString();
+        item.characterWalkLeftClip = m_characterWalkLeftClipCombo ? m_characterWalkLeftClipCombo->currentData().toString() : QString();
+        item.characterWalkRightClip = m_characterWalkRightClipCombo ? m_characterWalkRightClipCombo->currentData().toString() : QString();
+        item.characterRunClip = m_characterRunClipCombo ? m_characterRunClipCombo->currentData().toString() : QString();
+        item.characterJumpClip = m_characterJumpClipCombo ? m_characterJumpClipCombo->currentData().toString() : QString();
+        item.characterFallClip = m_characterFallClipCombo ? m_characterFallClipCombo->currentData().toString() : QString();
+        item.characterLandClip = m_characterLandClipCombo ? m_characterLandClipCombo->currentData().toString() : QString();
+
+        m_viewportHost->updateSceneItemCharacterAnimationBindings(row, item);
+        saveProjectState();
+    };
     connect(m_animationClipCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
     connect(m_animationPlayingCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
     connect(m_animationLoopCheck, &QCheckBox::toggled, this, [applyAnimationInspector](bool) { applyAnimationInspector(); });
@@ -1450,6 +1679,16 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_animationTrimStartSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
     connect(m_animationTrimEndSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyAnimationInspector](double) { applyAnimationInspector(); });
     connect(m_animationPhysicsCouplingCombo, &QComboBox::currentIndexChanged, this, [applyAnimationInspector]() { applyAnimationInspector(); });
+    connect(m_characterIdleClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterComeToRestClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterWalkForwardClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterWalkBackwardClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterWalkLeftClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterWalkRightClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterRunClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterJumpClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterFallClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
+    connect(m_characterLandClipCombo, &QComboBox::currentIndexChanged, this, [applyCharacterAnimationBindings]() { applyCharacterAnimationBindings(); });
     
     // Connect per-object gravity controls
     auto applyGravityInspector = [this]() {
@@ -1476,17 +1715,37 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     connect(m_elementGravityZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGravityInspector](double) { applyGravityInspector(); });
 
     auto applyCharacterMotionInspector = [this]() {
-        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree || !m_characterTurnResponsivenessSpin) return;
+        if (m_updatingInspector || !m_viewportHost || !m_hierarchyTree ||
+            !m_characterTurnResponsivenessSpin || !m_characterMoveSpeedSpin ||
+            !m_characterIdleAnimationSpeedSpin ||
+            !m_characterWalkAnimationSpeedSpin || !m_characterProceduralIdleCheck)
+        {
+            return;
+        }
         QTreeWidgetItem* current = m_hierarchyTree->currentItem();
         const int row = current ? current->data(0, Qt::UserRole).toInt() : -1;
         if (row < 0 || row >= m_sceneItems.size()) return;
 
         const float responsiveness = static_cast<float>(m_characterTurnResponsivenessSpin->value());
+        const float moveSpeed = static_cast<float>(m_characterMoveSpeedSpin->value());
+        const float idleAnimationSpeed = static_cast<float>(m_characterIdleAnimationSpeedSpin->value());
+        const float walkAnimationSpeed = static_cast<float>(m_characterWalkAnimationSpeedSpin->value());
+        const bool proceduralIdleEnabled = m_characterProceduralIdleCheck->isChecked();
         m_sceneItems[row].characterTurnResponsiveness = responsiveness;
+        m_sceneItems[row].characterMoveSpeed = moveSpeed;
+        m_sceneItems[row].characterIdleAnimationSpeed = idleAnimationSpeed;
+        m_sceneItems[row].characterWalkAnimationSpeed = walkAnimationSpeed;
+        m_sceneItems[row].characterProceduralIdleEnabled = proceduralIdleEnabled;
         m_viewportHost->updateSceneItemCharacterTurnResponsiveness(row, responsiveness);
+        m_viewportHost->updateSceneItemCharacterLocomotion(row, moveSpeed, idleAnimationSpeed, walkAnimationSpeed);
+        m_viewportHost->updateSceneItemCharacterProceduralIdle(row, proceduralIdleEnabled);
         saveProjectState();
     };
     connect(m_characterTurnResponsivenessSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyCharacterMotionInspector](double) { applyCharacterMotionInspector(); });
+    connect(m_characterMoveSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyCharacterMotionInspector](double) { applyCharacterMotionInspector(); });
+    connect(m_characterIdleAnimationSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyCharacterMotionInspector](double) { applyCharacterMotionInspector(); });
+    connect(m_characterWalkAnimationSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyCharacterMotionInspector](double) { applyCharacterMotionInspector(); });
+    connect(m_characterProceduralIdleCheck, &QCheckBox::toggled, this, [applyCharacterMotionInspector](bool) { applyCharacterMotionInspector(); });
 
     auto applyMotionOverlayInspector = [this]() {
         if (m_updatingInspector || !m_viewportHost ||
@@ -1640,6 +1899,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         }
         m_viewportHost->setSceneLight(light);
         saveProjectState();
+    });
+    connect(m_lightFocusButton, &QPushButton::clicked, this, [this]() {
+        if (!m_viewportHost)
+        {
+            return;
+        }
+        m_viewportHost->focusSceneLight();
+        updateInspectorForSelection(m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr);
     });
 
     // Connect follow target combo to update camera's follow target
@@ -1795,6 +2062,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         }
 
         saveProjectState();
+        updateInspectorForSelection(current);
     };
 
     // Handler for free fly checkbox (applies to any camera, not just follow cameras)
@@ -1855,6 +2123,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         
         m_viewportHost->updateCameraConfig(cameraIndex, config);
         saveProjectState();
+        updateInspectorForSelection(current);
     };
 
     auto selectedSceneItemIndex = [this]() -> int
@@ -2323,6 +2592,14 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_viewportHost->setCameraPosition(translation);
             m_viewportHost->setCameraRotation(rotation);
             updateCameraSettingsPanel();
+            saveProjectState();
+            return;
+        }
+        if (row == MainWindowShell::kHierarchyLightIndex && m_viewportHost) {
+            auto light = m_viewportHost->sceneLight();
+            light.exists = true;
+            light.editorProxyPosition = translation;
+            m_viewportHost->setSceneLight(light);
             saveProjectState();
             return;
         }
@@ -3010,6 +3287,19 @@ QJsonObject MainWindowShell::uiDebugJson() const
     QJsonObject inspector = inspectorDebugJson();
     inspector.insert(QStringLiteral("widgets"), inspectorWidgets);
     payload.insert(QStringLiteral("inspector"), inspector);
+    return payload;
+}
+
+QJsonObject MainWindowShell::uiWidgetTreeJson() const
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("window"), widgetTreeObject(this));
+    payload.insert(QStringLiteral("viewportHost"), widgetTreeObject(m_viewportHost));
+    payload.insert(QStringLiteral("leftPane"), widgetTreeObject(m_leftPane));
+    if (m_inspectorDock)
+    {
+        payload.insert(QStringLiteral("inspectorDock"), widgetTreeObject(m_inspectorDock));
+    }
     return payload;
 }
 

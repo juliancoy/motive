@@ -67,6 +67,9 @@ bool ViewportAssetLoader::loadModelIntoEngine(ViewportRuntime& runtime, const Vi
                     item.paintOverrideColor.z()));
                 }
                 result.model->character.turnResponsiveness = item.characterTurnResponsiveness;
+                result.model->character.moveSpeed = item.characterMoveSpeed;
+                result.model->character.walkAnimSpeed = item.characterWalkAnimationSpeed;
+                result.model->character.enableProceduralIdle = item.characterProceduralIdleEnabled;
             
                 runtime.engine()->addModel(std::move(result.model));
                 return true;
@@ -86,6 +89,9 @@ bool ViewportAssetLoader::loadModelIntoEngine(ViewportRuntime& runtime, const Vi
                             glm::vec3(item.paintOverrideColor.x(), item.paintOverrideColor.y(), item.paintOverrideColor.z()));
     model->visible = item.visible;
     model->character.turnResponsiveness = item.characterTurnResponsiveness;
+    model->character.moveSpeed = item.characterMoveSpeed;
+    model->character.walkAnimSpeed = item.characterWalkAnimationSpeed;
+    model->character.enableProceduralIdle = item.characterProceduralIdleEnabled;
     runtime.engine()->addModel(std::move(model));
     return true;
 }

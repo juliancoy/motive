@@ -27,6 +27,10 @@ public:
 
     void relocateSceneItemInFrontOfCamera(int index, ::Camera* referenceCamera = nullptr);
     void focusSceneItem(int index, ::Camera* targetCamera = nullptr);
+    void focusWorldPoint(const QVector3D& worldPoint,
+                         float desiredDistance = 3.0f,
+                         float boundsRadius = 0.25f,
+                         ::Camera* targetCamera = nullptr);
 
 private:
     ViewportRuntime& m_runtime;

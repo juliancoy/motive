@@ -101,6 +101,7 @@ public:
     
     // Physics engine selection
     void setPhysicsEngine(motive::PhysicsEngineType type);
+    void applyPhysicsSettings(const motive::PhysicsSettings& settings);
     motive::PhysicsEngineType getPhysicsEngineType() const { return physicsSettings.engineType; }
     motive::PhysicsSettings& getPhysicsSettings() { return physicsSettings; }
     const motive::PhysicsSettings& getPhysicsSettings() const { return physicsSettings; }

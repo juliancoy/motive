@@ -24,6 +24,7 @@ public:
         QList<QJsonObject> sceneItems;
         QJsonArray hierarchy;
         QJsonObject uiDebug;
+        QJsonObject uiTree;
         QVector3D cameraPosition;
         QVector3D cameraRotation;
         int sceneItemCount = 0;

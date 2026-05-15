@@ -51,6 +51,10 @@ Display::Display(Engine* engine, int width, int height, const char* title, bool 
     transparentGraphicsPipelines.fill(VK_NULL_HANDLE);
     noDepthGraphicsPipelines.fill(VK_NULL_HANDLE);
     noDepthTransparentGraphicsPipelines.fill(VK_NULL_HANDLE);
+    unlitGraphicsPipelines.fill(VK_NULL_HANDLE);
+    transparentUnlitGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthUnlitGraphicsPipelines.fill(VK_NULL_HANDLE);
+    noDepthTransparentUnlitGraphicsPipelines.fill(VK_NULL_HANDLE);
     skinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
     transparentSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
     noDepthSkinnedGraphicsPipelines.fill(VK_NULL_HANDLE);
@@ -161,6 +165,38 @@ Display::~Display()
                 pipeline = VK_NULL_HANDLE;
             }
         }
+        for (VkPipeline& pipeline : unlitGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : transparentUnlitGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthUnlitGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        for (VkPipeline& pipeline : noDepthTransparentUnlitGraphicsPipelines)
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(engine->logicalDevice, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
         for (VkPipeline& pipeline : noDepthTransparentGraphicsPipelines)
         {
             if (pipeline != VK_NULL_HANDLE)
@@ -201,6 +237,11 @@ Display::~Display()
             vkDestroyShaderModule(engine->logicalDevice, fragShaderModule, nullptr);
             fragShaderModule = VK_NULL_HANDLE;
         }
+        if (unlitFragShaderModule != VK_NULL_HANDLE)
+        {
+            vkDestroyShaderModule(engine->logicalDevice, unlitFragShaderModule, nullptr);
+            unlitFragShaderModule = VK_NULL_HANDLE;
+        }
 
         if (pipelineLayout != VK_NULL_HANDLE)
         {
@@ -231,4 +272,9 @@ Display::~Display()
     }
 
     glfwTerminate();
+}
+
+void Display::setEditorRenderModels(const std::vector<Model*>& models)
+{
+    editorRenderModels = models;
 }

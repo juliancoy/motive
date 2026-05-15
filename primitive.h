@@ -138,6 +138,7 @@ public:
     bool forceAlphaOne = false;
     bool depthTestEnabled = true;
     bool depthWriteEnabled = true;
+    bool unlitEnabled = false;
     bool gpuSkinningEnabled = false;
     uint32_t skinJointCount = 0;
     glm::vec3 paintOverrideColor = glm::vec3(1.0f, 0.0f, 1.0f);

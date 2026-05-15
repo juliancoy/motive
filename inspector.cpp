@@ -1,6 +1,7 @@
 #include "shell.h"
 #include "host_widget.h"
 #include "camera_follow_settings.h"
+#include "viewport_internal_utils.h"
 
 #include <QColor>
 #include <QDir>
@@ -520,7 +521,8 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                                               const QString& physicsCoupling = QStringLiteral("AnimationOnly"),
                                               bool centroidNormalization = true,
                                               float trimStartNormalized = 0.0f,
-                                              float trimEndNormalized = 1.0f)
+                                              float trimEndNormalized = 1.0f,
+                                              bool runtimeDriven = false)
     {
         if (m_animationSection)
         {
@@ -537,6 +539,25 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             !m_animationTrimEndSpin)
         {
             return;
+        }
+        if (m_animationClipSummaryValue)
+        {
+            QString summary;
+            if (clips.isEmpty())
+            {
+                summary = QStringLiteral("No clips loaded.");
+            }
+            else
+            {
+                summary = QStringLiteral("Loaded clips (%1): %2")
+                    .arg(clips.size())
+                    .arg(clips.join(QStringLiteral(", ")));
+            }
+            if (runtimeDriven)
+            {
+                summary += QStringLiteral("\nRuntime locomotion uses the clip map below.");
+            }
+            m_animationClipSummaryValue->setText(summary);
         }
         m_animationClipCombo->blockSignals(true);
         m_animationClipCombo->clear();
@@ -568,6 +589,11 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         m_animationTrimEndSpin->setValue(std::max(trimStart, trimEnd));
         m_animationTrimStartSpin->blockSignals(false);
         m_animationTrimEndSpin->blockSignals(false);
+        m_animationPlayingCheck->setEnabled(!runtimeDriven);
+        m_animationLoopCheck->setEnabled(!runtimeDriven);
+        m_animationSpeedSpin->setEnabled(!runtimeDriven);
+        m_animationTrimStartSpin->setEnabled(!runtimeDriven);
+        m_animationTrimEndSpin->setEnabled(!runtimeDriven);
         
         // Set physics coupling
         if (m_animationPhysicsCouplingCombo)
@@ -580,6 +606,42 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             }
             m_animationPhysicsCouplingCombo->blockSignals(false);
         }
+    };
+    const auto populateBindingCombo = [](QComboBox* combo, const QStringList& clips, const QString& selected)
+    {
+        if (!combo)
+        {
+            return;
+        }
+        combo->blockSignals(true);
+        combo->clear();
+        combo->addItem(QStringLiteral("Auto"), QString());
+        for (const QString& clip : clips)
+        {
+            combo->addItem(clip, clip);
+        }
+        int index = selected.isEmpty() ? 0 : combo->findData(selected);
+        if (index < 0)
+        {
+            index = 0;
+        }
+        combo->setCurrentIndex(index);
+        combo->blockSignals(false);
+    };
+    const auto setCharacterAnimationBindingInspector = [this, populateBindingCombo](bool visible,
+                                                                                     const QStringList& clips,
+                                                                                     const ViewportHostWidget::SceneItem& item)
+    {
+        populateBindingCombo(m_characterIdleClipCombo, visible ? clips : QStringList{}, visible ? item.characterIdleClip : QString());
+        populateBindingCombo(m_characterComeToRestClipCombo, visible ? clips : QStringList{}, visible ? item.characterComeToRestClip : QString());
+        populateBindingCombo(m_characterWalkForwardClipCombo, visible ? clips : QStringList{}, visible ? item.characterWalkForwardClip : QString());
+        populateBindingCombo(m_characterWalkBackwardClipCombo, visible ? clips : QStringList{}, visible ? item.characterWalkBackwardClip : QString());
+        populateBindingCombo(m_characterWalkLeftClipCombo, visible ? clips : QStringList{}, visible ? item.characterWalkLeftClip : QString());
+        populateBindingCombo(m_characterWalkRightClipCombo, visible ? clips : QStringList{}, visible ? item.characterWalkRightClip : QString());
+        populateBindingCombo(m_characterRunClipCombo, visible ? clips : QStringList{}, visible ? item.characterRunClip : QString());
+        populateBindingCombo(m_characterJumpClipCombo, visible ? clips : QStringList{}, visible ? item.characterJumpClip : QString());
+        populateBindingCombo(m_characterFallClipCombo, visible ? clips : QStringList{}, visible ? item.characterFallClip : QString());
+        populateBindingCombo(m_characterLandClipCombo, visible ? clips : QStringList{}, visible ? item.characterLandClip : QString());
     };
     const auto setGravityInspector = [this](bool visible, bool useGravity = true, const QVector3D& customGravity = QVector3D(0.0f, 0.0f, 0.0f))
     {
@@ -625,19 +687,48 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             }
         }
     };
-    const auto setCharacterMotionInspector = [this](bool visible, float turnResponsiveness = 10.0f)
+    const auto setCharacterMotionInspector = [this](bool visible,
+                                                    float turnResponsiveness = 10.0f,
+                                                    float moveSpeed = 3.0f,
+                                                    float idleAnimationSpeed = 1.0f,
+                                                    float walkAnimationSpeed = 1.0f,
+                                                    bool proceduralIdleEnabled = true)
     {
-        if (!m_characterTurnResponsivenessSpin)
+        if (!m_characterTurnResponsivenessSpin ||
+            !m_characterMoveSpeedSpin ||
+            !m_characterIdleAnimationSpeedSpin ||
+            !m_characterWalkAnimationSpeedSpin ||
+            !m_characterProceduralIdleCheck)
         {
             return;
         }
         m_characterTurnResponsivenessSpin->setVisible(true);
         m_characterTurnResponsivenessSpin->setEnabled(visible);
+        m_characterMoveSpeedSpin->setVisible(true);
+        m_characterMoveSpeedSpin->setEnabled(visible);
+        m_characterIdleAnimationSpeedSpin->setVisible(true);
+        m_characterIdleAnimationSpeedSpin->setEnabled(visible);
+        m_characterWalkAnimationSpeedSpin->setVisible(true);
+        m_characterWalkAnimationSpeedSpin->setEnabled(visible);
+        m_characterProceduralIdleCheck->setVisible(true);
+        m_characterProceduralIdleCheck->setEnabled(visible);
         if (visible)
         {
             m_characterTurnResponsivenessSpin->blockSignals(true);
             m_characterTurnResponsivenessSpin->setValue(turnResponsiveness);
             m_characterTurnResponsivenessSpin->blockSignals(false);
+            m_characterMoveSpeedSpin->blockSignals(true);
+            m_characterMoveSpeedSpin->setValue(moveSpeed);
+            m_characterMoveSpeedSpin->blockSignals(false);
+            m_characterIdleAnimationSpeedSpin->blockSignals(true);
+            m_characterIdleAnimationSpeedSpin->setValue(idleAnimationSpeed);
+            m_characterIdleAnimationSpeedSpin->blockSignals(false);
+            m_characterWalkAnimationSpeedSpin->blockSignals(true);
+            m_characterWalkAnimationSpeedSpin->setValue(walkAnimationSpeed);
+            m_characterWalkAnimationSpeedSpin->blockSignals(false);
+            m_characterProceduralIdleCheck->blockSignals(true);
+            m_characterProceduralIdleCheck->setChecked(proceduralIdleEnabled);
+            m_characterProceduralIdleCheck->blockSignals(false);
         }
     };
     const auto setObjectRuntimeInspector = [this](bool visible,
@@ -811,8 +902,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
 
     if (!valid)
     {
-        // Handle Camera and Follow Camera entries (any row <= kHierarchyCameraIndex)
-        if (row <= MainWindowShell::kHierarchyCameraIndex && m_viewportHost)
+        // Handle camera entries explicitly by node type. Negative hierarchy
+        // rows are also used by the scene light, so row-based dispatch is not
+        // sufficient here.
+        if (nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera) && m_viewportHost)
         {
             QTreeWidgetItem* currentItem = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
             int cameraIndex = resolveCameraIndex(currentItem);
@@ -1007,7 +1100,10 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         }
         if (row == MainWindowShell::kHierarchyLightIndex)
         {
-            setValue(m_inspectorNameValue, QStringLiteral("Directional Light"));
+            const auto lightLabel = m_viewportHost
+                ? detail::lightLabelFromSceneLight(m_viewportHost->sceneLight())
+                : QStringLiteral("Directional Light");
+            setValue(m_inspectorNameValue, lightLabel);
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
             setValue(m_animationModeValue, QStringLiteral("Static"));
             setValue(m_cameraTypeValue, QStringLiteral("-"));
@@ -1017,9 +1113,13 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                 setElementDetailTab(1); // Visual
             }
             setPlacementInspector(-1);
-            if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(0.0);
-            if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(0.0);
-            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(0.0);
+            if (m_viewportHost)
+            {
+                const auto light = m_viewportHost->sceneLight();
+                if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(light.editorProxyPosition.x());
+                if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(light.editorProxyPosition.y());
+                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(light.editorProxyPosition.z());
+            }
             if (m_inspectorRotationX) m_inspectorRotationX->setValue(0.0);
             if (m_inspectorRotationY) m_inspectorRotationY->setValue(0.0);
             if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(0.0);
@@ -1029,6 +1129,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             setLoadInspectorVisible(false);
             if (m_primitiveForceAlphaButton) m_primitiveForceAlphaButton->setChecked(false);
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
+            setTransformInspectorVisible(true);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(true);
             setFollowTargetInspectorVisible(false);
@@ -1042,6 +1143,15 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                 m_lockScaleXYZCheck->setVisible(true);
                 m_lockScaleXYZCheck->setEnabled(false);
             }
+            if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(true);
+            if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(true);
+            if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(true);
+            if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(false);
+            if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(false);
+            if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(false);
+            if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
+            if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
+            if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
             if (m_alignBottomToGroundButton) {
                 m_alignBottomToGroundButton->setVisible(true);
                 m_alignBottomToGroundButton->setEnabled(false);
@@ -1301,6 +1411,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
     {
         selectedClip = item.activeAnimationClip;
     }
+    const bool runtimeDrivenAnimation = m_viewportHost ? m_viewportHost->isCharacterControlEnabled(row) : false;
     setAnimationInspector(!isTextItem && !animationClips.isEmpty(),
                           animationClips,
                           selectedClip,
@@ -1310,9 +1421,16 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                           item.animationPhysicsCoupling,
                           item.animationCentroidNormalization,
                           item.animationTrimStartNormalized,
-                          item.animationTrimEndNormalized);
+                          item.animationTrimEndNormalized,
+                          runtimeDrivenAnimation);
+    setCharacterAnimationBindingInspector(!isTextItem && !animationClips.isEmpty(), animationClips, item);
     setGravityInspector(!isTextItem, item.useGravity, item.customGravity);
-    setCharacterMotionInspector(!isTextItem, item.characterTurnResponsiveness);
+    setCharacterMotionInspector(!isTextItem,
+                                item.characterTurnResponsiveness,
+                                item.characterMoveSpeed,
+                                item.characterIdleAnimationSpeed,
+                                item.characterWalkAnimationSpeed,
+                                item.characterProceduralIdleEnabled);
     if (m_viewportHost)
     {
         QString followCamInfo = QStringLiteral("None");
@@ -1408,9 +1526,14 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             const bool isControllable = runtime.value(QStringLiteral("isControllable")).toBool(false);
             const bool isGrounded = runtime.value(QStringLiteral("isGrounded")).toBool(false);
             const bool jumpRequested = runtime.value(QStringLiteral("jumpRequested")).toBool(false);
+            const bool sprintRequested = runtime.value(QStringLiteral("keyShift")).toBool(false);
             const QVector3D inputDir = vec3FromJson(runtime.value(QStringLiteral("inputDir")));
             const QVector3D velocity = vec3FromJson(runtime.value(QStringLiteral("velocity")));
+            const double effectiveMoveSpeed = runtime.value(QStringLiteral("characterEffectiveMoveSpeed"))
+                                                  .toDouble(item.characterMoveSpeed);
             const QString currentAnimState = runtime.value(QStringLiteral("currentAnimState")).toString(QStringLiteral("Unknown"));
+            const QString resolvedAnimState = runtime.value(QStringLiteral("resolvedAnimState")).toString(currentAnimState);
+            const QString animationStateSource = runtime.value(QStringLiteral("animationStateSource")).toString(QStringLiteral("Unknown"));
             const double currentAnimWeight = runtime.value(QStringLiteral("currentAnimWeight")).toDouble(0.0);
             const double currentAnimSpeed = runtime.value(QStringLiteral("currentAnimSpeed")).toDouble(0.0);
             const QString runtimeActiveClip = runtime.value(QStringLiteral("runtimeActiveClip")).toString();
@@ -1427,15 +1550,18 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
 
             kinematicInfo = QStringLiteral(
                                 "Coupling: %1\n"
-                                "Controllable: %2  Grounded: %3  JumpReq: %4\n"
-                                "InputDir: (%5, %6, %7)\n"
-                                "Velocity: (%8, %9, %10)")
+                                "Controllable: %2  Grounded: %3  JumpReq: %4  Sprint: %5\n"
+                                "MoveSpeed: %6\n"
+                                "InputDir: (%7, %8, %9)\n"
+                                "Velocity: (%10, %11, %12)")
                                 .arg(item.animationPhysicsCoupling.isEmpty()
                                          ? QStringLiteral("AnimationOnly")
                                          : item.animationPhysicsCoupling)
                                 .arg(isControllable ? QStringLiteral("true") : QStringLiteral("false"))
                                 .arg(isGrounded ? QStringLiteral("true") : QStringLiteral("false"))
                                 .arg(jumpRequested ? QStringLiteral("true") : QStringLiteral("false"))
+                                .arg(sprintRequested ? QStringLiteral("true") : QStringLiteral("false"))
+                                .arg(QString::number(effectiveMoveSpeed, 'f', 2))
                                 .arg(QString::number(inputDir.x(), 'f', 2))
                                 .arg(QString::number(inputDir.y(), 'f', 2))
                                 .arg(QString::number(inputDir.z(), 'f', 2))
@@ -1444,13 +1570,16 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                                 .arg(QString::number(velocity.z(), 'f', 2));
 
             animationRuntimeInfo = QStringLiteral(
-                                       "Configured Clip: %1 | Playing: %2 | Loop: %3 | Speed: %4\n"
-                                       "State: %5  RuntimeSpeed: %6  BlendWeight: %7\n"
-                                       "CentroidNormalization: %8  Trim: [%9, %10]")
+                                       "Resolved Clip: %1 | Playing: %2 | Loop: %3 | Speed: %4\n"
+                                       "State Source: %5  State: %6  CharacterState: %7\n"
+                                       "RuntimeSpeed: %8  BlendWeight: %9\n"
+                                       "CentroidNormalization: %10  Trim: [%11, %12]")
                                        .arg(runtimeClip.isEmpty() ? QStringLiteral("-") : runtimeClip)
                                        .arg(runtimePlaying ? QStringLiteral("true") : QStringLiteral("false"))
                                        .arg(runtimeLoop ? QStringLiteral("true") : QStringLiteral("false"))
                                        .arg(QString::number(runtimeSpeed, 'f', 2))
+                                       .arg(animationStateSource)
+                                       .arg(resolvedAnimState)
                                        .arg(currentAnimState)
                                        .arg(QString::number(currentAnimSpeed, 'f', 2))
                                        .arg(QString::number(currentAnimWeight, 'f', 2))

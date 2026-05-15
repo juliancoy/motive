@@ -187,16 +187,23 @@ bool ControlCommandService::tryHandlePhysicsDomain(const QString& command,
 bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject& result) const
 {
     if (!body.contains(QStringLiteral("sceneIndex")) &&
+        !body.value(QStringLiteral("light")).toBool(false) &&
+        body.value(QStringLiteral("target")).toString().compare(QStringLiteral("light"), Qt::CaseInsensitive) != 0 &&
         !body.contains(QStringLiteral("cameraId")) &&
         !body.contains(QStringLiteral("cameraIndex")))
     {
-        result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex or cameraId/cameraIndex is required"));
+        result.insert(QStringLiteral("error"), QStringLiteral("sceneIndex, light target, or cameraId/cameraIndex is required"));
         return false;
     }
 
     bool selected = false;
     const bool focusRequested = body.value(QStringLiteral("focus")).toBool(false);
-    if (body.contains(QStringLiteral("sceneIndex")))
+    if (body.value(QStringLiteral("light")).toBool(false) ||
+        body.value(QStringLiteral("target")).toString().compare(QStringLiteral("light"), Qt::CaseInsensitive) == 0)
+    {
+        selected = m_window.selectHierarchyLight();
+    }
+    else if (body.contains(QStringLiteral("sceneIndex")))
     {
         const int sceneIndex = body.value(QStringLiteral("sceneIndex")).toInt(-1);
         selected = m_window.selectHierarchySceneItem(sceneIndex);

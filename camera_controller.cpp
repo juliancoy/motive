@@ -199,4 +199,53 @@ void ViewportCameraController::focusSceneItem(int index, Camera* targetCamera)
     camera->update(0.0f);
 }
 
+void ViewportCameraController::focusWorldPoint(const QVector3D& worldPoint,
+                                               float desiredDistance,
+                                               float boundsRadius,
+                                               Camera* targetCamera)
+{
+    Camera* camera = targetCamera ? targetCamera : m_runtime.camera();
+    if (!camera)
+    {
+        return;
+    }
+
+    const glm::vec3 target(worldPoint.x(), worldPoint.y(), worldPoint.z());
+    if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(target.z))
+    {
+        return;
+    }
+
+    glm::vec3 cameraPosition = camera->cameraPos;
+    const glm::vec3 toTarget = target - cameraPosition;
+    const float currentDistance = glm::length(toTarget);
+    const glm::vec3 defaultFront = glm::normalize(glm::vec3(0.0f, -0.35f, -1.0f));
+    glm::vec3 front = currentDistance > 1e-6f
+        ? glm::normalize(toTarget)
+        : camera->getForwardVector();
+    if (glm::length(front) <= 1e-6f)
+    {
+        front = defaultFront;
+    }
+    if (!std::isfinite(currentDistance) ||
+        currentDistance > desiredDistance * 6.0f ||
+        std::abs(front.y) > 0.97f)
+    {
+        front = defaultFront;
+    }
+
+    const float clampedDistance = glm::max(desiredDistance, 0.05f);
+    cameraPosition = target - front * clampedDistance;
+    camera->setEulerRotation(detail::cameraRotationForDirection(front));
+    camera->cameraPos = cameraPosition;
+
+    const float safeRadius = std::max(boundsRadius, 0.1f);
+    const float requiredFarClip = clampedDistance + std::max(safeRadius * 8.0f, 10.0f);
+    if (std::isfinite(requiredFarClip) && requiredFarClip > camera->getPerspectiveFar())
+    {
+        camera->setPerspectiveNearFar(camera->getPerspectiveNear(), requiredFarClip);
+    }
+    camera->update(0.0f);
+}
+
 }  // namespace motive::ui

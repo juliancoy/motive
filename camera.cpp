@@ -3,16 +3,79 @@
 #include "engine.h"
 #include "display.h"
 #include "input_router.h"
+#include "model.h"
 #include <stdexcept>
 #include <iostream>
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 namespace
 {
+constexpr float kCameraCollisionPadding = 0.12f;
+constexpr float kCameraCollisionMinDistance = 0.35f;
+
+glm::vec3 resolveFollowCameraCollision(const Engine* engine,
+                                       const Model* targetModel,
+                                       const glm::vec3& targetCenter,
+                                       const glm::vec3& desiredCameraPos)
+{
+    if (!engine)
+    {
+        return desiredCameraPos;
+    }
+
+    const motive::IPhysicsWorld* physicsWorld = engine->getPhysicsWorld();
+    if (!physicsWorld)
+    {
+        return desiredCameraPos;
+    }
+
+    const glm::vec3 boom = desiredCameraPos - targetCenter;
+    const float desiredDistance = glm::length(boom);
+    if (desiredDistance <= 1e-5f)
+    {
+        return desiredCameraPos;
+    }
+
+    const glm::vec3 boomDir = boom / desiredDistance;
+    const void* ignoredHandle =
+        (targetModel && targetModel->getPhysicsBody()) ? targetModel->getPhysicsBody()->getNativeHandle() : nullptr;
+
+    const std::vector<motive::RaycastHit> hits = physicsWorld->raycastAll(targetCenter, desiredCameraPos);
+    float closestDistance = std::numeric_limits<float>::max();
+    bool foundBlockingHit = false;
+
+    for (const motive::RaycastHit& hit : hits)
+    {
+        if (!hit.hit)
+        {
+            continue;
+        }
+        if (ignoredHandle && hit.userData == ignoredHandle)
+        {
+            continue;
+        }
+        if (hit.distance < closestDistance)
+        {
+            closestDistance = hit.distance;
+            foundBlockingHit = true;
+        }
+    }
+
+    if (!foundBlockingHit)
+    {
+        return desiredCameraPos;
+    }
+
+    const float clampedDistance = std::clamp(closestDistance - kCameraCollisionPadding,
+                                             kCameraCollisionMinDistance,
+                                             desiredDistance);
+    return targetCenter + (boomDir * clampedDistance);
+}
 } // namespace
 
 Camera::Camera(Engine *engine,
@@ -292,8 +355,6 @@ void Camera::handleCursorPos(double xpos, double ypos)
             }
         }
 }
-
-#include "model.h"  // For character controller
 
 namespace {
 
@@ -660,7 +721,7 @@ void Camera::updateFollow(float deltaTime, const std::vector<std::unique_ptr<Mod
     {
         nextPose = followOrbit.update(targetCenterForRig, modelForward, deltaTime, currentPose);
     }
-    cameraPos = nextPose.position;
+    cameraPos = resolveFollowCameraCollision(engine, targetModel, followTargetForView, nextPose.position);
     // Hard constraint for follow/orbit cameras: always look at target center.
     const glm::vec3 toTarget = followTargetForView - cameraPos;
     if (glm::length(toTarget) > 0.001f)

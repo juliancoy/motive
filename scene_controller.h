@@ -38,6 +38,9 @@ public:
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
+    void updateSceneItemCharacterLocomotion(int index, float moveSpeed, float idleAnimationSpeed, float walkAnimationSpeed);
+    void updateSceneItemCharacterProceduralIdle(int index, bool enabled);
+    void updateSceneItemCharacterAnimationBindings(int index, const ViewportHostWidget::SceneItem& bindingsSource);
     void updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized);
     void updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance);
     void updateSceneItemFocusCameraOffset(int index, const QVector3D& focusCameraOffset, bool valid);

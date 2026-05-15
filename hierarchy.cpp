@@ -8,6 +8,10 @@
 
 namespace motive::ui {
 
+namespace {
+constexpr int kHierarchyLightIndex = -1001;
+}
+
 void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem>& items)
 {
     if (!m_hierarchyTree)
@@ -71,22 +75,26 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
                 item->data(0, Qt::UserRole + 6).toString() == previousCameraId)
             {
                 m_hierarchyTree->setCurrentItem(item);
+                updateInspectorForSelection(item);
                 return;
             }
         }
         if (cameraIdMatch)
         {
             m_hierarchyTree->setCurrentItem(cameraIdMatch);
+            updateInspectorForSelection(cameraIdMatch);
             return;
         }
         if (sceneItemMatch)
         {
             m_hierarchyTree->setCurrentItem(sceneItemMatch);
+            updateInspectorForSelection(sceneItemMatch);
             return;
         }
         if (fallbackRowMatch)
         {
             m_hierarchyTree->setCurrentItem(fallbackRowMatch);
+            updateInspectorForSelection(fallbackRowMatch);
             return;
         }
     }
@@ -94,11 +102,56 @@ void MainWindowShell::refreshHierarchy(const QList<ViewportHostWidget::SceneItem
     if (!items.isEmpty())
     {
         m_hierarchyTree->setCurrentItem(m_hierarchyTree->topLevelItem(0));
+        updateInspectorForSelection(m_hierarchyTree->topLevelItem(0));
     }
     else
     {
         updateInspectorForSelection(nullptr);
     }
+}
+
+bool MainWindowShell::selectHierarchyLight()
+{
+    if (!m_hierarchyTree)
+    {
+        return false;
+    }
+
+    const auto selectFromTree = [this]() -> bool
+    {
+        const QList<QTreeWidgetItem*> items =
+            m_hierarchyTree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive);
+        for (QTreeWidgetItem* item : items)
+        {
+            if (!item)
+            {
+                continue;
+            }
+            const int nodeType = item->data(0, Qt::UserRole + 3).toInt();
+            if (nodeType != static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Light))
+            {
+                continue;
+            }
+            m_hierarchyTree->setCurrentItem(item);
+            item->setSelected(true);
+            updateInspectorForSelection(item, true);
+            updateWasdRoutingStatus();
+            return true;
+        }
+        return false;
+    };
+
+    if (selectFromTree())
+    {
+        return true;
+    }
+
+    if (m_viewportHost)
+    {
+        refreshHierarchy(m_viewportHost->sceneItems());
+        return selectFromTree();
+    }
+    return false;
 }
 
 void MainWindowShell::appendHierarchyNode(QTreeWidgetItem* parent, const ViewportHostWidget::HierarchyNode& node, bool ancestorHidden)

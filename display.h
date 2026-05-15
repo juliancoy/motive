@@ -27,6 +27,7 @@
 class Engine;
 class Camera;
 class InputRouter;
+class Model;
 
 class Display
 {
@@ -66,6 +67,7 @@ public:
     void setMouseButtonEventCallback(std::function<void(int, int, int, double, double)> callback);
     void setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap, bool enabled);
     void clearCustomOverlayBitmap();
+    void setEditorRenderModels(const std::vector<Model*>& models);
     void shutdown();
 
     // Input handling (forwarded to camera)
@@ -107,6 +109,10 @@ public:
     std::array<VkPipeline, 3> transparentGraphicsPipelines{};
     std::array<VkPipeline, 3> noDepthGraphicsPipelines{};
     std::array<VkPipeline, 3> noDepthTransparentGraphicsPipelines{};
+    std::array<VkPipeline, 3> unlitGraphicsPipelines{};
+    std::array<VkPipeline, 3> transparentUnlitGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthUnlitGraphicsPipelines{};
+    std::array<VkPipeline, 3> noDepthTransparentUnlitGraphicsPipelines{};
     std::array<VkPipeline, 3> skinnedGraphicsPipelines{};
     std::array<VkPipeline, 3> transparentSkinnedGraphicsPipelines{};
     std::array<VkPipeline, 3> noDepthSkinnedGraphicsPipelines{};
@@ -119,6 +125,7 @@ public:
     VkShaderModule vertShaderModule = VK_NULL_HANDLE;
     VkShaderModule skinnedVertShaderModule = VK_NULL_HANDLE;
     VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    VkShaderModule unlitFragShaderModule = VK_NULL_HANDLE;
 
     int width;
     int height;
@@ -188,6 +195,7 @@ private:
     OverlayResources overlayResources;
     glyph::OverlayBitmap customOverlayBitmap;
     bool customOverlayEnabled = false;
+    std::vector<Model*> editorRenderModels;
     std::vector<ViewportSlot> viewportSlots;
     bool useExplicitViewportSlots = false;
     std::function<void(int, int, int, double, double)> mouseButtonEventCallback;

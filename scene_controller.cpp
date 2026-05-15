@@ -238,6 +238,20 @@ void applyAnimationSettingsToModel(const ViewportHostWidget::SceneItem& entry, M
                                         entry.animationTrimStartNormalized,
                                         entry.animationTrimEndNormalized);
     model.setAnimationPhysicsCoupling(entry.animationPhysicsCoupling.toStdString());
+    model.character.moveSpeed = entry.characterMoveSpeed;
+    model.character.idleAnimSpeed = entry.characterIdleAnimationSpeed;
+    model.character.walkAnimSpeed = entry.characterWalkAnimationSpeed;
+    model.character.enableProceduralIdle = entry.characterProceduralIdleEnabled;
+    if (!entry.characterIdleClip.isEmpty()) model.character.animIdle = entry.characterIdleClip.toStdString();
+    if (!entry.characterComeToRestClip.isEmpty()) model.character.animComeToRest = entry.characterComeToRestClip.toStdString();
+    if (!entry.characterWalkForwardClip.isEmpty()) model.character.animWalkForward = entry.characterWalkForwardClip.toStdString();
+    if (!entry.characterWalkBackwardClip.isEmpty()) model.character.animWalkBackward = entry.characterWalkBackwardClip.toStdString();
+    if (!entry.characterWalkLeftClip.isEmpty()) model.character.animWalkLeft = entry.characterWalkLeftClip.toStdString();
+    if (!entry.characterWalkRightClip.isEmpty()) model.character.animWalkRight = entry.characterWalkRightClip.toStdString();
+    if (!entry.characterRunClip.isEmpty()) model.character.animRun = entry.characterRunClip.toStdString();
+    if (!entry.characterJumpClip.isEmpty()) model.character.animJump = entry.characterJumpClip.toStdString();
+    if (!entry.characterFallClip.isEmpty()) model.character.animFall = entry.characterFallClip.toStdString();
+    if (!entry.characterLandClip.isEmpty()) model.character.animLand = entry.characterLandClip.toStdString();
     model.character.enableRestPointOnMoveRelease = entry.characterRestPointOnReleaseEnabled;
     model.character.restPointNormalizedOnMoveRelease =
         std::clamp(entry.characterRestPointOnReleaseNormalized, 0.0f, 1.0f);
@@ -772,6 +786,77 @@ void ViewportSceneController::updateSceneItemCharacterTurnResponsiveness(int ind
         m_runtime.engine()->models[static_cast<size_t>(index)])
     {
         m_runtime.engine()->models[static_cast<size_t>(index)]->character.turnResponsiveness = clamped;
+    }
+}
+
+void ViewportSceneController::updateSceneItemCharacterLocomotion(int index, float moveSpeed, float idleAnimationSpeed, float walkAnimationSpeed)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    const float clampedMoveSpeed = std::clamp(moveSpeed, 0.0f, 50.0f);
+    const float clampedIdleAnimationSpeed = std::clamp(idleAnimationSpeed, 0.0f, 10.0f);
+    const float clampedWalkAnimationSpeed = std::clamp(walkAnimationSpeed, 0.0f, 10.0f);
+    m_sceneEntries[index].characterMoveSpeed = clampedMoveSpeed;
+    m_sceneEntries[index].characterIdleAnimationSpeed = clampedIdleAnimationSpeed;
+    m_sceneEntries[index].characterWalkAnimationSpeed = clampedWalkAnimationSpeed;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        auto& character = m_runtime.engine()->models[static_cast<size_t>(index)]->character;
+        character.moveSpeed = clampedMoveSpeed;
+        character.idleAnimSpeed = clampedIdleAnimationSpeed;
+        character.walkAnimSpeed = clampedWalkAnimationSpeed;
+    }
+}
+
+void ViewportSceneController::updateSceneItemCharacterProceduralIdle(int index, bool enabled)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    m_sceneEntries[index].characterProceduralIdleEnabled = enabled;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        auto& character = m_runtime.engine()->models[static_cast<size_t>(index)]->character;
+        character.enableProceduralIdle = enabled;
+    }
+}
+
+void ViewportSceneController::updateSceneItemCharacterAnimationBindings(int index, const ViewportHostWidget::SceneItem& bindingsSource)
+{
+    if (index < 0 || index >= m_sceneEntries.size())
+    {
+        return;
+    }
+
+    ViewportHostWidget::SceneItem& entry = m_sceneEntries[index];
+    entry.characterIdleClip = bindingsSource.characterIdleClip;
+    entry.characterComeToRestClip = bindingsSource.characterComeToRestClip;
+    entry.characterWalkForwardClip = bindingsSource.characterWalkForwardClip;
+    entry.characterWalkBackwardClip = bindingsSource.characterWalkBackwardClip;
+    entry.characterWalkLeftClip = bindingsSource.characterWalkLeftClip;
+    entry.characterWalkRightClip = bindingsSource.characterWalkRightClip;
+    entry.characterRunClip = bindingsSource.characterRunClip;
+    entry.characterJumpClip = bindingsSource.characterJumpClip;
+    entry.characterFallClip = bindingsSource.characterFallClip;
+    entry.characterLandClip = bindingsSource.characterLandClip;
+
+    if (m_runtime.engine() &&
+        index < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(index)])
+    {
+        Model& model = *m_runtime.engine()->models[static_cast<size_t>(index)];
+        applyAnimationSettingsToModel(entry, model);
     }
 }
 

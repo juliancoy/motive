@@ -91,6 +91,7 @@ public:
         glm::vec3 velocity = glm::vec3(0.0f);
         glm::vec3 inputDir = glm::vec3(0.0f);  // WASD input direction
         float moveSpeed = 3.0f;
+        float sprintSpeedMultiplier = 1.5f;
         float gravity = -9.8f;
         float jumpSpeed = 5.0f;
         float groundHeight = 0.0f;
@@ -103,6 +104,7 @@ public:
         bool keyA = false;
         bool keyS = false;
         bool keyD = false;
+        bool keyShift = false;
         
         // Animation state
         enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
@@ -181,12 +183,33 @@ public:
         float jumpFallVelocityThreshold = -0.5f;
         float jumpApexVelocityThreshold = 0.5f;
         float jumpPhaseTimer = 0.0f;
+        float proceduralIdleTime = 0.0f;
+        float proceduralJumpTime = 0.0f;
         bool wasGroundedLastFrame = true;
         AnimState previousAnimState = AnimState::Idle;
         bool hadMoveKeyIntentLastFrame = false;
         bool pendingRestPointLatch = false;
         bool enableRestPointOnMoveRelease = true;
         float restPointNormalizedOnMoveRelease = 1.0f;
+    };
+
+    struct AnimationRuntimeState
+    {
+        enum class Source
+        {
+            Manual,
+            CharacterController
+        };
+
+        Source source = Source::Manual;
+        CharacterController::AnimState semanticState = CharacterController::AnimState::Idle;
+        CharacterController::JumpPhase semanticJumpPhase = CharacterController::JumpPhase::None;
+        std::string resolvedClipName;
+        bool resolvedPlaying = false;
+        bool resolvedLoop = false;
+        float resolvedSpeed = 1.0f;
+        bool resolvedProcedural = false;
+        bool resolvedMirrored = false;
     };
 
     Model(const std::string& gltfPath, Engine* engine, bool consolidateMeshes = true);
@@ -213,6 +236,7 @@ public:
     void updateCharacterPhysics(float deltaSeconds);
     void setCharacterInput(const glm::vec3& moveDir);  // Called from input handler
     void applyProceduralIdleAnimation(double deltaSeconds);  // Generate idle when no clip exists
+    void applyProceduralJumpAnimation(double deltaSeconds);  // Generate jump when no clip exists
     glm::vec3 getCharacterPosition() const { return glm::vec3(worldTransform[3]); }
     glm::vec3 getFollowAnchorPosition() const;
     
@@ -254,6 +278,11 @@ public:
     bool meshConsolidationEnabled = true;
     std::vector<AnimationClipInfo> animationClips;
     std::unique_ptr<motive::animation::FbxRuntime> fbxAnimationRuntime;
+    AnimationRuntimeState animationRuntimeState;
+    std::vector<std::vector<Vertex>> proceduralIdleBaseVertices;
+    bool proceduralIdleBaseVerticesValid = false;
+    std::vector<std::vector<Vertex>> proceduralJumpBaseVertices;
+    bool proceduralJumpBaseVerticesValid = false;
     bool animationPreprocessedFrameValid = false;
     uint64_t animationPreprocessedFrameCounter = 0;
     
@@ -291,6 +320,7 @@ public:
     const glm::vec3& getCustomGravity() const { return customGravity; }
 
 private:
+    void updateCharacterAnimationSemanticState(float dt);
     void applyTransformToPrimitives(const glm::mat4& transform);
     void syncWorldTransformToPrimitives();
     void updateWorldBoundsFromLocalBounds();

@@ -84,6 +84,16 @@ QString resolvedRestoredAssetPath(const QString& savedPath, const QString& proje
     return savedPath;
 }
 
+QString canonicalWorkspaceRootPath()
+{
+    QDir appDir(QCoreApplication::applicationDirPath());
+    if (appDir.dirName().compare(QStringLiteral("build"), Qt::CaseInsensitive) == 0)
+    {
+        appDir.cdUp();
+    }
+    return appDir.absolutePath();
+}
+
 }
 
 ProjectSession::ProjectSession()
@@ -180,6 +190,31 @@ QJsonObject ProjectSession::currentSceneLight() const
 QString ProjectSession::currentRenderPath() const
 {
     return m_currentRenderPath;
+}
+
+QString ProjectSession::currentPhysicsEngine() const
+{
+    return m_currentPhysicsEngine;
+}
+
+QVector3D ProjectSession::currentWorldGravity() const
+{
+    return m_currentWorldGravity;
+}
+
+int ProjectSession::currentPhysicsMaxSubSteps() const
+{
+    return m_currentPhysicsMaxSubSteps;
+}
+
+bool ProjectSession::currentPhysicsDebugDraw() const
+{
+    return m_currentPhysicsDebugDraw;
+}
+
+bool ProjectSession::currentPhysicsAutoSync() const
+{
+    return m_currentPhysicsAutoSync;
 }
 
 bool ProjectSession::currentMeshConsolidationEnabled() const
@@ -416,6 +451,31 @@ void ProjectSession::setCurrentRenderPath(const QString& renderPath)
     m_currentRenderPath = renderPath.trimmed().isEmpty() ? QStringLiteral("forward3d") : renderPath;
 }
 
+void ProjectSession::setCurrentPhysicsEngine(const QString& engineName)
+{
+    m_currentPhysicsEngine = engineName.trimmed().isEmpty() ? QStringLiteral("Bullet") : engineName.trimmed();
+}
+
+void ProjectSession::setCurrentWorldGravity(const QVector3D& gravity)
+{
+    m_currentWorldGravity = gravity;
+}
+
+void ProjectSession::setCurrentPhysicsMaxSubSteps(int maxSubSteps)
+{
+    m_currentPhysicsMaxSubSteps = std::max(1, maxSubSteps);
+}
+
+void ProjectSession::setCurrentPhysicsDebugDraw(bool enabled)
+{
+    m_currentPhysicsDebugDraw = enabled;
+}
+
+void ProjectSession::setCurrentPhysicsAutoSync(bool enabled)
+{
+    m_currentPhysicsAutoSync = enabled;
+}
+
 void ProjectSession::setCurrentMeshConsolidationEnabled(bool enabled)
 {
     m_currentMeshConsolidationEnabled = enabled;
@@ -538,6 +598,24 @@ void ProjectSession::writeSaveRequest(const SaveRequest& request) const
 
     file.write(QJsonDocument(buildProjectDocumentForState(request.projectId, request.state, existingRoot)).toJson(QJsonDocument::Indented));
     QFile::remove(request.legacyStateFilePath);
+
+    const QString canonicalProjectsDir = QDir(canonicalWorkspaceRootPath()).filePath(QStringLiteral("projects"));
+    const QString canonicalProjectDir = QDir(canonicalProjectsDir).filePath(request.projectId);
+    const QString canonicalProjectFile = QDir(canonicalProjectDir).filePath(request.projectId + QStringLiteral(".json"));
+    if (QDir::cleanPath(canonicalProjectFile) != QDir::cleanPath(request.projectFilePath))
+    {
+        QDir().mkpath(canonicalProjectDir);
+        QFile mirrorFile(canonicalProjectFile);
+        if (mirrorFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        {
+            mirrorFile.write(QJsonDocument(buildProjectDocumentForState(request.projectId, request.state, existingRoot)).toJson(QJsonDocument::Indented));
+        }
+        QFile marker(QDir(canonicalProjectsDir).filePath(QStringLiteral(".current_project")));
+        if (marker.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        {
+            marker.write(request.projectId.toUtf8());
+        }
+    }
 }
 
 void ProjectSession::ensureSaveWorkerStarted() const
@@ -679,6 +757,11 @@ QJsonObject ProjectSession::buildBaseStateObject() const
         {QStringLiteral("cameraSpeed"), m_currentCameraSpeed},
         {QStringLiteral("sceneLight"), m_currentSceneLight},
         {QStringLiteral("renderPath"), m_currentRenderPath},
+        {QStringLiteral("physicsEngine"), m_currentPhysicsEngine},
+        {QStringLiteral("worldGravity"), QJsonArray{m_currentWorldGravity.x(), m_currentWorldGravity.y(), m_currentWorldGravity.z()}},
+        {QStringLiteral("physicsMaxSubSteps"), m_currentPhysicsMaxSubSteps},
+        {QStringLiteral("physicsDebugDraw"), m_currentPhysicsDebugDraw},
+        {QStringLiteral("physicsAutoSync"), m_currentPhysicsAutoSync},
         {QStringLiteral("meshConsolidationEnabled"), m_currentMeshConsolidationEnabled},
         {QStringLiteral("validationLayersEnabled"), m_currentValidationLayersEnabled},
         {QStringLiteral("freeFlyCameraEnabled"), m_currentFreeFlyCameraEnabled},
@@ -816,6 +899,22 @@ void ProjectSession::applyStateObject(const QString& projectId, const QJsonObjec
     }
     m_currentCameraSpeed = static_cast<float>(state.value(QStringLiteral("cameraSpeed")).toDouble(0.01));
     m_currentRenderPath = state.value(QStringLiteral("renderPath")).toString(QStringLiteral("forward3d"));
+    m_currentPhysicsEngine = state.value(QStringLiteral("physicsEngine")).toString(QStringLiteral("Bullet"));
+    const QJsonArray worldGravityArray = state.value(QStringLiteral("worldGravity")).toArray();
+    if (worldGravityArray.size() == 3)
+    {
+        m_currentWorldGravity = QVector3D(
+            static_cast<float>(worldGravityArray[0].toDouble(0.0)),
+            static_cast<float>(worldGravityArray[1].toDouble(-9.81)),
+            static_cast<float>(worldGravityArray[2].toDouble(0.0)));
+    }
+    else
+    {
+        m_currentWorldGravity = QVector3D(0.0f, -9.81f, 0.0f);
+    }
+    m_currentPhysicsMaxSubSteps = std::max(1, state.value(QStringLiteral("physicsMaxSubSteps")).toInt(1));
+    m_currentPhysicsDebugDraw = state.value(QStringLiteral("physicsDebugDraw")).toBool(false);
+    m_currentPhysicsAutoSync = state.value(QStringLiteral("physicsAutoSync")).toBool(true);
     m_currentMeshConsolidationEnabled = state.value(QStringLiteral("meshConsolidationEnabled")).toBool(true);
     m_currentValidationLayersEnabled = state.value(QStringLiteral("validationLayersEnabled")).toBool(true);
     m_currentFreeFlyCameraEnabled = state.value(QStringLiteral("freeFlyCameraEnabled")).toBool(true);

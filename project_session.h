@@ -31,6 +31,11 @@ public:
     float currentCameraSpeed() const;
     QJsonObject currentSceneLight() const;
     QString currentRenderPath() const;
+    QString currentPhysicsEngine() const;
+    QVector3D currentWorldGravity() const;
+    int currentPhysicsMaxSubSteps() const;
+    bool currentPhysicsDebugDraw() const;
+    bool currentPhysicsAutoSync() const;
     bool currentMeshConsolidationEnabled() const;
     bool currentValidationLayersEnabled() const;
     bool currentFreeFlyCameraEnabled() const;
@@ -64,6 +69,11 @@ public:
     void setCurrentCameraSpeed(float speed);
     void setCurrentSceneLight(const QJsonObject& light);
     void setCurrentRenderPath(const QString& renderPath);
+    void setCurrentPhysicsEngine(const QString& engineName);
+    void setCurrentWorldGravity(const QVector3D& gravity);
+    void setCurrentPhysicsMaxSubSteps(int maxSubSteps);
+    void setCurrentPhysicsDebugDraw(bool enabled);
+    void setCurrentPhysicsAutoSync(bool enabled);
     void setCurrentMeshConsolidationEnabled(bool enabled);
     void setCurrentValidationLayersEnabled(bool enabled);
     void setCurrentFreeFlyCameraEnabled(bool enabled);
@@ -112,6 +122,11 @@ private:
     float m_currentCameraSpeed = 0.01f;
     QJsonObject m_currentSceneLight;
     QString m_currentRenderPath = QStringLiteral("forward3d");
+    QString m_currentPhysicsEngine = QStringLiteral("Bullet");
+    QVector3D m_currentWorldGravity = QVector3D(0.0f, -9.81f, 0.0f);
+    int m_currentPhysicsMaxSubSteps = 1;
+    bool m_currentPhysicsDebugDraw = false;
+    bool m_currentPhysicsAutoSync = true;
     bool m_currentMeshConsolidationEnabled = true;
     bool m_currentValidationLayersEnabled = true;
     bool m_currentFreeFlyCameraEnabled = true;  // Default to free fly mode

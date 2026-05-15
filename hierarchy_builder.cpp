@@ -16,6 +16,7 @@
 
 namespace motive::ui {
 namespace {
+constexpr int kHierarchyLightIndex = -1001;
 
 QJsonObject hierarchyNodeToJson(const ViewportHostWidget::HierarchyNode& node)
 {
@@ -149,9 +150,9 @@ QList<ViewportHostWidget::HierarchyNode> ViewportHierarchyBuilder::hierarchyItem
     if (m_sceneLight.exists)
     {
         items.push_back(ViewportHostWidget::HierarchyNode{
-            QStringLiteral("Directional Light"),
+            detail::lightLabelFromSceneLight(m_sceneLight),
             ViewportHostWidget::HierarchyNode::Type::Light,
-            -1,   // sceneIndex
+            kHierarchyLightIndex,   // sceneIndex
             -1,   // meshIndex
             -1,   // cameraIndex
             QString(),
@@ -416,6 +417,17 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
         }
         return QStringLiteral("Unknown");
     };
+    auto animationSourceName = [](Model::AnimationRuntimeState::Source source) -> QString
+    {
+        switch (source)
+        {
+        case Model::AnimationRuntimeState::Source::Manual:
+            return QStringLiteral("Manual");
+        case Model::AnimationRuntimeState::Source::CharacterController:
+            return QStringLiteral("CharacterController");
+        }
+        return QStringLiteral("Unknown");
+    };
 
     QJsonArray sceneItems;
     const auto& entries = m_sceneController.loadedEntries();
@@ -467,20 +479,32 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("keyA"), character.keyA);
             sceneItem.insert(QStringLiteral("keyS"), character.keyS);
             sceneItem.insert(QStringLiteral("keyD"), character.keyD);
+            sceneItem.insert(QStringLiteral("keyShift"), character.keyShift);
             sceneItem.insert(QStringLiteral("inputDir"), QJsonArray{character.inputDir.x, character.inputDir.y, character.inputDir.z});
             sceneItem.insert(QStringLiteral("velocity"), QJsonArray{character.velocity.x, character.velocity.y, character.velocity.z});
+            sceneItem.insert(QStringLiteral("characterMoveSpeed"), character.moveSpeed);
+            sceneItem.insert(QStringLiteral("characterSprintSpeedMultiplier"), character.sprintSpeedMultiplier);
+            sceneItem.insert(QStringLiteral("characterEffectiveMoveSpeed"),
+                             character.keyShift ? character.moveSpeed * character.sprintSpeedMultiplier
+                                                : character.moveSpeed);
+            sceneItem.insert(QStringLiteral("characterWalkAnimationSpeed"), character.walkAnimSpeed);
             sceneItem.insert(QStringLiteral("currentAnimState"), animStateName(character.currentAnimState));
             sceneItem.insert(QStringLiteral("jumpPhase"), jumpPhaseName(character.jumpPhase));
             sceneItem.insert(QStringLiteral("currentAnimWeight"), character.currentAnimWeight);
             sceneItem.insert(QStringLiteral("currentAnimSpeed"), character.currentAnimSpeed);
+            sceneItem.insert(QStringLiteral("animationStateSource"), animationSourceName(model->animationRuntimeState.source));
+            sceneItem.insert(QStringLiteral("resolvedAnimState"), animStateName(model->animationRuntimeState.semanticState));
+            sceneItem.insert(QStringLiteral("resolvedJumpPhase"), jumpPhaseName(model->animationRuntimeState.semanticJumpPhase));
             sceneItem.insert(QStringLiteral("runtimeCharacterRestPointOnReleaseEnabled"), character.enableRestPointOnMoveRelease);
             sceneItem.insert(QStringLiteral("runtimeCharacterRestPointOnReleaseNormalized"), character.restPointNormalizedOnMoveRelease);
             sceneItem.insert(QStringLiteral("animationPreprocessedFrameValid"), model->animationPreprocessedFrameValid);
             sceneItem.insert(QStringLiteral("animationPreprocessedFrameCounter"), static_cast<qint64>(model->animationPreprocessedFrameCounter));
-            sceneItem.insert(QStringLiteral("runtimeAnimationPlaying"), false);
-            sceneItem.insert(QStringLiteral("runtimeAnimationLoop"), false);
-            sceneItem.insert(QStringLiteral("runtimeAnimationSpeed"), character.currentAnimSpeed);
-            sceneItem.insert(QStringLiteral("runtimeActiveClip"), QString());
+            sceneItem.insert(QStringLiteral("runtimeAnimationPlaying"), model->animationRuntimeState.resolvedPlaying);
+            sceneItem.insert(QStringLiteral("runtimeAnimationLoop"), model->animationRuntimeState.resolvedLoop);
+            sceneItem.insert(QStringLiteral("runtimeAnimationSpeed"), model->animationRuntimeState.resolvedSpeed);
+            sceneItem.insert(QStringLiteral("runtimeActiveClip"), QString::fromStdString(model->animationRuntimeState.resolvedClipName));
+            sceneItem.insert(QStringLiteral("runtimeAnimationProcedural"), model->animationRuntimeState.resolvedProcedural);
+            sceneItem.insert(QStringLiteral("runtimeAnimationMirrored"), model->animationRuntimeState.resolvedMirrored);
             sceneItem.insert(QStringLiteral("runtimeAnimationCentroidNormalization"), entry.animationCentroidNormalization);
             sceneItem.insert(QStringLiteral("runtimeAnimationTrimStartNormalized"), entry.animationTrimStartNormalized);
             sceneItem.insert(QStringLiteral("runtimeAnimationTrimEndNormalized"), entry.animationTrimEndNormalized);
@@ -500,20 +524,9 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("followAnchorReferencesPreprocessedFrames"), followAnchorReferencesPreprocessedFrames);
             if (model->fbxAnimationRuntime)
             {
-                sceneItem.insert(QStringLiteral("runtimeAnimationPlaying"), model->fbxAnimationRuntime->playing);
-                sceneItem.insert(QStringLiteral("runtimeAnimationLoop"), model->fbxAnimationRuntime->loop);
-                sceneItem.insert(QStringLiteral("runtimeAnimationSpeed"), model->fbxAnimationRuntime->speed);
                 sceneItem.insert(QStringLiteral("runtimeAnimationCentroidNormalization"), model->fbxAnimationRuntime->centroidNormalizationEnabled);
                 sceneItem.insert(QStringLiteral("runtimeAnimationTrimStartNormalized"), model->fbxAnimationRuntime->trimStartNormalized);
                 sceneItem.insert(QStringLiteral("runtimeAnimationTrimEndNormalized"), model->fbxAnimationRuntime->trimEndNormalized);
-                QString runtimeClip;
-                const int activeClipIndex = model->fbxAnimationRuntime->activeClipIndex;
-                if (activeClipIndex >= 0 &&
-                    activeClipIndex < static_cast<int>(model->fbxAnimationRuntime->clips.size()))
-                {
-                    runtimeClip = QString::fromStdString(model->fbxAnimationRuntime->clips[activeClipIndex].name);
-                }
-                sceneItem.insert(QStringLiteral("runtimeActiveClip"), runtimeClip);
             }
 
             // Publish object-owned follow camera settings for REST/UI validation.

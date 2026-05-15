@@ -61,6 +61,10 @@ void InputRouter::handleKey(int key, int action)
                 m_inputState.jumpRequested = true;
             }
             break;
+        case GLFW_KEY_LEFT_SHIFT:
+        case GLFW_KEY_RIGHT_SHIFT:
+            m_inputState.sprintRequested = pressed;
+            break;
         default:
             break;
     }
@@ -72,6 +76,7 @@ void InputRouter::handleKey(int key, int action)
         m_characterTarget->character.keyA = m_inputState.keysPressed[1];
         m_characterTarget->character.keyS = m_inputState.keysPressed[2];
         m_characterTarget->character.keyD = m_inputState.keysPressed[3];
+        m_characterTarget->character.keyShift = m_inputState.sprintRequested;
     }
 }
 
@@ -104,6 +109,7 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
             m_inputState.jumpRequested = true;
             m_simulatedJumpRequested = false;
         }
+        m_inputState.sprintRequested = m_simulatedSprintRequested;
     }
     else if (m_display && m_display->window)
     {
@@ -116,6 +122,9 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
             m_inputState.keysPressed[3] = (glfwGetKey(m_display->window, GLFW_KEY_D) == GLFW_PRESS);
             m_inputState.keysPressed[4] = (glfwGetKey(m_display->window, GLFW_KEY_Q) == GLFW_PRESS);
             m_inputState.keysPressed[5] = (glfwGetKey(m_display->window, GLFW_KEY_E) == GLFW_PRESS);
+            m_inputState.sprintRequested =
+                (glfwGetKey(m_display->window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) ||
+                (glfwGetKey(m_display->window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
         }
     }
 
@@ -127,11 +136,15 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
                   camera->moveSpeed);
 }
 
-void InputRouter::setSimulatedInput(const std::array<bool, 6>& keys, bool jumpRequested, float durationSeconds)
+void InputRouter::setSimulatedInput(const std::array<bool, 6>& keys,
+                                    bool jumpRequested,
+                                    bool sprintRequested,
+                                    float durationSeconds)
 {
     m_simulatedKeys = keys;
     m_simulatedInputActive = true;
     m_simulatedJumpRequested = jumpRequested;
+    m_simulatedSprintRequested = sprintRequested;
     const float clampedDuration = std::max(0.0f, durationSeconds);
     m_simulatedInputExpiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(
         static_cast<int>(clampedDuration * 1000.0f));
@@ -142,18 +155,21 @@ void InputRouter::clearSimulatedInput()
     m_simulatedKeys = {false, false, false, false, false, false};
     m_simulatedInputActive = false;
     m_simulatedJumpRequested = false;
+    m_simulatedSprintRequested = false;
     m_simulatedInputExpiry = std::chrono::steady_clock::time_point::min();
     for (int i = 0; i < 6; ++i)
     {
         m_inputState.keysPressed[i] = false;
     }
     m_inputState.inputDir = glm::vec3(0.0f);
+    m_inputState.sprintRequested = false;
     if (m_characterTarget && m_characterTarget->character.isControllable)
     {
         m_characterTarget->character.keyW = false;
         m_characterTarget->character.keyA = false;
         m_characterTarget->character.keyS = false;
         m_characterTarget->character.keyD = false;
+        m_characterTarget->character.keyShift = false;
         m_characterTarget->setCharacterInput(glm::vec3(0.0f));
     }
 }
@@ -204,6 +220,7 @@ void InputRouter::updateForMode(float deltaTime,
             m_characterTarget->character.keyA = m_inputState.keysPressed[1];
             m_characterTarget->character.keyS = m_inputState.keysPressed[2];
             m_characterTarget->character.keyD = m_inputState.keysPressed[3];
+            m_characterTarget->character.keyShift = m_inputState.sprintRequested;
             m_characterTarget->setCharacterInput(inputDir);
 
             // Handle jump
@@ -219,6 +236,7 @@ void InputRouter::updateForMode(float deltaTime,
         m_isCharacterInputActive = false;
         m_inputState.inputDir = glm::vec3(0.0f);
         m_inputState.jumpRequested = false;
+        m_inputState.sprintRequested = false;
         if (m_characterTarget && m_characterTarget->character.isControllable)
         {
             m_characterTarget->setCharacterInput(glm::vec3(0.0f));
@@ -226,6 +244,7 @@ void InputRouter::updateForMode(float deltaTime,
             m_characterTarget->character.keyA = false;
             m_characterTarget->character.keyS = false;
             m_characterTarget->character.keyD = false;
+            m_characterTarget->character.keyShift = false;
         }
     }
 
@@ -268,6 +287,7 @@ void InputRouter::clearInput()
     }
     m_inputState.inputDir = glm::vec3(0.0f);
     m_inputState.jumpRequested = false;
+    m_inputState.sprintRequested = false;
     clearSimulatedInput();
     
     if (m_characterTarget)
@@ -276,5 +296,6 @@ void InputRouter::clearInput()
         m_characterTarget->character.keyA = false;
         m_characterTarget->character.keyS = false;
         m_characterTarget->character.keyD = false;
+        m_characterTarget->character.keyShift = false;
     }
 }

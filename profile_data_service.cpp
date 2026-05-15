@@ -30,6 +30,7 @@ EngineUiControlServer::ProfileData ProfileDataService::captureProfileData() cons
 {
     EngineUiControlServer::ProfileData data;
     data.uiDebug = m_window.uiDebugJson();
+    data.uiTree = m_window.uiWidgetTreeJson();
     if (auto* browser = m_window.assetBrowser())
     {
         data.rootPath = browser->rootPath();

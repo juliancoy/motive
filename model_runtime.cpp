@@ -162,6 +162,14 @@ void Model::setPaintOverride(bool enabled, const glm::vec3& color)
 
 void Model::setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed)
 {
+    animationRuntimeState.source = AnimationRuntimeState::Source::Manual;
+    animationRuntimeState.resolvedClipName = clipName;
+    animationRuntimeState.resolvedPlaying = playing;
+    animationRuntimeState.resolvedLoop = loop;
+    animationRuntimeState.resolvedSpeed = speed;
+    animationRuntimeState.resolvedProcedural = false;
+    animationRuntimeState.resolvedMirrored = false;
+
     if (fbxAnimationRuntime)
     {
         motive::animation::setFbxPlaybackState(*fbxAnimationRuntime, clipName, playing, loop, speed);
@@ -201,11 +209,157 @@ void Model::setCharacterAnimationNames(
     if (!jump.empty()) character.animJump = jump;
 }
 
+void Model::updateCharacterAnimationSemanticState(float dt)
+{
+    CharacterController::AnimState targetState;
+    const float horizontalSpeedForAnim = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
+
+    const bool hasMoveKeyIntent =
+        (character.keyW || character.keyA || character.keyS || character.keyD);
+    const bool justReleasedMoveKeyIntent = !hasMoveKeyIntent && character.hadMoveKeyIntentLastFrame;
+    character.hadMoveKeyIntentLastFrame = hasMoveKeyIntent;
+
+    if (justReleasedMoveKeyIntent && character.enableRestPointOnMoveRelease)
+    {
+        character.pendingRestPointLatch = true;
+    }
+    if (hasMoveKeyIntent)
+    {
+        character.pendingRestPointLatch = false;
+        character.moveIntentGraceTimer = character.moveIntentGraceDuration;
+    }
+    else
+    {
+        character.moveIntentGraceTimer = std::max(0.0f, character.moveIntentGraceTimer - dt);
+    }
+    const bool hasRecentMoveIntent = hasMoveKeyIntent || character.moveIntentGraceTimer > 0.0f;
+
+    if (!character.isGrounded)
+    {
+        if (character.jumpPhase == CharacterController::JumpPhase::None ||
+            character.jumpPhase == CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Start;
+            character.jumpPhaseTimer = character.jumpStartMinDuration;
+        }
+
+        if (character.jumpPhase == CharacterController::JumpPhase::Start)
+        {
+            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
+            if (character.jumpPhaseTimer <= 0.0f ||
+                character.velocity.y <= character.jumpApexVelocityThreshold)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::Apex;
+            }
+        }
+
+        if ((character.jumpPhase == CharacterController::JumpPhase::Start ||
+             character.jumpPhase == CharacterController::JumpPhase::Apex) &&
+            character.velocity.y <= character.jumpFallVelocityThreshold)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Fall;
+        }
+    }
+    else
+    {
+        if (!character.wasGroundedLastFrame &&
+            character.jumpPhase != CharacterController::JumpPhase::None)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::Land;
+            character.jumpPhaseTimer = character.jumpLandMinDuration;
+        }
+        else if (character.jumpPhase == CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
+            if (character.jumpPhaseTimer <= 0.0f)
+            {
+                character.jumpPhase = CharacterController::JumpPhase::None;
+            }
+        }
+        else if (character.jumpPhase != CharacterController::JumpPhase::None &&
+                 character.jumpPhase != CharacterController::JumpPhase::Land)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::None;
+        }
+    }
+    character.wasGroundedLastFrame = character.isGrounded;
+
+    const auto isLocomotionState = [](CharacterController::AnimState state) -> bool {
+        return state == CharacterController::AnimState::WalkForward ||
+               state == CharacterController::AnimState::WalkBackward ||
+               state == CharacterController::AnimState::WalkLeft ||
+               state == CharacterController::AnimState::WalkRight ||
+               state == CharacterController::AnimState::Run;
+    };
+    const bool wasLocomotion = isLocomotionState(character.currentAnimState);
+
+    if (character.jumpPhase != CharacterController::JumpPhase::None)
+    {
+        character.comeToRestTimer = 0.0f;
+        character.pendingRestPointLatch = false;
+        targetState = CharacterController::AnimState::Jump;
+    }
+    else if (!hasMoveKeyIntent)
+    {
+        if (character.comeToRestTimer <= 0.0f && (wasLocomotion || hasRecentMoveIntent))
+        {
+            character.comeToRestTimer = character.comeToRestDuration;
+        }
+
+        if (character.comeToRestTimer > 0.0f)
+        {
+            character.comeToRestTimer = std::max(0.0f, character.comeToRestTimer - dt);
+            targetState = CharacterController::AnimState::ComeToRest;
+        }
+        else
+        {
+            targetState = CharacterController::AnimState::Idle;
+        }
+    }
+    else if (character.keyShift || horizontalSpeedForAnim >= character.runSpeedThreshold)
+    {
+        character.comeToRestTimer = 0.0f;
+        targetState = CharacterController::AnimState::Run;
+    }
+    else
+    {
+        character.comeToRestTimer = 0.0f;
+        if (character.keyW && !character.keyS)
+            targetState = CharacterController::AnimState::WalkForward;
+        else if (character.keyS && !character.keyW)
+            targetState = CharacterController::AnimState::WalkBackward;
+        else if (character.keyA && !character.keyD)
+            targetState = CharacterController::AnimState::WalkLeft;
+        else if (character.keyD && !character.keyA)
+            targetState = CharacterController::AnimState::WalkRight;
+        else
+            targetState = CharacterController::AnimState::WalkForward;
+    }
+
+    character.previousAnimState = character.currentAnimState;
+    character.currentAnimState = targetState;
+    animationRuntimeState.source = AnimationRuntimeState::Source::CharacterController;
+    animationRuntimeState.semanticState = targetState;
+    animationRuntimeState.semanticJumpPhase = character.jumpPhase;
+}
+
 void Model::updateAnimation(double deltaSeconds)
 {
     if (!visible || !animated)
     {
         return;
+    }
+
+    if (character.isControllable)
+    {
+        updateCharacterAnimationSemanticState(static_cast<float>(std::max(deltaSeconds, 0.0)));
+        animationRuntimeState.source = AnimationRuntimeState::Source::CharacterController;
+        animationRuntimeState.semanticState = character.currentAnimState;
+        animationRuntimeState.semanticJumpPhase = character.jumpPhase;
+    }
+    else
+    {
+        animationRuntimeState.source = AnimationRuntimeState::Source::Manual;
     }
     
     // Handle procedural idle animation
@@ -213,6 +367,14 @@ void Model::updateAnimation(double deltaSeconds)
         character.currentAnimState == CharacterController::AnimState::Idle)
     {
         applyProceduralIdleAnimation(deltaSeconds);
+        return;
+    }
+
+    if (character.isControllable &&
+        character.isUsingProceduralAnim &&
+        character.currentAnimState == CharacterController::AnimState::Jump)
+    {
+        applyProceduralJumpAnimation(deltaSeconds);
         return;
     }
     
@@ -264,42 +426,173 @@ void Model::updateAnimation(double deltaSeconds)
 
 void Model::applyProceduralIdleAnimation(double deltaSeconds)
 {
-    // Generate procedural idle animation using sine waves for breathing/swaying
-    static double timeAccumulator = 0.0;
-    timeAccumulator += deltaSeconds;
-    
-    // Breathing - vertical chest movement
-    float bobOffset = sin(timeAccumulator * character.idleBobFrequency * 2.0 * M_PI) * 
-                      character.idleBobAmplitude;
-    
-    // Swaying - slight horizontal rotation
-    float swayOffset = sin(timeAccumulator * character.idleSwayFrequency * 2.0 * M_PI) * 
-                       character.idleSwayAmplitude;
-    
-    // Apply to all primitives (affects the whole character)
-    for (auto& mesh : meshes)
+    character.proceduralIdleTime += static_cast<float>(deltaSeconds);
+
+    if (!proceduralIdleBaseVerticesValid)
     {
-        for (auto& primitive : mesh.primitives)
+        proceduralIdleBaseVertices.clear();
+        proceduralIdleBaseVertices.reserve(meshes.size());
+        for (const auto& mesh : meshes)
         {
-            if (primitive && primitive->ObjectTransformUBOMapped)
-            {
-                // Get current transform
-                glm::mat4 baseTransform = primitive->transform;
-                
-                // Apply breathing (vertical offset)
-                baseTransform[3][1] += bobOffset;
-                
-                // Apply swaying (subtle rotation around Y axis)
-                glm::mat4 swayRotation = glm::rotate(glm::mat4(1.0f), swayOffset, glm::vec3(0.0f, 1.0f, 0.0f));
-                baseTransform = swayRotation * baseTransform;
-                
-                // Update the UBO
-                ObjectTransform ubo{};
-                ubo.model = baseTransform;
-                memcpy(primitive->ObjectTransformUBOMapped, &ubo, sizeof(ubo));
-            }
+            const Primitive* primitive = !mesh.primitives.empty() ? mesh.primitives.front().get() : nullptr;
+            proceduralIdleBaseVertices.push_back(primitive ? primitive->cpuVertices : std::vector<Vertex>{});
+        }
+        proceduralIdleBaseVerticesValid = true;
+    }
+
+    glm::vec3 localMin(std::numeric_limits<float>::max());
+    glm::vec3 localMax(std::numeric_limits<float>::lowest());
+    bool found = false;
+    for (const auto& vertices : proceduralIdleBaseVertices)
+    {
+        for (const Vertex& vertex : vertices)
+        {
+            localMin = glm::min(localMin, vertex.pos);
+            localMax = glm::max(localMax, vertex.pos);
+            found = true;
         }
     }
+    if (!found)
+    {
+        return;
+    }
+
+    const glm::vec3 size = glm::max(localMax - localMin, glm::vec3(0.0001f));
+    const glm::vec3 center = (localMin + localMax) * 0.5f;
+    const float breathe = std::sin(character.proceduralIdleTime * character.idleBobFrequency * 2.0f * M_PI);
+    const float sway = std::sin(character.proceduralIdleTime * character.idleSwayFrequency * 2.0f * M_PI);
+
+    for (size_t meshIndex = 0; meshIndex < meshes.size() && meshIndex < proceduralIdleBaseVertices.size(); ++meshIndex)
+    {
+        if (meshes[meshIndex].primitives.empty() || !meshes[meshIndex].primitives.front())
+        {
+            continue;
+        }
+
+        std::vector<Vertex> posed = proceduralIdleBaseVertices[meshIndex];
+        for (Vertex& vertex : posed)
+        {
+            const float y01 = std::clamp((vertex.pos.y - localMin.y) / size.y, 0.0f, 1.0f);
+            const float xCentered = size.x > 1e-6f ? (vertex.pos.x - center.x) / size.x : 0.0f;
+            const float torso = glm::smoothstep(0.35f, 0.78f, y01);
+            const float chest = glm::smoothstep(0.52f, 0.86f, y01);
+            const float head = glm::smoothstep(0.78f, 0.98f, y01);
+            const float armBand = chest * glm::smoothstep(0.18f, 0.42f, std::abs(xCentered));
+
+            vertex.pos.y += torso * (0.010f * size.y * breathe);
+            vertex.pos.z += chest * (0.008f * size.z * breathe);
+            vertex.pos.x += head * (0.010f * size.x * sway);
+            vertex.pos.z += armBand * (0.006f * size.z * sway * (vertex.pos.x >= center.x ? 1.0f : -1.0f));
+        }
+
+        meshes[meshIndex].primitives.front()->updateVertexData(posed);
+    }
+
+    recomputeBounds();
+    animationPreprocessedFrameValid = true;
+    ++animationPreprocessedFrameCounter;
+}
+
+void Model::applyProceduralJumpAnimation(double deltaSeconds)
+{
+    character.proceduralJumpTime += static_cast<float>(deltaSeconds) *
+                                    std::max(character.jumpAnimSpeed, 0.01f);
+
+    if (!proceduralJumpBaseVerticesValid)
+    {
+        proceduralJumpBaseVertices.clear();
+        proceduralJumpBaseVertices.reserve(meshes.size());
+        for (const auto& mesh : meshes)
+        {
+            const Primitive* primitive = !mesh.primitives.empty() ? mesh.primitives.front().get() : nullptr;
+            proceduralJumpBaseVertices.push_back(primitive ? primitive->cpuVertices : std::vector<Vertex>{});
+        }
+        proceduralJumpBaseVerticesValid = true;
+    }
+
+    glm::vec3 localMin(std::numeric_limits<float>::max());
+    glm::vec3 localMax(std::numeric_limits<float>::lowest());
+    bool found = false;
+    for (const auto& vertices : proceduralJumpBaseVertices)
+    {
+        for (const Vertex& vertex : vertices)
+        {
+            localMin = glm::min(localMin, vertex.pos);
+            localMax = glm::max(localMax, vertex.pos);
+            found = true;
+        }
+    }
+    if (!found)
+    {
+        return;
+    }
+
+    const glm::vec3 size = glm::max(localMax - localMin, glm::vec3(0.0001f));
+    const glm::vec3 center = (localMin + localMax) * 0.5f;
+    float crouch = 0.0f;
+    float airborne = 0.0f;
+    switch (character.jumpPhase)
+    {
+    case CharacterController::JumpPhase::Start:
+        crouch = 0.75f;
+        airborne = 0.25f;
+        break;
+    case CharacterController::JumpPhase::Apex:
+        crouch = 0.05f;
+        airborne = 1.0f;
+        break;
+    case CharacterController::JumpPhase::Fall:
+        crouch = 0.25f;
+        airborne = 0.75f;
+        break;
+    case CharacterController::JumpPhase::Land:
+        crouch = 0.95f;
+        airborne = 0.15f;
+        break;
+    case CharacterController::JumpPhase::None:
+        crouch = 0.0f;
+        airborne = 0.0f;
+        break;
+    }
+
+    const float pulse = 0.5f + 0.5f * std::sin(character.proceduralJumpTime * 8.0f);
+    const float lean = (airborne * 0.03f + crouch * 0.015f) * size.z;
+    const float kneeTuck = (crouch * 0.05f + airborne * 0.025f) * size.y;
+    const float armLift = (airborne * 0.06f + crouch * 0.025f) * size.y;
+
+    for (size_t meshIndex = 0; meshIndex < meshes.size() && meshIndex < proceduralJumpBaseVertices.size(); ++meshIndex)
+    {
+        if (meshes[meshIndex].primitives.empty() || !meshes[meshIndex].primitives.front())
+        {
+            continue;
+        }
+
+        std::vector<Vertex> posed = proceduralJumpBaseVertices[meshIndex];
+        for (Vertex& vertex : posed)
+        {
+            const float y01 = std::clamp((vertex.pos.y - localMin.y) / size.y, 0.0f, 1.0f);
+            const float x01 = std::clamp(std::abs(vertex.pos.x - center.x) / (size.x * 0.5f), 0.0f, 1.0f);
+            const float lowerBody = 1.0f - glm::smoothstep(0.18f, 0.58f, y01);
+            const float torso = glm::smoothstep(0.42f, 0.82f, y01);
+            const float armRegion = glm::smoothstep(0.52f, 0.78f, y01) *
+                                    glm::smoothstep(0.22f, 0.65f, x01);
+            const float footRegion = 1.0f - glm::smoothstep(0.0f, 0.18f, y01);
+
+            vertex.pos.y -= crouch * lowerBody * size.y * 0.04f;
+            vertex.pos.y += airborne * armRegion * armLift;
+            vertex.pos.z += torso * lean;
+            vertex.pos.z -= lowerBody * kneeTuck * (0.55f + 0.10f * pulse);
+            vertex.pos.x += (vertex.pos.x >= center.x ? 1.0f : -1.0f) *
+                            armRegion * airborne * size.x * 0.015f;
+            vertex.pos.y -= footRegion * crouch * size.y * 0.015f;
+        }
+
+        meshes[meshIndex].primitives.front()->updateVertexData(posed);
+    }
+
+    recomputeBounds();
+    animationPreprocessedFrameValid = true;
+    ++animationPreprocessedFrameCounter;
 }
 
 void Model::applyTransformToPrimitives(const glm::mat4 &transform)
@@ -490,7 +783,10 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     glm::vec3 targetVelocity(0.0f);
     if (glm::length(character.inputDir) > 0.01f)
     {
-        targetVelocity = glm::normalize(character.inputDir) * character.moveSpeed;
+        const float targetMoveSpeed = character.keyShift
+            ? character.moveSpeed * character.sprintSpeedMultiplier
+            : character.moveSpeed;
+        targetVelocity = glm::normalize(character.inputDir) * targetMoveSpeed;
     }
     
     // Smoothly interpolate current velocity toward target (for arcade feel)
@@ -592,139 +888,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     worldTransform[3] = glm::vec4(currentPos, 1.0f);
     syncWorldTransformToPrimitives();
     
-    // Update animation state based on directional keys and speed
-    // Determine target animation state with directional awareness
-    CharacterController::AnimState targetState;
-    const float horizontalSpeedForAnim = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
-    
-    const bool hasMoveKeyIntent =
-        (character.keyW || character.keyA || character.keyS || character.keyD);
-    const bool justReleasedMoveKeyIntent = !hasMoveKeyIntent && character.hadMoveKeyIntentLastFrame;
-    character.hadMoveKeyIntentLastFrame = hasMoveKeyIntent;
-
-    if (justReleasedMoveKeyIntent && character.enableRestPointOnMoveRelease)
-    {
-        character.pendingRestPointLatch = true;
-    }
-    if (hasMoveKeyIntent)
-    {
-        character.pendingRestPointLatch = false;
-    }
-    if (hasMoveKeyIntent)
-    {
-        character.moveIntentGraceTimer = character.moveIntentGraceDuration;
-    }
-    else
-    {
-        character.moveIntentGraceTimer = std::max(0.0f, character.moveIntentGraceTimer - dt);
-    }
-    const bool hasRecentMoveIntent = hasMoveKeyIntent || character.moveIntentGraceTimer > 0.0f;
-
-    if (!character.isGrounded)
-    {
-        if (character.jumpPhase == CharacterController::JumpPhase::None ||
-            character.jumpPhase == CharacterController::JumpPhase::Land)
-        {
-            character.jumpPhase = CharacterController::JumpPhase::Start;
-            character.jumpPhaseTimer = character.jumpStartMinDuration;
-        }
-
-        if (character.jumpPhase == CharacterController::JumpPhase::Start)
-        {
-            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
-            if (character.jumpPhaseTimer <= 0.0f ||
-                character.velocity.y <= character.jumpApexVelocityThreshold)
-            {
-                character.jumpPhase = CharacterController::JumpPhase::Apex;
-            }
-        }
-
-        if ((character.jumpPhase == CharacterController::JumpPhase::Start ||
-             character.jumpPhase == CharacterController::JumpPhase::Apex) &&
-            character.velocity.y <= character.jumpFallVelocityThreshold)
-        {
-            character.jumpPhase = CharacterController::JumpPhase::Fall;
-        }
-    }
-    else
-    {
-        if (!character.wasGroundedLastFrame &&
-            character.jumpPhase != CharacterController::JumpPhase::None)
-        {
-            character.jumpPhase = CharacterController::JumpPhase::Land;
-            character.jumpPhaseTimer = character.jumpLandMinDuration;
-        }
-        else if (character.jumpPhase == CharacterController::JumpPhase::Land)
-        {
-            character.jumpPhaseTimer = std::max(0.0f, character.jumpPhaseTimer - dt);
-            if (character.jumpPhaseTimer <= 0.0f)
-            {
-                character.jumpPhase = CharacterController::JumpPhase::None;
-            }
-        }
-        else if (character.jumpPhase != CharacterController::JumpPhase::None &&
-                 character.jumpPhase != CharacterController::JumpPhase::Land)
-        {
-            character.jumpPhase = CharacterController::JumpPhase::None;
-        }
-    }
-    character.wasGroundedLastFrame = character.isGrounded;
-
-    const auto isLocomotionState = [](CharacterController::AnimState state) -> bool {
-        return state == CharacterController::AnimState::WalkForward ||
-               state == CharacterController::AnimState::WalkBackward ||
-               state == CharacterController::AnimState::WalkLeft ||
-               state == CharacterController::AnimState::WalkRight ||
-               state == CharacterController::AnimState::Run;
-    };
-    const bool wasLocomotion = isLocomotionState(character.currentAnimState);
-
-    // Jump animation takes priority while in any jump phase.
-    if (character.jumpPhase != CharacterController::JumpPhase::None)
-    {
-        character.comeToRestTimer = 0.0f;
-        character.pendingRestPointLatch = false;
-        targetState = CharacterController::AnimState::Jump;
-    }
-    else if (!hasMoveKeyIntent)
-    {
-        // Trigger a short come-to-rest phase whenever locomotion input is released.
-        if (character.comeToRestTimer <= 0.0f && (wasLocomotion || hasRecentMoveIntent))
-        {
-            character.comeToRestTimer = character.comeToRestDuration;
-        }
-
-        if (character.comeToRestTimer > 0.0f)
-        {
-            character.comeToRestTimer = std::max(0.0f, character.comeToRestTimer - dt);
-            targetState = CharacterController::AnimState::ComeToRest;
-        }
-        else
-        {
-            // Strict rule: no locomotion animation when no key is held.
-            targetState = CharacterController::AnimState::Idle;
-        }
-    }
-    else if (horizontalSpeedForAnim >= character.runSpeedThreshold)
-    {
-        character.comeToRestTimer = 0.0f;
-        targetState = CharacterController::AnimState::Run;
-    }
-    else
-    {
-        character.comeToRestTimer = 0.0f;
-        // Select directional walk animation based on which keys are pressed.
-        if (character.keyW && !character.keyS)
-            targetState = CharacterController::AnimState::WalkForward;
-        else if (character.keyS && !character.keyW)
-            targetState = CharacterController::AnimState::WalkBackward;
-        else if (character.keyA && !character.keyD)
-            targetState = CharacterController::AnimState::WalkLeft;
-        else if (character.keyD && !character.keyA)
-            targetState = CharacterController::AnimState::WalkRight;
-        else
-            targetState = CharacterController::AnimState::WalkForward;
-    }
+    CharacterController::AnimState targetState = character.currentAnimState;
     
     // Smooth animation weight transition
     float targetWeight = 0.0f;
@@ -752,9 +916,6 @@ void Model::updateCharacterPhysics(float deltaSeconds)
     
     character.currentAnimWeight = glm::mix(character.currentAnimWeight, targetWeight,
                                            glm::min(character.animBlendSpeed * dt, 1.0f));
-    character.previousAnimState = character.currentAnimState;
-    character.currentAnimState = targetState;
-    
     // Auto-select animation clips based on state
     // Note: This assumes clips are named "idle", "walk", "run" or similar
     if (animated && !animationClips.empty())
@@ -922,20 +1083,15 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                     });
                     targetLoop = true;
                 }
-                // Fallback to idle
-                if (targetClip.empty())
-                    targetClip = findClip({
-                        character.animIdle,
-                        "idle_loop", "idle", "Idle"
-                    });
                 break;
         }
         
         // Final fallback to first clip only for locomotion states.
-        // For Idle, do not fall back to arbitrary clips (often walk cycles).
+        // For Idle/Jump, do not fall back to arbitrary clips (often walk cycles).
         if (targetClip.empty() &&
             targetState != CharacterController::AnimState::Idle &&
             targetState != CharacterController::AnimState::ComeToRest &&
+            targetState != CharacterController::AnimState::Jump &&
             !animationClips.empty())
         {
             targetClip = animationClips[0].name;
@@ -994,11 +1150,56 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                 targetSpeed = character.enableTimeWarp ? character.jumpAnimSpeed : 1.0f;
                 break;
         }
+
+        if (targetState == CharacterController::AnimState::Jump && targetClip.empty())
+        {
+            std::string activeClipName;
+            if (fbxAnimationRuntime &&
+                fbxAnimationRuntime->activeClipIndex >= 0 &&
+                fbxAnimationRuntime->activeClipIndex < static_cast<int>(fbxAnimationRuntime->clips.size()))
+            {
+                activeClipName = fbxAnimationRuntime->clips[fbxAnimationRuntime->activeClipIndex].name;
+            }
+
+            if (!activeClipName.empty())
+            {
+                targetClip = activeClipName;
+                targetLoop = true;
+            }
+            else
+            {
+                targetClip = findClip({
+                    character.animIdle,
+                    "idle_loop", "idle_standing", "idle_stand",
+                    "Idle", "IDLE", "idle",
+                    character.animWalkForward,
+                    "walk_fwd", "walk_forward", "walk_loop",
+                    "Walking", "WALKING", "walking", "Walk", "walk"
+                });
+                targetLoop = true;
+            }
+        }
         
         // Update animation playback state
         character.currentAnimSpeed = targetSpeed;
         character.isUsingMirroredAnim = useMirroring;
         character.isUsingProceduralAnim = useProcedural;
+        animationRuntimeState.resolvedClipName = targetClip;
+        animationRuntimeState.resolvedLoop = targetLoop;
+        animationRuntimeState.resolvedSpeed = targetSpeed;
+        animationRuntimeState.resolvedProcedural = useProcedural;
+        animationRuntimeState.resolvedMirrored = useMirroring;
+        animationRuntimeState.resolvedPlaying = !useProcedural && !targetClip.empty();
+        if (targetState != CharacterController::AnimState::Idle || !useProcedural)
+        {
+            proceduralIdleBaseVerticesValid = false;
+            character.proceduralIdleTime = 0.0f;
+        }
+        if (targetState != CharacterController::AnimState::Jump || !useProcedural)
+        {
+            proceduralJumpBaseVerticesValid = false;
+            character.proceduralJumpTime = 0.0f;
+        }
 
         if (character.pendingRestPointLatch &&
             (targetState != CharacterController::AnimState::ComeToRest || !supportsReleaseRestLatch))
@@ -1046,13 +1247,17 @@ void Model::updateCharacterPhysics(float deltaSeconds)
         }
         else if (useProcedural)
         {
-            // Procedural idle - handled in updateAnimation
-            fbxAnimationRuntime->playing = false;
+            // Procedural idle/jump is handled in updateAnimation.
+            if (fbxAnimationRuntime)
+            {
+                fbxAnimationRuntime->playing = false;
+            }
         }
         else if (targetState == CharacterController::AnimState::Idle && fbxAnimationRuntime)
         {
             // No valid idle clip: hold current pose instead of playing locomotion clips.
             fbxAnimationRuntime->playing = false;
+            animationRuntimeState.resolvedPlaying = false;
         }
 
         if (character.pendingRestPointLatch &&

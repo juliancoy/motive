@@ -36,9 +36,11 @@ public:
     ViewportHostWidget* viewportHost() const;
     QJsonArray hierarchyJson() const;
     QJsonObject uiDebugJson() const;
+    QJsonObject uiWidgetTreeJson() const;
     QJsonObject inspectorDebugJson() const;
     bool selectHierarchySceneItem(int sceneIndex);
     bool selectHierarchyCamera(const QString& cameraId, int cameraIndex = -1);
+    bool selectHierarchyLight();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -57,6 +59,8 @@ private:
     void createProject();
     void switchProject();
     void setMediaDirProjects();
+    int selectedSceneItemIndex() const;
+    void exportSelectedSceneItemToGltf();
     void saveProjectState();
     void saveUiState();
     QJsonObject captureUiState() const;
@@ -124,6 +128,8 @@ private:
     QWidget* m_paintColorWidget = nullptr;
     QWidget* m_paintColorContainer = nullptr;
     QWidget* m_animationControlsWidget = nullptr;
+    QWidget* m_characterBindingsWidget = nullptr;
+    QLabel* m_animationClipSummaryValue = nullptr;
     QComboBox* m_animationClipCombo = nullptr;
     QCheckBox* m_animationPlayingCheck = nullptr;
     QCheckBox* m_animationLoopCheck = nullptr;
@@ -131,6 +137,16 @@ private:
     QCheckBox* m_animationCentroidNormalizeCheck = nullptr;
     QDoubleSpinBox* m_animationTrimStartSpin = nullptr;
     QDoubleSpinBox* m_animationTrimEndSpin = nullptr;
+    QComboBox* m_characterIdleClipCombo = nullptr;
+    QComboBox* m_characterComeToRestClipCombo = nullptr;
+    QComboBox* m_characterWalkForwardClipCombo = nullptr;
+    QComboBox* m_characterWalkBackwardClipCombo = nullptr;
+    QComboBox* m_characterWalkLeftClipCombo = nullptr;
+    QComboBox* m_characterWalkRightClipCombo = nullptr;
+    QComboBox* m_characterRunClipCombo = nullptr;
+    QComboBox* m_characterJumpClipCombo = nullptr;
+    QComboBox* m_characterFallClipCombo = nullptr;
+    QComboBox* m_characterLandClipCombo = nullptr;
     
     // Animation-Physics Coupling
     QComboBox* m_animationPhysicsCouplingCombo = nullptr;
@@ -142,6 +158,10 @@ private:
     QDoubleSpinBox* m_elementGravityZ = nullptr;
     QWidget* m_elementGravityWidget = nullptr;
     QDoubleSpinBox* m_characterTurnResponsivenessSpin = nullptr;
+    QDoubleSpinBox* m_characterMoveSpeedSpin = nullptr;
+    QDoubleSpinBox* m_characterIdleAnimationSpeedSpin = nullptr;
+    QDoubleSpinBox* m_characterWalkAnimationSpeedSpin = nullptr;
+    QCheckBox* m_characterProceduralIdleCheck = nullptr;
     QLabel* m_objectFollowCamInfoValue = nullptr;
     QLabel* m_objectKinematicInfoValue = nullptr;
     QLabel* m_objectAnimationRuntimeInfoValue = nullptr;
@@ -171,6 +191,7 @@ private:
     QDoubleSpinBox* m_lightBrightnessSpin = nullptr;
     QWidget* m_lightColorWidget = nullptr;
     QWidget* m_lightColorContainer = nullptr;
+    QPushButton* m_lightFocusButton = nullptr;
     QWidget* m_translationWidget = nullptr;
     QWidget* m_rotationWidget = nullptr;
     QWidget* m_scaleWidget = nullptr;
@@ -206,6 +227,13 @@ private:
     QDoubleSpinBox* m_farClipSpin = nullptr;
     QComboBox* m_renderPathCombo = nullptr;
     QComboBox* m_viewportCountCombo = nullptr;
+    QComboBox* m_globalPhysicsEngineCombo = nullptr;
+    QDoubleSpinBox* m_globalGravityXSpin = nullptr;
+    QDoubleSpinBox* m_globalGravityYSpin = nullptr;
+    QDoubleSpinBox* m_globalGravityZSpin = nullptr;
+    QSpinBox* m_globalPhysicsMaxSubStepsSpin = nullptr;
+    QCheckBox* m_globalPhysicsDebugDrawCheck = nullptr;
+    QCheckBox* m_globalPhysicsAutoSyncCheck = nullptr;
     QCheckBox* m_meshConsolidationCheck = nullptr;
     QCheckBox* m_validationLayersCheck = nullptr;
     QLabel* m_validationRestartLabel = nullptr;
@@ -214,6 +242,7 @@ private:
     QLabel* m_wasdRoutingStatusValue = nullptr;
     QPushButton* m_takeWasdControlButton = nullptr;
     QPushButton* m_resetControlRoutingButton = nullptr;
+    QPushButton* m_saveProjectButton = nullptr;
     QCheckBox* m_invertHorizontalDragCheck = nullptr;
     QWidget* m_bgColorWidget = nullptr;
 

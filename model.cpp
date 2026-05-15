@@ -40,6 +40,7 @@ void bindFbxMeshAnimation(Model& model,
                           const ufbx_mesh* mesh,
                           uint32_t skinDeformerIndex,
                           std::vector<uint32_t> sourceVertexIndices,
+                          std::vector<Vertex> baseVertices,
                           std::vector<glm::uvec4> jointIndices,
                           std::vector<glm::vec4> jointWeights,
                           bool gpuSkinningEligible)
@@ -55,6 +56,7 @@ void bindFbxMeshAnimation(Model& model,
                                              mesh->element_id,
                                              skinDeformerIndex,
                                              std::move(sourceVertexIndices),
+                                             std::move(baseVertices),
                                              std::move(jointIndices),
                                              std::move(jointWeights));
     }
@@ -117,6 +119,7 @@ void importFbxVerticesIntoModel(Model& model,
                          mesh,
                          skinDeformerIndex,
                          std::move(sourceVertexIndices),
+                         vertices,
                          std::move(jointIndices),
                          std::move(jointWeights),
                          gpuSkinningEligible);
@@ -346,26 +349,15 @@ Model::Model(const std::string &gltfPath, Engine *engine, bool consolidateMeshes
             throw std::runtime_error("FBX error: " + std::string(error.description.data, error.description.length));
         }
 
-        for (size_t i = 0; i < scene->anim_stacks.count; ++i)
+        fbxAnimationRuntime = motive::animation::createFbxRuntime(scene);
+        motive::animation::loadFbxSidecarClips(*fbxAnimationRuntime, gltfPath);
+        for (const auto& clip : fbxAnimationRuntime->clips)
         {
-            const ufbx_anim_stack* animStack = scene->anim_stacks.data[i];
-            if (!animStack)
-            {
-                continue;
-            }
-            std::string clipName = animStack->name.data && animStack->name.length > 0
-                ? std::string(animStack->name.data, animStack->name.length)
-                : ("Animation " + std::to_string(i));
-            if (clipName.empty())
-            {
-                clipName = "Animation " + std::to_string(i);
-            }
-            animationClips.push_back(AnimationClipInfo{clipName});
+            animationClips.push_back(AnimationClipInfo{clip.name});
         }
         if (!animationClips.empty())
         {
             animated = true;
-            fbxAnimationRuntime = motive::animation::createFbxRuntime(scene);
         }
         std::cout << "[FBX] Animation stacks discovered: " << animationClips.size();
         if (!animationClips.empty())
@@ -642,7 +634,10 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
     if (character.isGrounded)
     {
         // Calculate desired velocity from input
-        glm::vec3 desiredVelocity = character.inputDir * character.moveSpeed;
+        const float targetMoveSpeed = character.keyShift
+            ? character.moveSpeed * character.sprintSpeedMultiplier
+            : character.moveSpeed;
+        glm::vec3 desiredVelocity = character.inputDir * targetMoveSpeed;
         
         // Preserve vertical velocity for gravity
         desiredVelocity.y = velocity.y;
@@ -660,12 +655,19 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
         {
             physicsBody->applyCentralImpulse(glm::vec3(0, character.jumpSpeed * physicsBody->getMass(), 0));
             character.jumpRequested = false;
+            character.isGrounded = false;
+            character.jumpPhase = CharacterController::JumpPhase::Start;
+            character.jumpPhaseTimer = character.jumpStartMinDuration;
+            character.currentAnimState = CharacterController::AnimState::Jump;
         }
     }
     else
     {
         // In air - apply gravity via physics engine, but we can add air control
-        glm::vec3 airControl = character.inputDir * character.moveSpeed * 0.1f;
+        const float targetMoveSpeed = character.keyShift
+            ? character.moveSpeed * character.sprintSpeedMultiplier
+            : character.moveSpeed;
+        glm::vec3 airControl = character.inputDir * targetMoveSpeed * 0.1f;
         physicsBody->applyCentralForce(airControl * physicsBody->getMass());
     }
     
@@ -730,88 +732,4 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
         syncWorldTransformToPrimitives();
     }
 
-    // Physics-driven controllable characters still need explicit animation-state updates.
-    // The non-physics character path already does this, but this physics overload previously
-    // skipped it, which caused "rotate only" behavior with no walk playback.
-    if (animated && !animationClips.empty())
-    {
-        const bool movingIntent = character.keyW || character.keyA || character.keyS || character.keyD;
-        const float planarSpeed = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
-
-        auto findClip = [&](const std::vector<std::string>& searchTerms) -> std::string {
-            for (const auto& term : searchTerms)
-            {
-                if (term.empty()) continue;
-                for (const auto& clip : animationClips)
-                {
-                    if (clip.name.find(term) != std::string::npos)
-                    {
-                        return clip.name;
-                    }
-                }
-            }
-            return std::string();
-        };
-
-        CharacterController::AnimState targetState = CharacterController::AnimState::Idle;
-        if (movingIntent)
-        {
-            if (character.keyW && !character.keyS) targetState = CharacterController::AnimState::WalkForward;
-            else if (character.keyS && !character.keyW) targetState = CharacterController::AnimState::WalkBackward;
-            else if (character.keyA && !character.keyD) targetState = CharacterController::AnimState::WalkLeft;
-            else if (character.keyD && !character.keyA) targetState = CharacterController::AnimState::WalkRight;
-            else targetState = CharacterController::AnimState::WalkForward;
-
-            if (planarSpeed >= character.runSpeedThreshold)
-            {
-                targetState = CharacterController::AnimState::Run;
-            }
-        }
-        character.currentAnimState = targetState;
-
-        std::string targetClip;
-        float targetSpeed = 1.0f;
-        switch (targetState)
-        {
-            case CharacterController::AnimState::WalkForward:
-                targetClip = findClip({character.animWalkForward, "walk_fwd", "walk_forward", "walk", "Walking"});
-                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
-                break;
-            case CharacterController::AnimState::WalkBackward:
-                targetClip = findClip({character.animWalkBackward, "walk_bwd", "walk_back", "backward", "walk"});
-                targetSpeed = character.enableTimeWarp ? character.backwardAnimSpeed : 1.0f;
-                break;
-            case CharacterController::AnimState::WalkLeft:
-                targetClip = findClip({character.animWalkLeft, "strafe_left", "walk_left", "left", "walk"});
-                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
-                break;
-            case CharacterController::AnimState::WalkRight:
-                targetClip = findClip({character.animWalkRight, "strafe_right", "walk_right", "right", "walk"});
-                targetSpeed = character.enableTimeWarp ? character.walkAnimSpeed : 1.0f;
-                break;
-            case CharacterController::AnimState::Run:
-                targetClip = findClip({character.animRun, "run_forward", "run_fwd", "run", "Running"});
-                targetSpeed = character.enableTimeWarp ? character.runAnimSpeed : 1.0f;
-                break;
-            default:
-                targetClip = findClip({character.animIdle, "idle_loop", "idle_standing", "idle", "Idle"});
-                targetSpeed = character.enableTimeWarp ? character.idleAnimSpeed : 1.0f;
-                break;
-        }
-
-        if (targetClip.empty() && targetState != CharacterController::AnimState::Idle)
-        {
-            targetClip = animationClips.front().name;
-        }
-
-        character.currentAnimSpeed = targetSpeed;
-        if (!targetClip.empty())
-        {
-            setAnimationPlaybackState(targetClip, true, true, targetSpeed);
-        }
-        else if (fbxAnimationRuntime)
-        {
-            fbxAnimationRuntime->playing = false;
-        }
-    }
 }

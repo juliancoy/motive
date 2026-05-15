@@ -83,10 +83,30 @@ inline Light engineLightFromSceneLight(const ViewportHostWidget::SceneLight& sce
     {
         ambient = color * brightness;
     }
+    else if (sceneLight.type == QStringLiteral("point"))
+    {
+        ambient = color * brightness * 0.18f;
+        diffuse = color * brightness * 0.82f;
+    }
+    else if (sceneLight.type == QStringLiteral("spot"))
+    {
+        ambient = color * brightness * 0.08f;
+        diffuse = color * brightness * 0.92f;
+    }
+    else if (sceneLight.type == QStringLiteral("area"))
+    {
+        ambient = color * brightness * 0.30f;
+        diffuse = color * brightness * 0.70f;
+    }
     else if (sceneLight.type == QStringLiteral("hemispherical"))
     {
         ambient = color * brightness * 0.45f;
         diffuse = color * brightness * 0.55f;
+    }
+    else if (sceneLight.type == QStringLiteral("sun"))
+    {
+        ambient = color * brightness * 0.12f;
+        diffuse = color * brightness;
     }
     else
     {
@@ -95,6 +115,35 @@ inline Light engineLightFromSceneLight(const ViewportHostWidget::SceneLight& sce
     }
 
     return Light(direction, ambient, diffuse);
+}
+
+inline QString lightLabelFromSceneLight(const ViewportHostWidget::SceneLight& sceneLight)
+{
+    if (sceneLight.type == QStringLiteral("ambient"))
+    {
+        return QStringLiteral("Ambient Light");
+    }
+    if (sceneLight.type == QStringLiteral("point"))
+    {
+        return QStringLiteral("Point Light");
+    }
+    if (sceneLight.type == QStringLiteral("spot"))
+    {
+        return QStringLiteral("Spot Light");
+    }
+    if (sceneLight.type == QStringLiteral("area"))
+    {
+        return QStringLiteral("Area Light");
+    }
+    if (sceneLight.type == QStringLiteral("hemispherical"))
+    {
+        return QStringLiteral("Hemispherical Light");
+    }
+    if (sceneLight.type == QStringLiteral("sun"))
+    {
+        return QStringLiteral("Sun Light");
+    }
+    return QStringLiteral("Directional Light");
 }
 
 }  // namespace motive::ui::detail

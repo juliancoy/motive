@@ -47,14 +47,17 @@ void Display::createGraphicsPipeline()
     std::string vertPath = use2DPipeline ? "shaders/flat2d.vert.spv" : "shaders/mainforward.vert.spv";
     std::string skinnedVertPath = use2DPipeline ? vertPath : "shaders/mainforward_skinned.vert.spv";
     std::string fragPath = use2DPipeline ? "shaders/flat2d.frag.spv" : "shaders/mainforward.frag.spv";
+    std::string unlitFragPath = use2DPipeline ? "shaders/flat2d.frag.spv" : "shaders/mainforward_gizmo.frag.spv";
 
     auto vertShaderCode = readSPIRVFile(vertPath);
     auto skinnedVertShaderCode = readSPIRVFile(skinnedVertPath);
     auto fragShaderCode = readSPIRVFile(fragPath);
+    auto unlitFragShaderCode = readSPIRVFile(unlitFragPath);
 
     vertShaderModule = engine->createShaderModule(vertShaderCode);
     skinnedVertShaderModule = engine->createShaderModule(skinnedVertShaderCode);
     fragShaderModule = engine->createShaderModule(fragShaderCode);
+    unlitFragShaderModule = engine->createShaderModule(unlitFragShaderCode);
 
     VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -68,7 +71,11 @@ void Display::createGraphicsPipeline()
     fragShaderStageInfo.module = fragShaderModule;
     fragShaderStageInfo.pName = "main";
 
+    VkPipelineShaderStageCreateInfo unlitFragShaderStageInfo = fragShaderStageInfo;
+    unlitFragShaderStageInfo.module = unlitFragShaderModule;
+
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+    VkPipelineShaderStageCreateInfo unlitShaderStages[] = {vertShaderStageInfo, unlitFragShaderStageInfo};
     VkPipelineShaderStageCreateInfo skinnedVertShaderStageInfo = vertShaderStageInfo;
     skinnedVertShaderStageInfo.module = skinnedVertShaderModule;
     VkPipelineShaderStageCreateInfo skinnedShaderStages[] = {skinnedVertShaderStageInfo, fragShaderStageInfo};
@@ -217,6 +224,13 @@ void Display::createGraphicsPipeline()
             throw std::runtime_error("Failed to create graphics pipeline!");
         }
 
+        VkGraphicsPipelineCreateInfo unlitPipelineInfo = pipelineInfo;
+        unlitPipelineInfo.pStages = unlitShaderStages;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &unlitPipelineInfo, nullptr, &unlitGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create unlit graphics pipeline!");
+        }
+
         VkGraphicsPipelineCreateInfo skinnedPipelineInfo = pipelineInfo;
         skinnedPipelineInfo.pStages = skinnedShaderStages;
         skinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
@@ -229,6 +243,12 @@ void Display::createGraphicsPipeline()
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &transparentGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create transparent graphics pipeline!");
+        }
+
+        unlitPipelineInfo.pDepthStencilState = &transparentDepthStencil;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &unlitPipelineInfo, nullptr, &transparentUnlitGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create transparent unlit graphics pipeline!");
         }
 
         VkGraphicsPipelineCreateInfo transparentSkinnedPipelineInfo = pipelineInfo;
@@ -245,6 +265,12 @@ void Display::createGraphicsPipeline()
             throw std::runtime_error("Failed to create no-depth graphics pipeline!");
         }
 
+        unlitPipelineInfo.pDepthStencilState = &noDepthStencil;
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &unlitPipelineInfo, nullptr, &noDepthUnlitGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth unlit graphics pipeline!");
+        }
+
         VkGraphicsPipelineCreateInfo noDepthSkinnedPipelineInfo = pipelineInfo;
         noDepthSkinnedPipelineInfo.pStages = skinnedShaderStages;
         noDepthSkinnedPipelineInfo.pVertexInputState = &skinnedVertexInputInfo;
@@ -256,6 +282,11 @@ void Display::createGraphicsPipeline()
         if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &noDepthTransparentGraphicsPipelines[i]) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to create no-depth transparent graphics pipeline!");
+        }
+
+        if (vkCreateGraphicsPipelines(engine->logicalDevice, VK_NULL_HANDLE, 1, &unlitPipelineInfo, nullptr, &noDepthTransparentUnlitGraphicsPipelines[i]) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create no-depth transparent unlit graphics pipeline!");
         }
 
         VkGraphicsPipelineCreateInfo noDepthTransparentSkinnedPipelineInfo = pipelineInfo;

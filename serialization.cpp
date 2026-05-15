@@ -79,6 +79,7 @@ QJsonObject MainWindowShell::sceneLightToJson(const ViewportHostWidget::SceneLig
     return QJsonObject{
         {QStringLiteral("type"), light.type},
         {QStringLiteral("exists"), light.exists},
+        {QStringLiteral("editorProxyPosition"), QJsonArray{light.editorProxyPosition.x(), light.editorProxyPosition.y(), light.editorProxyPosition.z()}},
         {QStringLiteral("color"), QJsonArray{light.color.x(), light.color.y(), light.color.z()}},
         {QStringLiteral("brightness"), light.brightness},
         {QStringLiteral("direction"), QJsonArray{light.direction.x(), light.direction.y(), light.direction.z()}},
@@ -104,6 +105,10 @@ ViewportHostWidget::SceneLight MainWindowShell::sceneLightFromJson(const QJsonOb
     ViewportHostWidget::SceneLight light;
     light.type = object.value(QStringLiteral("type")).toString(QStringLiteral("directional"));
     light.exists = object.value(QStringLiteral("exists")).toBool(false);
+    const QJsonValue proxyPositionValue = object.contains(QStringLiteral("editorProxyPosition"))
+        ? object.value(QStringLiteral("editorProxyPosition"))
+        : object.value(QStringLiteral("position"));
+    light.editorProxyPosition = readVector(proxyPositionValue, QVector3D(0.0f, 2.0f, 0.0f));
     light.color = readVector(object.value(QStringLiteral("color")), QVector3D(1.0f, 1.0f, 1.0f));
     light.brightness = static_cast<float>(object.value(QStringLiteral("brightness")).toDouble(1.0));
     light.direction = readVector(object.value(QStringLiteral("direction")), QVector3D(0.0f, 0.0f, 1.0f));
@@ -138,6 +143,20 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("useGravity"), item.useGravity},
             {QStringLiteral("customGravity"), QJsonArray{item.customGravity.x(), item.customGravity.y(), item.customGravity.z()}},
             {QStringLiteral("characterTurnResponsiveness"), item.characterTurnResponsiveness},
+            {QStringLiteral("characterMoveSpeed"), item.characterMoveSpeed},
+            {QStringLiteral("characterIdleAnimationSpeed"), item.characterIdleAnimationSpeed},
+            {QStringLiteral("characterWalkAnimationSpeed"), item.characterWalkAnimationSpeed},
+            {QStringLiteral("characterProceduralIdleEnabled"), item.characterProceduralIdleEnabled},
+            {QStringLiteral("characterIdleClip"), item.characterIdleClip},
+            {QStringLiteral("characterComeToRestClip"), item.characterComeToRestClip},
+            {QStringLiteral("characterWalkForwardClip"), item.characterWalkForwardClip},
+            {QStringLiteral("characterWalkBackwardClip"), item.characterWalkBackwardClip},
+            {QStringLiteral("characterWalkLeftClip"), item.characterWalkLeftClip},
+            {QStringLiteral("characterWalkRightClip"), item.characterWalkRightClip},
+            {QStringLiteral("characterRunClip"), item.characterRunClip},
+            {QStringLiteral("characterJumpClip"), item.characterJumpClip},
+            {QStringLiteral("characterFallClip"), item.characterFallClip},
+            {QStringLiteral("characterLandClip"), item.characterLandClip},
             {QStringLiteral("primitiveOverrides"), item.primitiveOverrides},
             {QStringLiteral("focusPointOffset"), QJsonArray{item.focusPointOffset.x(), item.focusPointOffset.y(), item.focusPointOffset.z()}},
             {QStringLiteral("focusDistance"), item.focusDistance},
@@ -206,6 +225,20 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             object.value(QStringLiteral("useGravity")).toBool(true),
             readVector(object.value(QStringLiteral("customGravity")), QVector3D(0.0f, 0.0f, 0.0f)),
             static_cast<float>(object.value(QStringLiteral("characterTurnResponsiveness")).toDouble(10.0)),
+            static_cast<float>(object.value(QStringLiteral("characterMoveSpeed")).toDouble(3.0)),
+            static_cast<float>(object.value(QStringLiteral("characterIdleAnimationSpeed")).toDouble(1.0)),
+            static_cast<float>(object.value(QStringLiteral("characterWalkAnimationSpeed")).toDouble(1.0)),
+            object.value(QStringLiteral("characterProceduralIdleEnabled")).toBool(true),
+            object.value(QStringLiteral("characterIdleClip")).toString(),
+            object.value(QStringLiteral("characterComeToRestClip")).toString(),
+            object.value(QStringLiteral("characterWalkForwardClip")).toString(),
+            object.value(QStringLiteral("characterWalkBackwardClip")).toString(),
+            object.value(QStringLiteral("characterWalkLeftClip")).toString(),
+            object.value(QStringLiteral("characterWalkRightClip")).toString(),
+            object.value(QStringLiteral("characterRunClip")).toString(),
+            object.value(QStringLiteral("characterJumpClip")).toString(),
+            object.value(QStringLiteral("characterFallClip")).toString(),
+            object.value(QStringLiteral("characterLandClip")).toString(),
             object.value(QStringLiteral("primitiveOverrides")).toArray(),
             readVector(object.value(QStringLiteral("focusPointOffset")), QVector3D(0.0f, 0.0f, 0.0f)),
             static_cast<float>(object.value(QStringLiteral("focusDistance")).toDouble(0.0)),

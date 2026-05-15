@@ -38,10 +38,12 @@
 
 #include <chrono>
 #include <algorithm>
+#include <cstring>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <glm/gtx/quaternion.hpp>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -102,6 +104,247 @@ void removePrimitiveOverrideIfDefault(QJsonArray& overrides, int meshIndex, int 
     if (!isDefault)
     {
         overrides.push_back(primitiveOverrideObject(meshIndex, primitiveIndex, cullMode, forceAlphaOne));
+    }
+}
+
+void appendTriangle(std::vector<Vertex>& vertices,
+                    const glm::vec3& a,
+                    const glm::vec3& b,
+                    const glm::vec3& c)
+{
+    const glm::vec3 normal = glm::normalize(glm::cross(b - a, c - a));
+    vertices.push_back(Vertex{a, normal, glm::vec2(0.5f, 0.0f)});
+    vertices.push_back(Vertex{b, normal, glm::vec2(0.0f, 1.0f)});
+    vertices.push_back(Vertex{c, normal, glm::vec2(1.0f, 1.0f)});
+}
+
+void appendQuad(std::vector<Vertex>& vertices,
+                const glm::vec3& a,
+                const glm::vec3& b,
+                const glm::vec3& c,
+                const glm::vec3& d)
+{
+    appendTriangle(vertices, a, b, c);
+    appendTriangle(vertices, a, c, d);
+}
+
+std::vector<Vertex> buildLightHaloVertices()
+{
+    const float radius = 0.18f;
+    const glm::vec3 top(0.0f, radius, 0.0f);
+    const glm::vec3 bottom(0.0f, -radius, 0.0f);
+    const glm::vec3 east(radius, 0.0f, 0.0f);
+    const glm::vec3 west(-radius, 0.0f, 0.0f);
+    const glm::vec3 north(0.0f, 0.0f, -radius);
+    const glm::vec3 south(0.0f, 0.0f, radius);
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(24);
+    appendTriangle(vertices, top, east, north);
+    appendTriangle(vertices, top, south, east);
+    appendTriangle(vertices, top, west, south);
+    appendTriangle(vertices, top, north, west);
+    appendTriangle(vertices, bottom, north, east);
+    appendTriangle(vertices, bottom, east, south);
+    appendTriangle(vertices, bottom, south, west);
+    appendTriangle(vertices, bottom, west, north);
+    return vertices;
+}
+
+std::vector<Vertex> buildDirectionalArrowVertices()
+{
+    const float halfWidth = 0.035f;
+    const float shaftStart = -0.28f;
+    const float shaftEnd = 0.26f;
+    const float headBase = 0.26f;
+    const float headTip = 0.68f;
+    const float headRadius = 0.12f;
+    const float tailFinStart = -0.16f;
+    const float tailFinEnd = -0.42f;
+    const float tailFinSpan = 0.11f;
+
+    const glm::vec3 lbn(-halfWidth, -halfWidth, shaftStart);
+    const glm::vec3 rbn(halfWidth, -halfWidth, shaftStart);
+    const glm::vec3 rtn(halfWidth, halfWidth, shaftStart);
+    const glm::vec3 ltn(-halfWidth, halfWidth, shaftStart);
+    const glm::vec3 lbf(-halfWidth, -halfWidth, shaftEnd);
+    const glm::vec3 rbf(halfWidth, -halfWidth, shaftEnd);
+    const glm::vec3 rtf(halfWidth, halfWidth, shaftEnd);
+    const glm::vec3 ltf(-halfWidth, halfWidth, shaftEnd);
+
+    const glm::vec3 tip(0.0f, 0.0f, headTip);
+    const glm::vec3 headEast(headRadius, 0.0f, headBase);
+    const glm::vec3 headWest(-headRadius, 0.0f, headBase);
+    const glm::vec3 headUp(0.0f, headRadius, headBase);
+    const glm::vec3 headDown(0.0f, -headRadius, headBase);
+
+    const glm::vec3 tailTopA(0.0f, tailFinSpan * 0.25f, tailFinStart);
+    const glm::vec3 tailTopB(0.0f, tailFinSpan, tailFinEnd);
+    const glm::vec3 tailBottomA(0.0f, -tailFinSpan * 0.25f, tailFinStart);
+    const glm::vec3 tailBottomB(0.0f, -tailFinSpan, tailFinEnd);
+    const glm::vec3 tailRightA(tailFinSpan * 0.25f, 0.0f, tailFinStart);
+    const glm::vec3 tailRightB(tailFinSpan, 0.0f, tailFinEnd);
+    const glm::vec3 tailLeftA(-tailFinSpan * 0.25f, 0.0f, tailFinStart);
+    const glm::vec3 tailLeftB(-tailFinSpan, 0.0f, tailFinEnd);
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(84);
+
+    appendQuad(vertices, lbn, rbn, rtn, ltn);
+    appendQuad(vertices, lbf, ltf, rtf, rbf);
+    appendQuad(vertices, lbn, ltn, ltf, lbf);
+    appendQuad(vertices, rbn, rbf, rtf, rtn);
+    appendQuad(vertices, ltn, rtn, rtf, ltf);
+    appendQuad(vertices, lbn, lbf, rbf, rbn);
+
+    appendTriangle(vertices, tip, headUp, headEast);
+    appendTriangle(vertices, tip, headEast, headDown);
+    appendTriangle(vertices, tip, headDown, headWest);
+    appendTriangle(vertices, tip, headWest, headUp);
+
+    appendTriangle(vertices, tailTopA, tailTopB, glm::vec3(0.0f, 0.0f, tailFinEnd));
+    appendTriangle(vertices, tailBottomA, glm::vec3(0.0f, 0.0f, tailFinEnd), tailBottomB);
+    appendTriangle(vertices, tailRightA, tailRightB, glm::vec3(0.0f, 0.0f, tailFinEnd));
+    appendTriangle(vertices, tailLeftA, glm::vec3(0.0f, 0.0f, tailFinEnd), tailLeftB);
+
+    return vertices;
+}
+
+std::vector<Vertex> buildDirectionalApertureVertices()
+{
+    constexpr int kSegments = 16;
+    constexpr float kHalfAngleRadians = 0.33f;
+    const float length = 1.15f;
+    const float radius = std::tan(kHalfAngleRadians) * length;
+    const float ringThickness = 0.02f;
+    const float spokeHalfWidth = 0.015f;
+    const glm::vec3 apex(0.0f, 0.0f, 0.0f);
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(static_cast<size_t>(kSegments) * 12u + 24u);
+
+    for (int i = 0; i < kSegments; ++i)
+    {
+        const float angleA = (static_cast<float>(i) / static_cast<float>(kSegments)) * glm::two_pi<float>();
+        const float angleB = (static_cast<float>(i + 1) / static_cast<float>(kSegments)) * glm::two_pi<float>();
+        const glm::vec3 outerA(std::cos(angleA) * radius, std::sin(angleA) * radius, length);
+        const glm::vec3 outerB(std::cos(angleB) * radius, std::sin(angleB) * radius, length);
+        const glm::vec3 innerA(std::cos(angleA) * (radius - ringThickness), std::sin(angleA) * (radius - ringThickness), length);
+        const glm::vec3 innerB(std::cos(angleB) * (radius - ringThickness), std::sin(angleB) * (radius - ringThickness), length);
+        appendQuad(vertices, outerA, outerB, innerB, innerA);
+    }
+
+    const std::array<glm::vec2, 4> axes = {
+        glm::vec2(1.0f, 0.0f),
+        glm::vec2(-1.0f, 0.0f),
+        glm::vec2(0.0f, 1.0f),
+        glm::vec2(0.0f, -1.0f)
+    };
+    for (const glm::vec2& axis : axes)
+    {
+        const glm::vec3 rimCenter(axis.x * radius, axis.y * radius, length);
+        const glm::vec3 tangent(-axis.y, axis.x, 0.0f);
+        const glm::vec3 rimA = rimCenter + tangent * spokeHalfWidth;
+        const glm::vec3 rimB = rimCenter - tangent * spokeHalfWidth;
+        appendTriangle(vertices, apex, rimA, rimB);
+    }
+
+    return vertices;
+}
+
+glm::vec3 normalizedLightDirection(const ViewportHostWidget::SceneLight& light)
+{
+    glm::vec3 direction(light.direction.x(), light.direction.y(), light.direction.z());
+    if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z) ||
+        glm::length(direction) <= 1e-5f)
+    {
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    return glm::normalize(direction);
+}
+
+glm::quat lightDirectionOrientation(const glm::vec3& direction)
+{
+    const glm::vec3 forward(0.0f, 0.0f, 1.0f);
+    if (glm::dot(forward, direction) < -0.999f)
+    {
+        return glm::angleAxis(glm::pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+    return glm::normalize(glm::rotation(forward, direction));
+}
+
+glm::vec3 lightGizmoColor(const ViewportHostWidget::SceneLight& light, float intensityBias, float minimumChannel)
+{
+    const float brightness = std::max(light.brightness, 0.0f);
+    glm::vec3 color(light.color.x(), light.color.y(), light.color.z());
+    color *= intensityBias + std::min(brightness, 6.0f) * 0.18f;
+    color = glm::max(color, glm::vec3(minimumChannel));
+    return color;
+}
+
+bool lightTypeUsesDirectionGizmo(const QString& type)
+{
+    return type == QStringLiteral("directional") ||
+           type == QStringLiteral("spot") ||
+           type == QStringLiteral("sun") ||
+           type == QStringLiteral("hemispherical");
+}
+
+bool lightTypeUsesApertureGuide(const QString& type)
+{
+    return type == QStringLiteral("directional") ||
+           type == QStringLiteral("spot") ||
+           type == QStringLiteral("sun");
+}
+
+bool lightTypeUsesAreaGuide(const QString& type)
+{
+    return type == QStringLiteral("area");
+}
+
+std::vector<Vertex> buildAreaGuideVertices()
+{
+    const float halfExtent = 0.32f;
+    const float depth = 0.06f;
+    const glm::vec3 a(-halfExtent, -halfExtent, depth);
+    const glm::vec3 b(halfExtent, -halfExtent, depth);
+    const glm::vec3 c(halfExtent, halfExtent, depth);
+    const glm::vec3 d(-halfExtent, halfExtent, depth);
+    const glm::vec3 innerA(-halfExtent * 0.78f, -halfExtent * 0.78f, depth);
+    const glm::vec3 innerB(halfExtent * 0.78f, -halfExtent * 0.78f, depth);
+    const glm::vec3 innerC(halfExtent * 0.78f, halfExtent * 0.78f, depth);
+    const glm::vec3 innerD(-halfExtent * 0.78f, halfExtent * 0.78f, depth);
+    std::vector<Vertex> vertices;
+    vertices.reserve(24);
+    appendQuad(vertices, a, b, innerB, innerA);
+    appendQuad(vertices, b, c, innerC, innerB);
+    appendQuad(vertices, c, d, innerD, innerC);
+    appendQuad(vertices, d, a, innerA, innerD);
+    return vertices;
+}
+
+void styleLightGizmoModel(Model& model,
+                          const glm::vec3& color,
+                          bool depthWriteEnabled)
+{
+    model.visible = true;
+    for (Mesh& mesh : model.meshes)
+    {
+        for (const std::unique_ptr<Primitive>& primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+            primitive->paintOverrideEnabled = true;
+            primitive->paintOverrideColor = color;
+            primitive->forceAlphaOne = true;
+            primitive->alphaMode = PrimitiveAlphaMode::Opaque;
+            primitive->cullMode = PrimitiveCullMode::Disabled;
+            primitive->depthTestEnabled = true;
+            primitive->depthWriteEnabled = depthWriteEnabled;
+            primitive->unlitEnabled = true;
+        }
     }
 }
 
@@ -742,6 +985,18 @@ void drawCircle(std::vector<std::uint8_t>& pixels,
     }
 }
 
+void drawCross(std::vector<std::uint8_t>& pixels,
+               int width,
+               int height,
+               int cx,
+               int cy,
+               int armLength,
+               std::uint32_t color)
+{
+    drawLine(pixels, width, height, cx - armLength, cy, cx + armLength, cy, color);
+    drawLine(pixels, width, height, cx, cy - armLength, cx, cy + armLength, color);
+}
+
 bool worldToScreen(const glm::mat4& view,
                    const glm::mat4& proj,
                    int width,
@@ -891,6 +1146,63 @@ CameraMode cameraModeFromString(const QString& mode, CameraMode fallback = Camer
 bool isFollowMode(CameraMode mode)
 {
     return mode == CameraMode::CharacterFollow || mode == CameraMode::OrbitFollow;
+}
+
+QString normalizedFollowModeString(const QString& requestedMode)
+{
+    if (requestedMode.compare(QStringLiteral("OrbitFollow"), Qt::CaseInsensitive) == 0)
+    {
+        return QStringLiteral("OrbitFollow");
+    }
+    return QStringLiteral("CharacterFollow");
+}
+
+ViewportHostWidget::CameraConfig normalizedCameraConfig(const ViewportHostWidget::CameraConfig& source)
+{
+    ViewportHostWidget::CameraConfig normalized = source;
+
+    normalized.followDistance = sanitizedFollowDistance(normalized.followDistance);
+    normalized.followSmoothSpeed = std::max(0.0f, normalized.followSmoothSpeed);
+    normalized.nearClip = std::max(0.001f, normalized.nearClip);
+    normalized.farClip = std::max(normalized.nearClip + 0.001f, normalized.farClip);
+
+    const bool wantsFollowTarget =
+        normalized.type == ViewportHostWidget::CameraConfig::Type::Follow &&
+        normalized.followTargetIndex >= 0;
+
+    if (wantsFollowTarget)
+    {
+        normalized.type = ViewportHostWidget::CameraConfig::Type::Follow;
+        if (normalized.freeFly ||
+            normalized.mode.compare(QStringLiteral("FreeFly"), Qt::CaseInsensitive) == 0)
+        {
+            normalized.freeFly = true;
+            normalized.mode = QStringLiteral("FreeFly");
+        }
+        else
+        {
+            normalized.freeFly = false;
+            normalized.mode = normalizedFollowModeString(normalized.mode);
+        }
+    }
+    else
+    {
+        normalized.type = ViewportHostWidget::CameraConfig::Type::Free;
+        normalized.followTargetIndex = -1;
+        normalized.followDistance = sanitizedFollowDistance(normalized.followDistance);
+        if (normalized.mode.compare(QStringLiteral("Fixed"), Qt::CaseInsensitive) == 0 && !normalized.freeFly)
+        {
+            normalized.freeFly = false;
+            normalized.mode = QStringLiteral("Fixed");
+        }
+        else
+        {
+            normalized.freeFly = true;
+            normalized.mode = QStringLiteral("FreeFly");
+        }
+    }
+
+    return normalized;
 }
 
 QString compassFromForward(const glm::vec3& forward)
@@ -1204,6 +1516,21 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     const glm::vec3 targetPos = usingTrackedTarget ? camera->getTrackedFollowTarget() : modelTargetPos;
     const glm::vec3 targetPosRaw = usingTrackedTarget ? camera->getTrackedFollowTargetRaw() : modelTargetPos;
     const glm::vec3 targetPosMotion = usingTrackedTarget ? camera->getTrackedFollowTargetMotion() : targetPos;
+    glm::vec3 renderedPrimitivePos = modelTargetPos;
+    bool renderedPrimitivePosValid = false;
+    if (!target->meshes.empty() &&
+        !target->meshes.front().primitives.empty() &&
+        target->meshes.front().primitives.front() &&
+        target->meshes.front().primitives.front()->ObjectTransformUBOMapped)
+    {
+        ObjectTransform renderedTransform{};
+        std::memcpy(&renderedTransform,
+                    target->meshes.front().primitives.front()->ObjectTransformUBOMapped,
+                    sizeof(renderedTransform));
+        renderedPrimitivePos = glm::vec3(renderedTransform.model[3]);
+        renderedPrimitivePosValid = true;
+    }
+    const glm::vec3 renderedPrimitiveOffset = renderedPrimitivePos - modelTargetPos;
     const glm::vec3 toTarget = targetPos - camera->cameraPos;
     const float distance = glm::length(toTarget);
     glm::vec3 toTargetDir(0.0f, 0.0f, -1.0f);
@@ -1273,6 +1600,9 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     debug.insert(QStringLiteral("targetPosRaw"), QJsonArray{targetPosRaw.x, targetPosRaw.y, targetPosRaw.z});
     debug.insert(QStringLiteral("targetPosMotion"), QJsonArray{targetPosMotion.x, targetPosMotion.y, targetPosMotion.z});
     debug.insert(QStringLiteral("targetPosModelAnchor"), QJsonArray{modelTargetPos.x, modelTargetPos.y, modelTargetPos.z});
+    debug.insert(QStringLiteral("targetRenderedPrimitivePos"), QJsonArray{renderedPrimitivePos.x, renderedPrimitivePos.y, renderedPrimitivePos.z});
+    debug.insert(QStringLiteral("targetRenderedPrimitiveOffset"), QJsonArray{renderedPrimitiveOffset.x, renderedPrimitiveOffset.y, renderedPrimitiveOffset.z});
+    debug.insert(QStringLiteral("targetRenderedPrimitivePosValid"), renderedPrimitivePosValid);
     debug.insert(QStringLiteral("targetTrackingSource"), usingTrackedTarget ? QStringLiteral("cameraTracker") : QStringLiteral("modelAnchor"));
     QString targetAnchorMode = QStringLiteral("worldTransform");
     bool targetAnchorReferencesPreprocessedFrames = false;
@@ -1354,6 +1684,8 @@ QJsonObject ViewportHostWidget::motionDebugSampleToJson(const MotionDebugSample&
         {QStringLiteral("targetPos"), QJsonArray{sample.targetPos.x(), sample.targetPos.y(), sample.targetPos.z()}},
         {QStringLiteral("targetPosRaw"), QJsonArray{sample.targetPosRaw.x(), sample.targetPosRaw.y(), sample.targetPosRaw.z()}},
         {QStringLiteral("targetPosMotion"), QJsonArray{sample.targetPosMotion.x(), sample.targetPosMotion.y(), sample.targetPosMotion.z()}},
+        {QStringLiteral("targetRenderedPrimitivePos"), QJsonArray{sample.targetRenderedPrimitivePos.x(), sample.targetRenderedPrimitivePos.y(), sample.targetRenderedPrimitivePos.z()}},
+        {QStringLiteral("targetRenderedPrimitiveOffset"), QJsonArray{sample.targetRenderedPrimitiveOffset.x(), sample.targetRenderedPrimitiveOffset.y(), sample.targetRenderedPrimitiveOffset.z()}},
         {QStringLiteral("targetVelocity"), QJsonArray{sample.targetVelocity.x(), sample.targetVelocity.y(), sample.targetVelocity.z()}},
         {QStringLiteral("distanceToTarget"), sample.distanceToTarget},
         {QStringLiteral("frontDotToTarget"), sample.frontDotToTarget},
@@ -1361,6 +1693,7 @@ QJsonObject ViewportHostWidget::motionDebugSampleToJson(const MotionDebugSample&
         {QStringLiteral("followSmoothSpeed"), sample.followSmoothSpeed},
         {QStringLiteral("targetJitterMagnitude"), sample.targetJitterMagnitude},
         {QStringLiteral("cameraStepMagnitude"), sample.cameraStepMagnitude},
+        {QStringLiteral("renderedPrimitiveStepMagnitude"), sample.renderedPrimitiveStepMagnitude},
         {QStringLiteral("distanceDelta"), sample.distanceDelta},
         {QStringLiteral("distanceDeltaFlipCount"), sample.distanceDeltaFlipCount},
         {QStringLiteral("oscillationSuspected"), sample.oscillationSuspected},
@@ -1422,7 +1755,10 @@ QJsonObject ViewportHostWidget::motionDebugSummaryJson() const
     const int sampleCount = std::min<int>(kMotionDebugSummaryWindow, static_cast<int>(m_motionDebugHistory.size()));
     float maxJitter = 0.0f;
     float maxCameraStep = 0.0f;
+    float maxRenderedPrimitiveStep = 0.0f;
+    float maxRenderedPrimitiveOffset = 0.0f;
     float meanJitter = 0.0f;
+    float meanRenderedPrimitiveOffset = 0.0f;
     int oscillationFrames = 0;
     int warningsCount = 0;
     for (int i = static_cast<int>(m_motionDebugHistory.size()) - sampleCount;
@@ -1432,7 +1768,11 @@ QJsonObject ViewportHostWidget::motionDebugSummaryJson() const
         const MotionDebugSample& sample = m_motionDebugHistory[static_cast<size_t>(i)];
         maxJitter = std::max(maxJitter, sample.targetJitterMagnitude);
         maxCameraStep = std::max(maxCameraStep, sample.cameraStepMagnitude);
+        maxRenderedPrimitiveStep = std::max(maxRenderedPrimitiveStep, sample.renderedPrimitiveStepMagnitude);
+        const float renderedOffset = sample.targetRenderedPrimitiveOffset.length();
+        maxRenderedPrimitiveOffset = std::max(maxRenderedPrimitiveOffset, renderedOffset);
         meanJitter += sample.targetJitterMagnitude;
+        meanRenderedPrimitiveOffset += renderedOffset;
         if (sample.oscillationSuspected)
         {
             ++oscillationFrames;
@@ -1441,11 +1781,15 @@ QJsonObject ViewportHostWidget::motionDebugSummaryJson() const
     }
 
     meanJitter /= static_cast<float>(std::max(1, sampleCount));
+    meanRenderedPrimitiveOffset /= static_cast<float>(std::max(1, sampleCount));
     summary.insert(QStringLiteral("sampleCount"), sampleCount);
     summary.insert(QStringLiteral("windowFrames"), kMotionDebugSummaryWindow);
     summary.insert(QStringLiteral("maxTargetJitter"), maxJitter);
     summary.insert(QStringLiteral("meanTargetJitter"), meanJitter);
     summary.insert(QStringLiteral("maxCameraStep"), maxCameraStep);
+    summary.insert(QStringLiteral("maxRenderedPrimitiveStep"), maxRenderedPrimitiveStep);
+    summary.insert(QStringLiteral("maxRenderedPrimitiveOffset"), maxRenderedPrimitiveOffset);
+    summary.insert(QStringLiteral("meanRenderedPrimitiveOffset"), meanRenderedPrimitiveOffset);
     summary.insert(QStringLiteral("oscillationFrames"), oscillationFrames);
     summary.insert(QStringLiteral("oscillationDetected"), oscillationFrames > 0);
     summary.insert(QStringLiteral("warningsObserved"), warningsCount);
@@ -1460,6 +1804,7 @@ void ViewportHostWidget::resetMotionDebug()
     m_motionDebugElapsedSeconds = 0.0;
     m_motionDebugHasLast = false;
     m_motionDebugLastCameraPos = QVector3D(0.0f, 0.0f, 0.0f);
+    m_motionDebugLastRenderedPrimitivePos = QVector3D(0.0f, 0.0f, 0.0f);
     m_motionDebugLastDistance = 0.0f;
     m_motionDebugLastDistanceDelta = 0.0f;
     m_motionDebugDistanceFlipCount = 0;
@@ -1483,6 +1828,8 @@ void ViewportHostWidget::captureMotionDebugFrame(float dt)
     sample.targetPos = vector3FromJson(tracking.value(QStringLiteral("targetPos")));
     sample.targetPosRaw = vector3FromJson(tracking.value(QStringLiteral("targetPosRaw")));
     sample.targetPosMotion = vector3FromJson(tracking.value(QStringLiteral("targetPosMotion")));
+    sample.targetRenderedPrimitivePos = vector3FromJson(tracking.value(QStringLiteral("targetRenderedPrimitivePos")));
+    sample.targetRenderedPrimitiveOffset = vector3FromJson(tracking.value(QStringLiteral("targetRenderedPrimitiveOffset")));
     sample.targetVelocity = vector3FromJson(tracking.value(QStringLiteral("targetVelocity")));
     sample.distanceToTarget = static_cast<float>(tracking.value(QStringLiteral("distanceToTarget")).toDouble(0.0));
     sample.frontDotToTarget = static_cast<float>(tracking.value(QStringLiteral("frontDotToTarget")).toDouble(0.0));
@@ -1506,6 +1853,8 @@ void ViewportHostWidget::captureMotionDebugFrame(float dt)
     if (m_motionDebugHasLast)
     {
         sample.cameraStepMagnitude = (sample.cameraPos - m_motionDebugLastCameraPos).length();
+        sample.renderedPrimitiveStepMagnitude =
+            (sample.targetRenderedPrimitivePos - m_motionDebugLastRenderedPrimitivePos).length();
         sample.distanceDelta = sample.distanceToTarget - m_motionDebugLastDistance;
         const bool significantCurrent = std::fabs(sample.distanceDelta) > 1e-4f;
         const bool significantLast = std::fabs(m_motionDebugLastDistanceDelta) > 1e-4f;
@@ -1541,6 +1890,7 @@ void ViewportHostWidget::captureMotionDebugFrame(float dt)
 
     m_motionDebugHasLast = true;
     m_motionDebugLastCameraPos = sample.cameraPos;
+    m_motionDebugLastRenderedPrimitivePos = sample.targetRenderedPrimitivePos;
     m_motionDebugLastDistance = sample.distanceToTarget;
     m_motionDebugLastDistanceDelta = sample.distanceDelta;
 
@@ -1559,43 +1909,52 @@ void ViewportHostWidget::updateMotionDebugOverlay()
     }
 
     Display* display = m_runtime->display();
-    if (!m_motionDebugOverlayOptions.enabled)
+    const int overlayWidth = std::max(1, m_renderSurface ? m_renderSurface->width() : width());
+    const int overlayHeight = std::max(1, m_renderSurface ? m_renderSurface->height() : height());
+    const bool showMotionOverlay = m_motionDebugOverlayOptions.enabled;
+    if (!showMotionOverlay)
     {
         display->clearCustomOverlayBitmap();
         return;
     }
 
-    const int overlayWidth = std::max(1, m_renderSurface ? m_renderSurface->width() : width());
-    const int overlayHeight = std::max(1, m_renderSurface ? m_renderSurface->height() : height());
+    Camera* activeCamera = display->getActiveCamera();
+    if (!activeCamera)
+    {
+        display->clearCustomOverlayBitmap();
+        return;
+    }
 
     MotionDebugSample sample;
     std::vector<MotionDebugSample> trailSamples;
+    if (showMotionOverlay)
     {
         std::lock_guard<std::mutex> lock(m_motionDebugMutex);
         if (m_motionDebugHistory.empty())
         {
-            display->clearCustomOverlayBitmap();
-            return;
+            trailSamples.clear();
         }
-        sample = m_motionDebugHistory.back();
-        const int desiredTrailFrames = std::clamp(m_motionDebugOverlayOptions.trailFrames, 2, 240);
-        trailSamples.reserve(static_cast<size_t>(desiredTrailFrames));
-        for (auto it = m_motionDebugHistory.rbegin();
-             it != m_motionDebugHistory.rend() &&
-             static_cast<int>(trailSamples.size()) < desiredTrailFrames;
-             ++it)
+        else
         {
-            if (it->targetSceneIndex != sample.targetSceneIndex)
+            sample = m_motionDebugHistory.back();
+            const int desiredTrailFrames = std::clamp(m_motionDebugOverlayOptions.trailFrames, 2, 240);
+            trailSamples.reserve(static_cast<size_t>(desiredTrailFrames));
+            for (auto it = m_motionDebugHistory.rbegin();
+                 it != m_motionDebugHistory.rend() &&
+                 static_cast<int>(trailSamples.size()) < desiredTrailFrames;
+                 ++it)
             {
-                continue;
+                if (it->targetSceneIndex != sample.targetSceneIndex)
+                {
+                    continue;
+                }
+                trailSamples.push_back(*it);
             }
-            trailSamples.push_back(*it);
+            std::reverse(trailSamples.begin(), trailSamples.end());
         }
-        std::reverse(trailSamples.begin(), trailSamples.end());
     }
 
-    Camera* activeCamera = display->getActiveCamera();
-    if (!activeCamera)
+    if (trailSamples.empty())
     {
         display->clearCustomOverlayBitmap();
         return;
@@ -1611,96 +1970,98 @@ void ViewportHostWidget::updateMotionDebugOverlay()
     const glm::mat4 view = activeCamera->getViewMatrix();
     const glm::mat4 proj = activeCamera->getProjectionMatrix();
 
-    int targetX = 0, targetY = 0;
-    const bool haveTarget = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPos, targetX, targetY);
-    const int screenCenterX = overlayWidth / 2;
-    const int screenCenterY = overlayHeight / 2;
-
-    if (m_motionDebugOverlayOptions.showCameraToTargetLine && haveTarget)
+    if (showMotionOverlay && !trailSamples.empty())
     {
-        // In camera view-space, the eye is screen center; drawing from projected
-        // camera world position is undefined.
-        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, targetX, targetY, 0xAA00CCFFu);
-        drawCircle(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, 3, 0xCC00CCFFu);
-    }
+        int targetX = 0;
+        int targetY = 0;
+        const bool haveTarget = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPos, targetX, targetY);
+        const int screenCenterX = overlayWidth / 2;
+        const int screenCenterY = overlayHeight / 2;
 
-    if (!trailSamples.empty() && (m_motionDebugOverlayOptions.showMotionTrail || m_motionDebugOverlayOptions.showRawTrail))
-    {
-        auto drawTrail = [&](bool rawSpace, std::uint32_t baseColor)
+        if (m_motionDebugOverlayOptions.showCameraToTargetLine && haveTarget)
         {
-            int prevX = 0;
-            int prevY = 0;
-            bool havePrev = false;
-            const int count = static_cast<int>(trailSamples.size());
-            for (int i = 0; i < count; ++i)
+            drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, targetX, targetY, 0xAA00CCFFu);
+            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY, 3, 0xCC00CCFFu);
+        }
+
+        if (m_motionDebugOverlayOptions.showMotionTrail || m_motionDebugOverlayOptions.showRawTrail)
+        {
+            auto drawTrail = [&](bool rawSpace, std::uint32_t baseColor)
             {
-                const MotionDebugSample& frame = trailSamples[static_cast<size_t>(i)];
-                const QVector3D worldPos = rawSpace ? frame.targetPosRaw : frame.targetPosMotion;
-                int px = 0;
-                int py = 0;
-                if (!worldToScreen(view, proj, overlayWidth, overlayHeight, worldPos, px, py))
+                int prevX = 0;
+                int prevY = 0;
+                bool havePrev = false;
+                const int count = static_cast<int>(trailSamples.size());
+                for (int i = 0; i < count; ++i)
                 {
-                    havePrev = false;
-                    continue;
-                }
+                    const MotionDebugSample& frame = trailSamples[static_cast<size_t>(i)];
+                    const QVector3D worldPos = rawSpace ? frame.targetPosRaw : frame.targetPosMotion;
+                    int px = 0;
+                    int py = 0;
+                    if (!worldToScreen(view, proj, overlayWidth, overlayHeight, worldPos, px, py))
+                    {
+                        havePrev = false;
+                        continue;
+                    }
 
-                const float t = count > 1 ? static_cast<float>(i) / static_cast<float>(count - 1) : 1.0f;
-                const std::uint8_t alpha = static_cast<std::uint8_t>(std::clamp(32.0f + t * 223.0f, 32.0f, 255.0f));
-                const std::uint32_t color = (baseColor & 0x00FFFFFFu) | (static_cast<std::uint32_t>(alpha) << 24);
-                drawCircle(bitmap.pixels, overlayWidth, overlayHeight, px, py, 1, color);
-                if (havePrev)
-                {
-                    drawLine(bitmap.pixels, overlayWidth, overlayHeight, prevX, prevY, px, py, color);
+                    const float t = count > 1 ? static_cast<float>(i) / static_cast<float>(count - 1) : 1.0f;
+                    const std::uint8_t alpha = static_cast<std::uint8_t>(std::clamp(32.0f + t * 223.0f, 32.0f, 255.0f));
+                    const std::uint32_t color = (baseColor & 0x00FFFFFFu) | (static_cast<std::uint32_t>(alpha) << 24);
+                    drawCircle(bitmap.pixels, overlayWidth, overlayHeight, px, py, 1, color);
+                    if (havePrev)
+                    {
+                        drawLine(bitmap.pixels, overlayWidth, overlayHeight, prevX, prevY, px, py, color);
+                    }
+                    prevX = px;
+                    prevY = py;
+                    havePrev = true;
                 }
-                prevX = px;
-                prevY = py;
-                havePrev = true;
+            };
+
+            if (m_motionDebugOverlayOptions.showMotionTrail)
+            {
+                drawTrail(false, 0x00A5FFFFu);
             }
-        };
+            if (m_motionDebugOverlayOptions.showRawTrail)
+            {
+                drawTrail(true, 0x00FF66FFu);
+            }
+        }
 
-        if (m_motionDebugOverlayOptions.showMotionTrail)
+        if (m_motionDebugOverlayOptions.showTargetMarkers && haveTarget)
         {
-            drawTrail(false, 0x00A5FFFFu);
+            int rawX = 0, rawY = 0, motionX = 0, motionY = 0;
+            const bool haveRaw = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosRaw, rawX, rawY);
+            const bool haveMotion = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosMotion, motionX, motionY);
+            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, 4, 0xFF20D0FFu);
+            if (haveRaw)
+            {
+                drawCircle(bitmap.pixels, overlayWidth, overlayHeight, rawX, rawY, 3, 0xFF00FF00u);
+            }
+            if (haveMotion)
+            {
+                drawCircle(bitmap.pixels, overlayWidth, overlayHeight, motionX, motionY, 3, 0xFF00A5FFu);
+            }
         }
-        if (m_motionDebugOverlayOptions.showRawTrail)
-        {
-            drawTrail(true, 0x00FF66FFu);
-        }
-    }
 
-    if (m_motionDebugOverlayOptions.showTargetMarkers && haveTarget)
-    {
-        int rawX = 0, rawY = 0, motionX = 0, motionY = 0;
-        const bool haveRaw = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosRaw, rawX, rawY);
-        const bool haveMotion = worldToScreen(view, proj, overlayWidth, overlayHeight, sample.targetPosMotion, motionX, motionY);
-        drawCircle(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, 4, 0xFF20D0FFu);
-        if (haveRaw)
+        if (m_motionDebugOverlayOptions.showVelocityVector)
         {
-            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, rawX, rawY, 3, 0xFF00FF00u);
+            const QVector3D velocityEnd = sample.targetPos +
+                (sample.targetVelocity * m_motionDebugOverlayOptions.velocityScale);
+            int velEndX = 0, velEndY = 0;
+            if (haveTarget &&
+                worldToScreen(view, proj, overlayWidth, overlayHeight, velocityEnd, velEndX, velEndY))
+            {
+                drawLine(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, velEndX, velEndY, 0xFF40FFFFu);
+                drawCircle(bitmap.pixels, overlayWidth, overlayHeight, velEndX, velEndY, 2, 0xFF40FFFFu);
+            }
         }
-        if (haveMotion)
-        {
-            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, motionX, motionY, 3, 0xFF00A5FFu);
-        }
-    }
 
-    if (m_motionDebugOverlayOptions.showVelocityVector)
-    {
-        const QVector3D velocityEnd = sample.targetPos +
-            (sample.targetVelocity * m_motionDebugOverlayOptions.velocityScale);
-        int velEndX = 0, velEndY = 0;
-        if (haveTarget &&
-            worldToScreen(view, proj, overlayWidth, overlayHeight, velocityEnd, velEndX, velEndY))
+        if (m_motionDebugOverlayOptions.showScreenCenterCrosshair)
         {
-            drawLine(bitmap.pixels, overlayWidth, overlayHeight, targetX, targetY, velEndX, velEndY, 0xFF40FFFFu);
-            drawCircle(bitmap.pixels, overlayWidth, overlayHeight, velEndX, velEndY, 2, 0xFF40FFFFu);
+            drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX - 8, screenCenterY, screenCenterX + 8, screenCenterY, 0xCCFFFFFFu);
+            drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY - 8, screenCenterX, screenCenterY + 8, 0xCCFFFFFFu);
         }
-    }
-
-    if (m_motionDebugOverlayOptions.showScreenCenterCrosshair)
-    {
-        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX - 8, screenCenterY, screenCenterX + 8, screenCenterY, 0xCCFFFFFFu);
-        drawLine(bitmap.pixels, overlayWidth, overlayHeight, screenCenterX, screenCenterY - 8, screenCenterX, screenCenterY + 8, 0xCCFFFFFFu);
     }
 
     display->setCustomOverlayBitmap(bitmap, true);
@@ -1721,10 +2082,6 @@ void ViewportHostWidget::updateCameraDirectionIndicator()
     if (!camera)
     {
         m_cameraDirectionLabel->hide();
-        if (m_runtime && m_runtime->display())
-        {
-            m_runtime->display()->clearCustomOverlayBitmap();
-        }
         return;
     }
 
@@ -1739,42 +2096,6 @@ void ViewportHostWidget::updateCameraDirectionIndicator()
     const double fx = forward.size() == 3 ? forward.at(0).toDouble(0.0) : 0.0;
     const double fy = forward.size() == 3 ? forward.at(1).toDouble(0.0) : 0.0;
     const double fz = forward.size() == 3 ? forward.at(2).toDouble(0.0) : -1.0;
-
-    if (m_runtime && m_runtime->display())
-    {
-        const uint32_t panelWidth = static_cast<uint32_t>(std::clamp(
-            m_renderSurface ? m_renderSurface->width() - 28 : width() - 28,
-            320,
-            920));
-        constexpr uint32_t kPanelHeight = 58;
-        motive::text::TextOverlayStyle style;
-        style.textColor = 0xFFFFFFFFu;
-        style.backgroundColor = 0xE005080Du;
-        style.shadowColor = 0xCC000000u;
-        style.outlineColor = 0xFF000000u;
-        style.drawShadow = true;
-        style.drawOutline = true;
-        style.drawBackground = true;
-        const std::string overlayText = QStringLiteral("%1 | %2 | yaw %3 deg pitch %4 deg | F[%5,%6,%7]")
-            .arg(vertical,
-                 compass,
-                 QString::number(yaw, 'f', 1),
-                 QString::number(pitch, 'f', 1),
-                 QString::number(fx, 'f', 2),
-                 QString::number(fy, 'f', 2),
-                 QString::number(fz, 'f', 2))
-            .toStdString();
-        glyph::OverlayBitmap overlay = motive::text::buildStyledTextOverlay(
-            panelWidth,
-            kPanelHeight,
-            overlayText,
-            22,
-            motive::text::FontRenderOptions{},
-            style);
-        overlay.offsetX = 14;
-        overlay.offsetY = 14;
-        m_runtime->display()->setCustomOverlayBitmap(overlay, true);
-    }
 
     const QString accent = direction.value(QStringLiteral("lookingDown")).toBool(false)
         ? QStringLiteral("#38bdf8")
@@ -2083,6 +2404,24 @@ QStringList ViewportHostWidget::animationClipNames(int sceneIndex) const
     return clips;
 }
 
+motive::PhysicsSettings ViewportHostWidget::globalPhysicsSettings() const
+{
+    if (!m_runtime || !m_runtime->engine())
+    {
+        return {};
+    }
+    return m_runtime->engine()->getPhysicsSettings();
+}
+
+void ViewportHostWidget::setGlobalPhysicsSettings(const motive::PhysicsSettings& settings)
+{
+    if (!m_runtime || !m_runtime->engine())
+    {
+        return;
+    }
+    m_runtime->engine()->applyPhysicsSettings(settings);
+}
+
 bool ViewportHostWidget::hasSceneLight() const
 {
     return m_sceneLight.exists;
@@ -2220,6 +2559,7 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
             other->character.keyA = false;
             other->character.keyS = false;
             other->character.keyD = false;
+            other->character.keyShift = false;
         }
     }
 
@@ -2252,6 +2592,7 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
         model->character.keyA = false;
         model->character.keyS = false;
         model->character.keyD = false;
+        model->character.keyShift = false;
     }
     
     // Character controllability should not directly mutate camera follow/mode state.
@@ -2286,6 +2627,7 @@ bool ViewportHostWidget::injectCharacterInput(int sceneIndex,
                                               bool keyS,
                                               bool keyD,
                                               bool jumpRequested,
+                                              bool sprintRequested,
                                               int durationMs)
 {
     if (!m_runtime || !m_runtime->engine() || !m_runtime->display())
@@ -2351,6 +2693,7 @@ bool ViewportHostWidget::injectCharacterInput(int sceneIndex,
     inputRouter->setSimulatedInput(
         std::array<bool, 6>{keyW, keyA, keyS, keyD, false, false},
         jumpRequested,
+        sprintRequested,
         static_cast<float>(clampedDurationMs) / 1000.0f);
     return true;
 }
@@ -2409,6 +2752,7 @@ bool ViewportHostWidget::playCharacterInputPattern(int sceneIndex,
                                  moveFlags[2],
                                  moveFlags[3],
                                  jumpNow,
+                                 false,
                                  clampedStepMs);
         });
     }
@@ -2541,6 +2885,7 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
     nathan->character.keyA = false;
     nathan->character.keyS = false;
     nathan->character.keyD = false;
+    nathan->character.keyShift = false;
     nathan->character.comeToRestTimer = 0.0f;
     nathan->character.moveIntentGraceTimer = 0.0f;
     nathan->character.pendingRestPointLatch = false;
@@ -3043,7 +3388,12 @@ static Camera* createFollowCameraInternal(Display* display, Engine* engine, int 
 
 void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
 {
-    QList<CameraConfig> effectiveConfigs = configs;
+    QList<CameraConfig> effectiveConfigs;
+    effectiveConfigs.reserve(configs.size());
+    for (const CameraConfig& config : configs)
+    {
+        effectiveConfigs.push_back(normalizedCameraConfig(config));
+    }
     if (!hasFreeCameraConfig(effectiveConfigs))
     {
         CameraConfig freeConfig;
@@ -3073,7 +3423,8 @@ void ViewportHostWidget::setCameraConfigs(const QList<CameraConfig>& configs)
     }
     
     // Recreate cameras from configs
-    for (const auto& config : effectiveConfigs) {
+    for (const auto& rawConfig : effectiveConfigs) {
+        const CameraConfig config = normalizedCameraConfig(rawConfig);
         if (config.type == CameraConfig::Type::Follow && config.followTargetIndex >= 0) {
             // Create follow camera with full settings
             Camera* followCam = createFollowCameraInternal(
@@ -3392,47 +3743,49 @@ void ViewportHostWidget::updateCameraConfig(int cameraIndex, const CameraConfig&
     
     Camera* camera = cameras[cameraIndex];
     if (!camera) return;
-    
-    if (!config.id.isEmpty()) {
-        camera->setCameraId(config.id.toStdString());
+
+    const CameraConfig normalized = normalizedCameraConfig(config);
+
+    if (!normalized.id.isEmpty()) {
+        camera->setCameraId(normalized.id.toStdString());
     }
-    camera->setCameraName(config.name.toStdString());
+    camera->setCameraName(normalized.name.toStdString());
     
-    if (config.type == CameraConfig::Type::Follow && config.followTargetIndex >= 0) {
+    if (normalized.type == CameraConfig::Type::Follow && normalized.followTargetIndex >= 0) {
         // Set up follow settings
         const FollowSettings fs = makeFollowSettings(
-            glm::radians(config.followYaw),
-            glm::radians(config.followPitch),
-            config.followDistance,
-            config.followSmoothSpeed,
-            glm::vec3(config.followTargetOffset.x(), config.followTargetOffset.y(), config.followTargetOffset.z()));
+            glm::radians(normalized.followYaw),
+            glm::radians(normalized.followPitch),
+            normalized.followDistance,
+            normalized.followSmoothSpeed,
+            glm::vec3(normalized.followTargetOffset.x(), normalized.followTargetOffset.y(), normalized.followTargetOffset.z()));
         
         // Update follow target and settings
-        camera->setFollowTarget(config.followTargetIndex, fs);
+        camera->setFollowTarget(normalized.followTargetIndex, fs);
         const CameraMode requestedMode = cameraModeFromString(
-            config.mode,
-            config.freeFly ? CameraMode::FreeFly : CameraMode::OrbitFollow);
+            normalized.mode,
+            normalized.freeFly ? CameraMode::FreeFly : CameraMode::CharacterFollow);
         camera->setMode(requestedMode);
         
         // Follow target is already set via setFollowTarget above
-    } else if (config.type == CameraConfig::Type::Free) {
+    } else if (normalized.type == CameraConfig::Type::Free) {
         // Update position for free camera
-        camera->cameraPos = glm::vec3(config.position.x(), config.position.y(), config.position.z());
-        camera->setEulerRotation(glm::vec2(glm::radians(config.rotation.x()), glm::radians(config.rotation.y())));
+        camera->cameraPos = glm::vec3(normalized.position.x(), normalized.position.y(), normalized.position.z());
+        camera->setEulerRotation(glm::vec2(glm::radians(normalized.rotation.x()), glm::radians(normalized.rotation.y())));
         
         // Disable follow mode if previously a follow camera
         if (camera->isFollowModeEnabled()) {
             camera->setFollowTarget(-1);
         }
         const CameraMode requestedMode = cameraModeFromString(
-            config.mode,
-            config.freeFly ? CameraMode::FreeFly : CameraMode::Fixed);
+            normalized.mode,
+            normalized.freeFly ? CameraMode::FreeFly : CameraMode::Fixed);
         camera->setMode(requestedMode);
     }
-    camera->setInvertHorizontalDrag(config.invertHorizontalDrag);
+    camera->setInvertHorizontalDrag(normalized.invertHorizontalDrag);
     
     // Apply clipping planes
-    camera->setPerspectiveNearFar(config.nearClip, config.farClip);
+    camera->setPerspectiveNearFar(normalized.nearClip, normalized.farClip);
     
     updateViewportLayout();
     syncViewportSelectorChoices();
@@ -3910,6 +4263,7 @@ void ViewportHostWidget::createSceneLight()
 
     m_sceneLight.exists = true;
     applySceneLightToRuntime();
+    rebuildSceneLightProxyModel();
     notifySceneChanged();
 }
 
@@ -3917,6 +4271,7 @@ void ViewportHostWidget::setSceneLight(const SceneLight& light)
 {
     m_sceneLight = light;
     applySceneLightToRuntime();
+    rebuildSceneLightProxyModel();
     notifySceneChanged();
 }
 
@@ -4017,6 +4372,24 @@ void ViewportHostWidget::updateSceneItemPhysicsGravity(int index, bool useGravit
 void ViewportHostWidget::updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness)
 {
     m_sceneController->updateSceneItemCharacterTurnResponsiveness(index, responsiveness);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::updateSceneItemCharacterLocomotion(int index, float moveSpeed, float idleAnimationSpeed, float walkAnimationSpeed)
+{
+    m_sceneController->updateSceneItemCharacterLocomotion(index, moveSpeed, idleAnimationSpeed, walkAnimationSpeed);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::updateSceneItemCharacterProceduralIdle(int index, bool enabled)
+{
+    m_sceneController->updateSceneItemCharacterProceduralIdle(index, enabled);
+    notifySceneChanged();
+}
+
+void ViewportHostWidget::updateSceneItemCharacterAnimationBindings(int index, const SceneItem& bindingsSource)
+{
+    m_sceneController->updateSceneItemCharacterAnimationBindings(index, bindingsSource);
     notifySceneChanged();
 }
 
@@ -4267,6 +4640,25 @@ void ViewportHostWidget::focusSceneItem(int index)
         selectedCamera = m_runtime->camera();
     }
     m_cameraController->focusSceneItem(index, selectedCamera);
+    if (m_cameraChangedCallback)
+    {
+        m_cameraChangedCallback();
+    }
+}
+
+void ViewportHostWidget::focusSceneLight()
+{
+    if (!m_sceneLight.exists)
+    {
+        return;
+    }
+
+    Camera* selectedCamera = focusedViewportCamera();
+    if (!selectedCamera)
+    {
+        selectedCamera = m_runtime->camera();
+    }
+    m_cameraController->focusWorldPoint(m_sceneLight.editorProxyPosition, 3.0f, 0.25f, selectedCamera);
     if (m_cameraChangedCallback)
     {
         m_cameraChangedCallback();
@@ -4600,6 +4992,7 @@ void ViewportHostWidget::ensureViewportInitialized()
         }
         m_cameraController->setCameraSpeed(m_cameraController->cameraSpeed());
         applySceneLightToRuntime();
+        rebuildSceneLightProxyModel();
         m_initialized = true;
 
         if (!m_sceneController->pendingEntries().isEmpty())
@@ -4849,6 +5242,86 @@ void ViewportHostWidget::applySceneLightToRuntime()
     {
         m_runtime->engine()->setLight(Light(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f), glm::vec3(0.0f)));
     }
+}
+
+void ViewportHostWidget::syncEditorRenderModels()
+{
+    if (!m_runtime || !m_runtime->display())
+    {
+        return;
+    }
+
+    std::vector<Model*> editorModels;
+    if (m_sceneLight.exists)
+    {
+        for (const std::unique_ptr<Model>& model : m_sceneLightProxyModels)
+        {
+            if (model)
+            {
+                editorModels.push_back(model.get());
+            }
+        }
+    }
+    m_runtime->display()->setEditorRenderModels(editorModels);
+}
+
+void ViewportHostWidget::rebuildSceneLightProxyModel()
+{
+    if (!m_runtime || !m_runtime->engine())
+    {
+        return;
+    }
+
+    if (!m_sceneLight.exists)
+    {
+        m_sceneLightProxyModels.clear();
+        syncEditorRenderModels();
+        return;
+    }
+
+    if (m_sceneLightProxyModels.empty())
+    {
+        m_sceneLightProxyModels.push_back(std::make_unique<Model>(buildLightHaloVertices(), m_runtime->engine()));
+        m_sceneLightProxyModels.back()->name = "Editor Light Halo";
+        m_sceneLightProxyModels.push_back(std::make_unique<Model>(buildDirectionalArrowVertices(), m_runtime->engine()));
+        m_sceneLightProxyModels.back()->name = "Editor Light Direction";
+        m_sceneLightProxyModels.push_back(std::make_unique<Model>(buildDirectionalApertureVertices(), m_runtime->engine()));
+        m_sceneLightProxyModels.back()->name = "Editor Light Aperture";
+        m_sceneLightProxyModels.push_back(std::make_unique<Model>(buildAreaGuideVertices(), m_runtime->engine()));
+        m_sceneLightProxyModels.back()->name = "Editor Light Area";
+    }
+
+    const glm::vec3 position(m_sceneLight.editorProxyPosition.x(),
+                             m_sceneLight.editorProxyPosition.y(),
+                             m_sceneLight.editorProxyPosition.z());
+    const glm::vec3 direction = normalizedLightDirection(m_sceneLight);
+    const glm::mat4 translation = glm::translate(glm::mat4(1.0f), position);
+    const glm::mat4 orientation = glm::mat4_cast(lightDirectionOrientation(direction));
+    const float brightness = std::max(m_sceneLight.brightness, 0.0f);
+    const float haloScale = 1.0f + std::min(brightness, 8.0f) * 0.10f;
+    const float arrowScale = 1.0f + std::min(brightness, 6.0f) * 0.05f;
+    const float apertureScale = 1.0f + std::min(brightness, 8.0f) * 0.08f;
+
+    if (m_sceneLightProxyModels.size() >= 4)
+    {
+        styleLightGizmoModel(*m_sceneLightProxyModels[0], lightGizmoColor(m_sceneLight, 0.55f, 0.18f), false);
+        styleLightGizmoModel(*m_sceneLightProxyModels[1], lightGizmoColor(m_sceneLight, 0.75f, 0.24f), true);
+        styleLightGizmoModel(*m_sceneLightProxyModels[2], lightGizmoColor(m_sceneLight, 0.42f, 0.14f), false);
+        styleLightGizmoModel(*m_sceneLightProxyModels[3], lightGizmoColor(m_sceneLight, 0.48f, 0.16f), false);
+
+        m_sceneLightProxyModels[0]->visible = true;
+        m_sceneLightProxyModels[0]->setWorldTransform(translation * glm::scale(glm::mat4(1.0f), glm::vec3(haloScale)));
+
+        m_sceneLightProxyModels[1]->visible = lightTypeUsesDirectionGizmo(m_sceneLight.type);
+        m_sceneLightProxyModels[1]->setWorldTransform(translation * orientation * glm::scale(glm::mat4(1.0f), glm::vec3(arrowScale)));
+
+        m_sceneLightProxyModels[2]->visible = lightTypeUsesApertureGuide(m_sceneLight.type);
+        m_sceneLightProxyModels[2]->setWorldTransform(translation * orientation * glm::scale(glm::mat4(1.0f), glm::vec3(apertureScale)));
+
+        m_sceneLightProxyModels[3]->visible = lightTypeUsesAreaGuide(m_sceneLight.type);
+        m_sceneLightProxyModels[3]->setWorldTransform(translation * orientation * glm::scale(glm::mat4(1.0f), glm::vec3(apertureScale)));
+    }
+    syncEditorRenderModels();
 }
 
 }  // namespace motive::ui

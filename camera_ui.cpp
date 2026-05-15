@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "host_widget.h"
+#include "physics_interface.h"
 
 #include <QCheckBox>
 #include <QColor>
@@ -7,6 +8,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -45,6 +47,90 @@ void MainWindowShell::setupCameraSettingsPanel()
         m_viewportHost->setViewportCount(m_viewportCountCombo->currentData().toInt());
         saveProjectState();
     });
+
+    auto* physicsSection = new QGroupBox(QStringLiteral("Physics"), cameraPanel);
+    auto* physicsLayout = new QFormLayout(physicsSection);
+
+    m_globalPhysicsEngineCombo = new QComboBox(physicsSection);
+    const auto availableBackends = motive::PhysicsFactory::getAvailableBackends();
+    for (const motive::PhysicsEngineType backend : availableBackends)
+    {
+        m_globalPhysicsEngineCombo->addItem(
+            QString::fromUtf8(motive::PhysicsFactory::getBackendName(backend)),
+            static_cast<int>(backend));
+    }
+    physicsLayout->addRow(QStringLiteral("Backend"), m_globalPhysicsEngineCombo);
+    connect(m_globalPhysicsEngineCombo, &QComboBox::currentIndexChanged, this, [this]() {
+        if (m_updatingCameraSettings || !m_viewportHost || !m_globalPhysicsEngineCombo) return;
+        motive::PhysicsSettings settings = m_viewportHost->globalPhysicsSettings();
+        settings.engineType = static_cast<motive::PhysicsEngineType>(m_globalPhysicsEngineCombo->currentData().toInt());
+        m_viewportHost->setGlobalPhysicsSettings(settings);
+        saveProjectState();
+    });
+
+    auto* gravityWidget = new QWidget(physicsSection);
+    auto* gravityLayout = new QHBoxLayout(gravityWidget);
+    gravityLayout->setContentsMargins(0, 0, 0, 0);
+    m_globalGravityXSpin = createSpinBox(gravityWidget, -1000.0, 1000.0, 0.1);
+    m_globalGravityYSpin = createSpinBox(gravityWidget, -1000.0, 1000.0, 0.1);
+    m_globalGravityZSpin = createSpinBox(gravityWidget, -1000.0, 1000.0, 0.1);
+    gravityLayout->addWidget(new QLabel(QStringLiteral("X"), gravityWidget));
+    gravityLayout->addWidget(m_globalGravityXSpin);
+    gravityLayout->addWidget(new QLabel(QStringLiteral("Y"), gravityWidget));
+    gravityLayout->addWidget(m_globalGravityYSpin);
+    gravityLayout->addWidget(new QLabel(QStringLiteral("Z"), gravityWidget));
+    gravityLayout->addWidget(m_globalGravityZSpin);
+    physicsLayout->addRow(QStringLiteral("World Gravity"), gravityWidget);
+    auto applyGlobalGravity = [this]() {
+        if (m_updatingCameraSettings || !m_viewportHost ||
+            !m_globalGravityXSpin || !m_globalGravityYSpin || !m_globalGravityZSpin)
+        {
+            return;
+        }
+        motive::PhysicsSettings settings = m_viewportHost->globalPhysicsSettings();
+        settings.gravity = glm::vec3(
+            static_cast<float>(m_globalGravityXSpin->value()),
+            static_cast<float>(m_globalGravityYSpin->value()),
+            static_cast<float>(m_globalGravityZSpin->value()));
+        m_viewportHost->setGlobalPhysicsSettings(settings);
+        saveProjectState();
+    };
+    connect(m_globalGravityXSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGlobalGravity]() { applyGlobalGravity(); });
+    connect(m_globalGravityYSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGlobalGravity]() { applyGlobalGravity(); });
+    connect(m_globalGravityZSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [applyGlobalGravity]() { applyGlobalGravity(); });
+
+    m_globalPhysicsMaxSubStepsSpin = new QSpinBox(physicsSection);
+    m_globalPhysicsMaxSubStepsSpin->setRange(1, 16);
+    physicsLayout->addRow(QStringLiteral("Max Substeps"), m_globalPhysicsMaxSubStepsSpin);
+    connect(m_globalPhysicsMaxSubStepsSpin, &QSpinBox::valueChanged, this, [this](int value) {
+        if (m_updatingCameraSettings || !m_viewportHost) return;
+        motive::PhysicsSettings settings = m_viewportHost->globalPhysicsSettings();
+        settings.maxSubSteps = value;
+        m_viewportHost->setGlobalPhysicsSettings(settings);
+        saveProjectState();
+    });
+
+    m_globalPhysicsAutoSyncCheck = new QCheckBox(QStringLiteral("Auto-sync physics transforms"), physicsSection);
+    physicsLayout->addRow(QStringLiteral("Sync"), m_globalPhysicsAutoSyncCheck);
+    connect(m_globalPhysicsAutoSyncCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_updatingCameraSettings || !m_viewportHost) return;
+        motive::PhysicsSettings settings = m_viewportHost->globalPhysicsSettings();
+        settings.autoSync = checked;
+        m_viewportHost->setGlobalPhysicsSettings(settings);
+        saveProjectState();
+    });
+
+    m_globalPhysicsDebugDrawCheck = new QCheckBox(QStringLiteral("Enable physics debug draw"), physicsSection);
+    physicsLayout->addRow(QStringLiteral("Debug Draw"), m_globalPhysicsDebugDrawCheck);
+    connect(m_globalPhysicsDebugDrawCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_updatingCameraSettings || !m_viewportHost) return;
+        motive::PhysicsSettings settings = m_viewportHost->globalPhysicsSettings();
+        settings.debugDraw = checked;
+        m_viewportHost->setGlobalPhysicsSettings(settings);
+        saveProjectState();
+    });
+
+    cameraLayout->addRow(physicsSection);
 
     m_meshConsolidationCheck = new QCheckBox(QStringLiteral("Enable mesh consolidation"), cameraPanel);
     m_meshConsolidationCheck->setChecked(true);
@@ -131,6 +217,14 @@ void MainWindowShell::setupCameraSettingsPanel()
         centerAllSceneItemsToOrigin();
     });
 
+    m_saveProjectButton = new QPushButton(QStringLiteral("Save Project JSON"), cameraPanel);
+    m_saveProjectButton->setToolTip(
+        QStringLiteral("Write all current object metadata, lights, cameras, physics, and UI state to the existing project JSON file."));
+    cameraLayout->addRow(QStringLiteral("Project"), m_saveProjectButton);
+    connect(m_saveProjectButton, &QPushButton::clicked, this, [this]() {
+        saveProjectState();
+    });
+
     m_rightTabs->addTab(wrapTabInScrollArea(cameraPanel), QStringLiteral("Global"));
     
     // Store reference to parallel load checkbox for persistence (optional)
@@ -160,6 +254,39 @@ void MainWindowShell::updateCameraSettingsPanel()
         {
             m_viewportCountCombo->setCurrentIndex(index);
         }
+    }
+    const motive::PhysicsSettings physicsSettings = m_viewportHost->globalPhysicsSettings();
+    if (m_globalPhysicsEngineCombo)
+    {
+        const int index = m_globalPhysicsEngineCombo->findData(static_cast<int>(physicsSettings.engineType));
+        if (index >= 0)
+        {
+            m_globalPhysicsEngineCombo->setCurrentIndex(index);
+        }
+    }
+    if (m_globalGravityXSpin)
+    {
+        m_globalGravityXSpin->setValue(physicsSettings.gravity.x);
+    }
+    if (m_globalGravityYSpin)
+    {
+        m_globalGravityYSpin->setValue(physicsSettings.gravity.y);
+    }
+    if (m_globalGravityZSpin)
+    {
+        m_globalGravityZSpin->setValue(physicsSettings.gravity.z);
+    }
+    if (m_globalPhysicsMaxSubStepsSpin)
+    {
+        m_globalPhysicsMaxSubStepsSpin->setValue(physicsSettings.maxSubSteps);
+    }
+    if (m_globalPhysicsAutoSyncCheck)
+    {
+        m_globalPhysicsAutoSyncCheck->setChecked(physicsSettings.autoSync);
+    }
+    if (m_globalPhysicsDebugDrawCheck)
+    {
+        m_globalPhysicsDebugDrawCheck->setChecked(physicsSettings.debugDraw);
     }
     if (m_cameraSpeedSpin)
     {

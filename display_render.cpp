@@ -302,19 +302,18 @@ void Display::render()
 
         auto drawPass = [&](bool transparentPass)
         {
-            for (const auto& modelPtr : engine->models)
+            auto drawModel = [&](const Model& model)
             {
-                if (!modelPtr || !modelPtr->visible)
+                if (!model.visible)
                 {
-                    continue;
+                    return;
                 }
                 if (!embeddedMode && !cullingDisabled &&
-                    !sphereInFrustum(frustum, modelPtr->boundsCenter, modelPtr->boundsRadius))
+                    !sphereInFrustum(frustum, model.boundsCenter, model.boundsRadius))
                 {
-                    continue;
+                    return;
                 }
 
-                const Model& model = *modelPtr;
                 for (const auto& mesh : model.meshes)
                 {
                     for (const auto& primitive : mesh.primitives)
@@ -328,18 +327,31 @@ void Display::render()
 
                         const uint32_t pipelineIndex = pipelineIndexForCullMode(primitive->cullMode, cullingDisabled, use2DPipeline);
                         const bool useSkinnedPipeline = primitive->gpuSkinningEnabled && !use2DPipeline;
+                        const bool useUnlitPipeline = primitive->unlitEnabled && !useSkinnedPipeline && !use2DPipeline;
                         const bool depthTestEnabled = primitive->depthTestEnabled;
-                        const VkPipeline activePipeline = useSkinnedPipeline
-                            ? (depthTestEnabled
-                                   ? (transparentPass ? transparentSkinnedGraphicsPipelines[pipelineIndex]
-                                                      : skinnedGraphicsPipelines[pipelineIndex])
-                                   : (transparentPass ? noDepthTransparentSkinnedGraphicsPipelines[pipelineIndex]
-                                                      : noDepthSkinnedGraphicsPipelines[pipelineIndex]))
-                            : (depthTestEnabled
-                                   ? (transparentPass ? transparentGraphicsPipelines[pipelineIndex]
-                                                      : graphicsPipelines[pipelineIndex])
-                                   : (transparentPass ? noDepthTransparentGraphicsPipelines[pipelineIndex]
-                                                      : noDepthGraphicsPipelines[pipelineIndex]));
+                        VkPipeline activePipeline = VK_NULL_HANDLE;
+                        if (useUnlitPipeline)
+                        {
+                            activePipeline = depthTestEnabled
+                                ? (transparentPass ? transparentUnlitGraphicsPipelines[pipelineIndex]
+                                                   : unlitGraphicsPipelines[pipelineIndex])
+                                : (transparentPass ? noDepthTransparentUnlitGraphicsPipelines[pipelineIndex]
+                                                   : noDepthUnlitGraphicsPipelines[pipelineIndex]);
+                        }
+                        else
+                        {
+                            activePipeline = useSkinnedPipeline
+                                ? (depthTestEnabled
+                                       ? (transparentPass ? transparentSkinnedGraphicsPipelines[pipelineIndex]
+                                                          : skinnedGraphicsPipelines[pipelineIndex])
+                                       : (transparentPass ? noDepthTransparentSkinnedGraphicsPipelines[pipelineIndex]
+                                                          : noDepthSkinnedGraphicsPipelines[pipelineIndex]))
+                                : (depthTestEnabled
+                                       ? (transparentPass ? transparentGraphicsPipelines[pipelineIndex]
+                                                          : graphicsPipelines[pipelineIndex])
+                                       : (transparentPass ? noDepthTransparentGraphicsPipelines[pipelineIndex]
+                                                          : noDepthGraphicsPipelines[pipelineIndex]));
+                        }
 
                         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, activePipeline);
 
@@ -396,6 +408,23 @@ void Display::render()
                         }
                     }
                 }
+            };
+
+            for (const auto& modelPtr : engine->models)
+            {
+                if (!modelPtr)
+                {
+                    continue;
+                }
+                drawModel(*modelPtr);
+            }
+            for (Model* editorModel : editorRenderModels)
+            {
+                if (!editorModel)
+                {
+                    continue;
+                }
+                drawModel(*editorModel);
             }
         };
 

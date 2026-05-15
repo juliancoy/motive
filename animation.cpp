@@ -1,3 +1,7 @@
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
+
 #include "animation.h"
 
 #include "model.h"
@@ -5,7 +9,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
+#include <optional>
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace {
 
@@ -30,6 +48,19 @@ glm::mat4 toGlmMat4(const ufbx_matrix& value)
     result[2][0] = static_cast<float>(value.m02); result[2][1] = static_cast<float>(value.m12); result[2][2] = static_cast<float>(value.m22); result[2][3] = 0.0f;
     result[3][0] = static_cast<float>(value.m03); result[3][1] = static_cast<float>(value.m13); result[3][2] = static_cast<float>(value.m23); result[3][3] = 1.0f;
     return result;
+}
+
+glm::vec3 readVec3KeyValue(const QJsonArray& array, int startIndex)
+{
+    return glm::vec3(static_cast<float>(array.at(startIndex).toDouble()),
+                     static_cast<float>(array.at(startIndex + 1).toDouble()),
+                     static_cast<float>(array.at(startIndex + 2).toDouble()));
+}
+
+glm::quat quatFromEulerDegrees(const glm::vec3& degrees)
+{
+    const glm::vec3 radians = glm::radians(degrees);
+    return glm::normalize(glm::quat(radians));
 }
 
 const ufbx_mesh* findMeshByElementId(const ufbx_scene* scene, uint32_t elementId)
@@ -182,6 +213,182 @@ double clampToPlaybackWindow(double timeSeconds, const ClipPlaybackWindow& windo
     return std::clamp(timeSeconds, window.start, window.end);
 }
 
+template <typename Keyframe, typename Value, typename LerpFn>
+Value sampleKeyframes(const std::vector<Keyframe>& keys,
+                      double timeSeconds,
+                      const Value& fallback,
+                      LerpFn&& lerp)
+{
+    if (keys.empty())
+    {
+        return fallback;
+    }
+    if (keys.size() == 1 || timeSeconds <= keys.front().timeSeconds)
+    {
+        return keys.front().value;
+    }
+    if (timeSeconds >= keys.back().timeSeconds)
+    {
+        return keys.back().value;
+    }
+
+    for (size_t i = 1; i < keys.size(); ++i)
+    {
+        if (timeSeconds <= keys[i].timeSeconds)
+        {
+            const Keyframe& a = keys[i - 1];
+            const Keyframe& b = keys[i];
+            const double span = std::max(b.timeSeconds - a.timeSeconds, 1e-6);
+            const float t = static_cast<float>((timeSeconds - a.timeSeconds) / span);
+            return lerp(a.value, b.value, t);
+        }
+    }
+
+    return keys.back().value;
+}
+
+bool sortVec3KeysByTime(const motive::animation::FbxVec3Keyframe& a,
+                        const motive::animation::FbxVec3Keyframe& b)
+{
+    return a.timeSeconds < b.timeSeconds;
+}
+
+bool sortQuatKeysByTime(const motive::animation::FbxQuatKeyframe& a,
+                        const motive::animation::FbxQuatKeyframe& b)
+{
+    return a.timeSeconds < b.timeSeconds;
+}
+
+void sortClipKeys(motive::animation::FbxCustomClip& clip)
+{
+    for (motive::animation::FbxCustomTrack& track : clip.tracks)
+    {
+        std::sort(track.translationKeys.begin(), track.translationKeys.end(), sortVec3KeysByTime);
+        std::sort(track.rotationKeys.begin(), track.rotationKeys.end(), sortQuatKeysByTime);
+        std::sort(track.scaleKeys.begin(), track.scaleKeys.end(), sortVec3KeysByTime);
+    }
+}
+
+bool parseVec3KeyArray(const QJsonArray& jsonKeys, std::vector<motive::animation::FbxVec3Keyframe>& outKeys)
+{
+    for (const QJsonValue& value : jsonKeys)
+    {
+        if (!value.isArray())
+        {
+            continue;
+        }
+        const QJsonArray key = value.toArray();
+        if (key.size() < 4)
+        {
+            continue;
+        }
+        motive::animation::FbxVec3Keyframe parsed;
+        parsed.timeSeconds = key.at(0).toDouble();
+        parsed.value = readVec3KeyValue(key, 1);
+        outKeys.push_back(parsed);
+    }
+    return !outKeys.empty();
+}
+
+bool parseQuatKeyArray(const QJsonArray& jsonKeys, std::vector<motive::animation::FbxQuatKeyframe>& outKeys)
+{
+    for (const QJsonValue& value : jsonKeys)
+    {
+        if (!value.isArray())
+        {
+            continue;
+        }
+        const QJsonArray key = value.toArray();
+        motive::animation::FbxQuatKeyframe parsed;
+        if (key.size() >= 6)
+        {
+            parsed.timeSeconds = key.at(0).toDouble();
+            parsed.value = glm::normalize(glm::quat(static_cast<float>(key.at(4).toDouble()),
+                                                    static_cast<float>(key.at(1).toDouble()),
+                                                    static_cast<float>(key.at(2).toDouble()),
+                                                    static_cast<float>(key.at(3).toDouble())));
+        }
+        else if (key.size() >= 4)
+        {
+            parsed.timeSeconds = key.at(0).toDouble();
+            const glm::vec3 eulerDegrees = readVec3KeyValue(key, 1);
+            parsed.value = quatFromEulerDegrees(eulerDegrees);
+        }
+        else
+        {
+            continue;
+        }
+        outKeys.push_back(parsed);
+    }
+    return !outKeys.empty();
+}
+
+std::optional<motive::animation::FbxCustomClip> parseCustomClip(const QJsonObject& object,
+                                                                const motive::animation::FbxRuntime& runtime)
+{
+    motive::animation::FbxCustomClip clip;
+    clip.name = object.value(QStringLiteral("name")).toString().toStdString();
+    clip.durationSeconds = std::max(0.0, object.value(QStringLiteral("durationSeconds")).toDouble(object.value(QStringLiteral("duration")).toDouble()));
+    if (clip.name.empty() || clip.durationSeconds <= 0.0)
+    {
+        std::cerr << "[FBX] Rejecting sidecar clip with missing name/duration"
+                  << " name=" << clip.name
+                  << " duration=" << clip.durationSeconds
+                  << std::endl;
+        return std::nullopt;
+    }
+
+    const QJsonArray tracks = object.value(QStringLiteral("tracks")).toArray();
+    for (const QJsonValue& value : tracks)
+    {
+        if (!value.isObject())
+        {
+            continue;
+        }
+        const QJsonObject trackObject = value.toObject();
+        motive::animation::FbxCustomTrack track;
+        track.boneName = trackObject.value(QStringLiteral("bone")).toString().toStdString();
+        if (track.boneName.empty())
+        {
+            std::cerr << "[FBX] Ignoring sidecar track with empty bone name in clip "
+                      << clip.name << std::endl;
+            continue;
+        }
+        const auto it = runtime.nodeNameToIndex.find(track.boneName);
+        if (it == runtime.nodeNameToIndex.end())
+        {
+            std::cerr << "[FBX] Ignoring sidecar track for unknown bone '"
+                      << track.boneName << "' in clip " << clip.name << std::endl;
+            continue;
+        }
+        track.nodeIndex = it->second;
+        parseVec3KeyArray(trackObject.value(QStringLiteral("translation")).toArray(), track.translationKeys);
+        track.rotationKeysAreAdditive =
+            parseQuatKeyArray(trackObject.value(QStringLiteral("rotationEulerDeg")).toArray(), track.rotationKeys);
+        parseVec3KeyArray(trackObject.value(QStringLiteral("scale")).toArray(), track.scaleKeys);
+        if (track.translationKeys.empty() && track.rotationKeys.empty() && track.scaleKeys.empty())
+        {
+            std::cerr << "[FBX] Ignoring sidecar track for bone '"
+                      << track.boneName << "' in clip " << clip.name
+                      << " because it contained no valid keys" << std::endl;
+            continue;
+        }
+        clip.tracks.push_back(std::move(track));
+    }
+
+    if (clip.tracks.empty())
+    {
+        std::cerr << "[FBX] Rejecting sidecar clip '" << clip.name
+                  << "' because no valid tracks were loaded" << std::endl;
+        return std::nullopt;
+    }
+
+    sortClipKeys(clip);
+    return clip;
+}
+
+bool applyCustomAnimation(Model& model, motive::animation::FbxRuntime& runtime, const motive::animation::FbxClipRuntime& clip);
+
 }  // namespace
 
 namespace motive::animation {
@@ -215,7 +422,25 @@ std::unique_ptr<FbxRuntime> createFbxRuntime(ufbx_scene* scene)
         std::string clipName = animStack->name.data && animStack->name.length > 0
             ? std::string(animStack->name.data, animStack->name.length)
             : ("Animation " + std::to_string(i));
-        runtime->clips.push_back(FbxClipRuntime{clipName, animStack->anim, animStack->time_begin, animStack->time_end});
+        FbxClipRuntime clipRuntime;
+        clipRuntime.name = clipName;
+        clipRuntime.source = FbxClipRuntime::Source::Scene;
+        clipRuntime.anim = animStack->anim;
+        clipRuntime.timeBegin = animStack->time_begin;
+        clipRuntime.timeEnd = animStack->time_end;
+        runtime->clips.push_back(std::move(clipRuntime));
+    }
+
+    runtime->nodes.reserve(scene->nodes.count);
+    for (size_t i = 0; i < scene->nodes.count; ++i)
+    {
+        const ufbx_node* node = scene->nodes.data[i];
+        runtime->nodes.push_back(node);
+        if (node && node->name.data && node->name.length > 0)
+        {
+            runtime->nodeNameToIndex.emplace(std::string(node->name.data, node->name.length),
+                                             static_cast<int>(i));
+        }
     }
     if (!runtime->clips.empty())
     {
@@ -227,13 +452,17 @@ std::unique_ptr<FbxRuntime> createFbxRuntime(ufbx_scene* scene)
 
 void addFbxMeshBinding(FbxRuntime& runtime, uint32_t meshElementId, std::vector<uint32_t> vertexIndices)
 {
-    runtime.meshBindings.push_back(FbxMeshBinding{meshElementId, std::move(vertexIndices)});
+    FbxMeshBinding binding;
+    binding.meshElementId = meshElementId;
+    binding.vertexIndices = std::move(vertexIndices);
+    runtime.meshBindings.push_back(std::move(binding));
 }
 
 void addFbxMeshBinding(FbxRuntime& runtime,
                        uint32_t meshElementId,
                        uint32_t skinDeformerIndex,
                        std::vector<uint32_t> vertexIndices,
+                       std::vector<Vertex> baseVertices,
                        std::vector<glm::uvec4> jointIndices,
                        std::vector<glm::vec4> jointWeights)
 {
@@ -241,12 +470,68 @@ void addFbxMeshBinding(FbxRuntime& runtime,
     binding.meshElementId = meshElementId;
     binding.skinDeformerIndex = skinDeformerIndex;
     binding.vertexIndices = std::move(vertexIndices);
+    binding.baseVertices = std::move(baseVertices);
     binding.jointIndices = std::move(jointIndices);
     binding.jointWeights = std::move(jointWeights);
     binding.gpuSkinningEligible = !binding.jointIndices.empty() &&
                                   binding.jointIndices.size() == binding.vertexIndices.size() &&
                                   binding.jointWeights.size() == binding.vertexIndices.size();
     runtime.meshBindings.push_back(std::move(binding));
+}
+
+void loadFbxSidecarClips(FbxRuntime& runtime, const std::string& fbxPath)
+{
+    const QFileInfo fbxInfo(QString::fromStdString(fbxPath));
+    const QString sidecarPath = fbxInfo.dir().filePath(fbxInfo.completeBaseName() + QStringLiteral(".anim.json"));
+    QFile sidecar(sidecarPath);
+    if (!sidecar.exists() || !sidecar.open(QIODevice::ReadOnly))
+    {
+        return;
+    }
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(sidecar.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+    {
+        std::cerr << "[FBX] Ignoring invalid animation sidecar: "
+                  << sidecarPath.toStdString()
+                  << " parseError=" << parseError.errorString().toStdString()
+                  << std::endl;
+        return;
+    }
+
+    const QJsonArray clips = document.object().value(QStringLiteral("clips")).toArray();
+    int loadedClipCount = 0;
+    for (const QJsonValue& value : clips)
+    {
+        if (!value.isObject())
+        {
+            continue;
+        }
+        std::optional<FbxCustomClip> clip = parseCustomClip(value.toObject(), runtime);
+        if (!clip.has_value())
+        {
+            continue;
+        }
+
+        const int customClipIndex = static_cast<int>(runtime.customClips.size());
+        runtime.customClips.push_back(std::move(*clip));
+
+        FbxClipRuntime clipRuntime;
+        clipRuntime.name = runtime.customClips.back().name;
+        clipRuntime.source = FbxClipRuntime::Source::Custom;
+        clipRuntime.timeBegin = 0.0;
+        clipRuntime.timeEnd = runtime.customClips.back().durationSeconds;
+        clipRuntime.customClipIndex = customClipIndex;
+        runtime.clips.push_back(std::move(clipRuntime));
+        ++loadedClipCount;
+    }
+
+    std::cerr << "[FBX] Sidecar clip load "
+              << sidecarPath.toStdString()
+              << " requested=" << clips.size()
+              << " loaded=" << loadedClipCount
+              << std::endl;
 }
 
 void setFbxPlaybackState(FbxRuntime& runtime, const std::string& clipName, bool playing, bool loop, float speed)
@@ -307,6 +592,214 @@ void setFbxPlaybackOptions(FbxRuntime& runtime,
     }
 }
 
+bool applyCustomAnimation(Model& model, FbxRuntime& runtime, const FbxClipRuntime& clip)
+{
+    if (clip.customClipIndex < 0 || clip.customClipIndex >= static_cast<int>(runtime.customClips.size()))
+    {
+        return false;
+    }
+
+    const FbxCustomClip& customClip = runtime.customClips[clip.customClipIndex];
+    if (!runtime.scene || runtime.nodes.empty() || customClip.durationSeconds <= 0.0)
+    {
+        return false;
+    }
+
+    std::vector<glm::mat4> nodeLocal(runtime.nodes.size(), glm::mat4(1.0f));
+    std::vector<glm::mat4> nodeWorld(runtime.nodes.size(), glm::mat4(1.0f));
+    for (size_t i = 0; i < runtime.nodes.size(); ++i)
+    {
+        const ufbx_node* node = runtime.nodes[i];
+        if (!node)
+        {
+            continue;
+        }
+        nodeLocal[i] = toGlmMat4(ufbx_transform_to_matrix(&node->local_transform));
+    }
+
+    for (const FbxCustomTrack& track : customClip.tracks)
+    {
+        if (track.nodeIndex < 0 || track.nodeIndex >= static_cast<int>(runtime.nodes.size()))
+        {
+            continue;
+        }
+        const ufbx_node* node = runtime.nodes[static_cast<size_t>(track.nodeIndex)];
+        if (!node)
+        {
+            continue;
+        }
+
+        glm::vec3 translation(static_cast<float>(node->local_transform.translation.x),
+                              static_cast<float>(node->local_transform.translation.y),
+                              static_cast<float>(node->local_transform.translation.z));
+        glm::vec3 scale(static_cast<float>(node->local_transform.scale.x),
+                        static_cast<float>(node->local_transform.scale.y),
+                        static_cast<float>(node->local_transform.scale.z));
+        glm::quat rotation(static_cast<float>(node->local_transform.rotation.w),
+                           static_cast<float>(node->local_transform.rotation.x),
+                           static_cast<float>(node->local_transform.rotation.y),
+                           static_cast<float>(node->local_transform.rotation.z));
+        rotation = glm::normalize(rotation);
+
+        translation = sampleKeyframes<FbxVec3Keyframe, glm::vec3>(
+            track.translationKeys,
+            runtime.timeSeconds,
+            translation,
+            [](const glm::vec3& a, const glm::vec3& b, float t) { return glm::mix(a, b, t); });
+        scale = sampleKeyframes<FbxVec3Keyframe, glm::vec3>(
+            track.scaleKeys,
+            runtime.timeSeconds,
+            scale,
+            [](const glm::vec3& a, const glm::vec3& b, float t) { return glm::mix(a, b, t); });
+        if (!track.rotationKeys.empty())
+        {
+            const glm::quat sampledRotation = sampleKeyframes<FbxQuatKeyframe, glm::quat>(
+                track.rotationKeys,
+                runtime.timeSeconds,
+                track.rotationKeysAreAdditive ? glm::quat(1.0f, 0.0f, 0.0f, 0.0f) : rotation,
+                [](const glm::quat& a, const glm::quat& b, float t) {
+                    return glm::normalize(glm::slerp(a, b, t));
+                });
+            rotation = track.rotationKeysAreAdditive
+                ? glm::normalize(rotation * sampledRotation)
+                : sampledRotation;
+        }
+
+        nodeLocal[static_cast<size_t>(track.nodeIndex)] =
+            glm::translate(glm::mat4(1.0f), translation) *
+            glm::toMat4(rotation) *
+            glm::scale(glm::mat4(1.0f), scale);
+    }
+
+    for (size_t i = 0; i < runtime.nodes.size(); ++i)
+    {
+        const ufbx_node* node = runtime.nodes[i];
+        if (!node)
+        {
+            continue;
+        }
+
+        glm::mat4 world = nodeLocal[i];
+        if (node->parent)
+        {
+            const auto parentIt = runtime.nodeNameToIndex.find(std::string(node->parent->name.data, node->parent->name.length));
+            if (parentIt != runtime.nodeNameToIndex.end())
+            {
+                world = nodeWorld[static_cast<size_t>(parentIt->second)] * world;
+            }
+        }
+        nodeWorld[i] = world;
+    }
+
+    const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
+    const bool forceCpuNormalizedPose =
+        model.character.isControllable && runtime.centroidNormalizationEnabled;
+    bool updated = false;
+    for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
+    {
+        const FbxMeshBinding& binding = runtime.meshBindings[meshIndex];
+        Primitive* primitive = !model.meshes[meshIndex].primitives.empty()
+            ? model.meshes[meshIndex].primitives.front().get()
+            : nullptr;
+        if (!primitive)
+        {
+            continue;
+        }
+
+        const ufbx_mesh* mesh = findMeshByElementId(runtime.scene, binding.meshElementId);
+        if (!mesh)
+        {
+            continue;
+        }
+        const ufbx_skin_deformer* skin = binding.skinDeformerIndex < mesh->skin_deformers.count
+            ? mesh->skin_deformers.data[binding.skinDeformerIndex]
+            : nullptr;
+        if (!skin)
+        {
+            continue;
+        }
+
+        std::vector<glm::mat4> jointMatrices;
+        jointMatrices.reserve(std::min<size_t>(skin->clusters.count, kMaxPrimitiveSkinJoints));
+        for (size_t clusterIndex = 0; clusterIndex < skin->clusters.count && clusterIndex < kMaxPrimitiveSkinJoints; ++clusterIndex)
+        {
+            const ufbx_skin_cluster* cluster = skin->clusters.data[clusterIndex];
+            if (!cluster || !cluster->bone_node)
+            {
+                jointMatrices.push_back(glm::mat4(1.0f));
+                continue;
+            }
+
+            const auto it = runtime.nodeNameToIndex.find(std::string(cluster->bone_node->name.data, cluster->bone_node->name.length));
+            if (it == runtime.nodeNameToIndex.end())
+            {
+                jointMatrices.push_back(glm::mat4(1.0f));
+                continue;
+            }
+
+            const glm::mat4 boneWorld = nodeWorld[static_cast<size_t>(it->second)];
+            jointMatrices.push_back(boneWorld * toGlmMat4(cluster->geometry_to_bone));
+        }
+
+        if (!forceCpuNormalizedPose &&
+            primitive->gpuSkinningEnabled &&
+            binding.gpuSkinningEligible &&
+            !binding.baseVertices.empty())
+        {
+            primitive->updateSkinningMatrices(jointMatrices);
+            updated = true;
+            continue;
+        }
+
+        if (binding.baseVertices.empty() ||
+            binding.jointIndices.size() != binding.baseVertices.size() ||
+            binding.jointWeights.size() != binding.baseVertices.size())
+        {
+            continue;
+        }
+
+        std::vector<Vertex> vertices = binding.baseVertices;
+        for (size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
+        {
+            const Vertex& base = binding.baseVertices[vertexIndex];
+            glm::vec4 skinnedPos(0.0f);
+            glm::vec3 skinnedNormal(0.0f);
+            float totalWeight = 0.0f;
+            for (int influence = 0; influence < 4; ++influence)
+            {
+                const uint32_t jointIndex = binding.jointIndices[vertexIndex][influence];
+                const float weight = binding.jointWeights[vertexIndex][influence];
+                if (weight <= 1e-6f || jointIndex >= jointMatrices.size())
+                {
+                    continue;
+                }
+                const glm::mat4& joint = jointMatrices[jointIndex];
+                skinnedPos += joint * glm::vec4(base.pos, 1.0f) * weight;
+                skinnedNormal += glm::mat3(joint) * base.normal * weight;
+                totalWeight += weight;
+            }
+            if (totalWeight > 1e-6f)
+            {
+                vertices[vertexIndex].pos = glm::vec3(skinnedPos) / totalWeight;
+                vertices[vertexIndex].normal = glm::normalize(skinnedNormal / totalWeight);
+            }
+        }
+
+        if (runtime.centroidNormalizationEnabled)
+        {
+            normalizeControllableCharacterRootOffset(model, vertices);
+        }
+        primitive->updateVertexData(vertices);
+        updated = true;
+    }
+
+    if (updated)
+    {
+        model.recomputeBounds();
+    }
+    return updated;
+}
+
 bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
 {
     if (!runtime.scene || runtime.activeClipIndex < 0 || runtime.activeClipIndex >= static_cast<int>(runtime.clips.size()))
@@ -338,6 +831,11 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
     else
     {
         runtime.timeSeconds = clampToPlaybackWindow(runtime.timeSeconds, window);
+    }
+
+    if (clip.source == FbxClipRuntime::Source::Custom)
+    {
+        return applyCustomAnimation(model, runtime, clip);
     }
 
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());

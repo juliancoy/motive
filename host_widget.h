@@ -17,6 +17,8 @@
 #include <mutex>
 #include <memory>
 
+#include "physics_interface.h"
+
 class QLabel;
 class QComboBox;
 class QFrame;
@@ -29,6 +31,7 @@ class QMoveEvent;
 class QResizeEvent;
 class QShowEvent;
 class Camera;
+class Model;
 
 namespace motive {
 class IPhysicsBody;
@@ -94,6 +97,20 @@ public:
         bool useGravity = true;
         QVector3D customGravity = QVector3D(0.0f, 0.0f, 0.0f);
         float characterTurnResponsiveness = 10.0f;
+        float characterMoveSpeed = 3.0f;
+        float characterIdleAnimationSpeed = 1.0f;
+        float characterWalkAnimationSpeed = 1.0f;
+        bool characterProceduralIdleEnabled = true;
+        QString characterIdleClip;
+        QString characterComeToRestClip;
+        QString characterWalkForwardClip;
+        QString characterWalkBackwardClip;
+        QString characterWalkLeftClip;
+        QString characterWalkRightClip;
+        QString characterRunClip;
+        QString characterJumpClip;
+        QString characterFallClip;
+        QString characterLandClip;
         QJsonArray primitiveOverrides;
         QVector3D focusPointOffset = QVector3D(0.0f, 0.0f, 0.0f);
         float focusDistance = 0.0f; // <= 0 uses automatic framing distance
@@ -121,6 +138,7 @@ public:
     {
         QString type = QStringLiteral("directional");
         bool exists = false;
+        QVector3D editorProxyPosition = QVector3D(0.0f, 2.0f, 0.0f);
         QVector3D direction = QVector3D(0.0f, 0.0f, 1.0f);
         QVector3D color = QVector3D(1.0f, 1.0f, 1.0f);
         float brightness = 1.0f;
@@ -203,6 +221,8 @@ public:
     void resetCamera();
     void setBackgroundColor(const QColor& color);
     void setRenderPath(const QString& renderPath);
+    motive::PhysicsSettings globalPhysicsSettings() const;
+    void setGlobalPhysicsSettings(const motive::PhysicsSettings& settings);
     void setMeshConsolidationEnabled(bool enabled);
     void createSceneLight();
     void setSceneLight(const SceneLight& light);
@@ -218,6 +238,9 @@ public:
     void updateSceneItemAnimationPhysicsCoupling(int index, const QString& couplingMode);
     void updateSceneItemPhysicsGravity(int index, bool useGravity, const QVector3D& customGravity);
     void updateSceneItemCharacterTurnResponsiveness(int index, float responsiveness);
+    void updateSceneItemCharacterLocomotion(int index, float moveSpeed, float idleAnimationSpeed, float walkAnimationSpeed);
+    void updateSceneItemCharacterProceduralIdle(int index, bool enabled);
+    void updateSceneItemCharacterAnimationBindings(int index, const SceneItem& bindingsSource);
     void updateSceneItemCharacterRestPointOnRelease(int index, bool enabled, float normalized);
     void updateSceneItemFocusSettings(int index, const QVector3D& focusPointOffset, float focusDistance);
     void captureSceneItemFocusFromCurrentCamera(int index);
@@ -231,6 +254,7 @@ public:
     bool coordinatePlaneIndicatorsEnabled() const;
     void relocateSceneItemInFrontOfCamera(int index);
     void focusSceneItem(int index);
+    void focusSceneLight();
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);
     void setCameraChangedCallback(std::function<void()> callback);
     void setViewportFocusChangedCallback(std::function<void(const QString& cameraId)> callback);
@@ -263,7 +287,14 @@ public:
     void enableCharacterControl(int sceneIndex, bool enabled);
     void selectCharacterControlOwner(int sceneIndex);
     bool isCharacterControlEnabled(int sceneIndex) const;
-    bool injectCharacterInput(int sceneIndex, bool keyW, bool keyA, bool keyS, bool keyD, bool jumpRequested, int durationMs);
+    bool injectCharacterInput(int sceneIndex,
+                              bool keyW,
+                              bool keyA,
+                              bool keyS,
+                              bool keyD,
+                              bool jumpRequested,
+                              bool sprintRequested,
+                              int durationMs);
     bool playCharacterInputPattern(int sceneIndex, const QString& pattern, int stepDurationMs, int steps, bool includeJump);
     bool bootstrapThirdPersonShooter(bool force = false);
     QJsonObject bootstrapThirdPersonShooterReport(bool force = false);
@@ -329,6 +360,8 @@ private:
     void captureMotionDebugFrame(float dt);
     void updateMotionDebugOverlay();
     void updateCameraDirectionIndicator();
+    void syncEditorRenderModels();
+    void rebuildSceneLightProxyModel();
 
     struct MotionDebugSample
     {
@@ -343,6 +376,8 @@ private:
         QVector3D targetPos;
         QVector3D targetPosRaw;
         QVector3D targetPosMotion;
+        QVector3D targetRenderedPrimitivePos;
+        QVector3D targetRenderedPrimitiveOffset;
         QVector3D targetVelocity;
         float distanceToTarget = 0.0f;
         float frontDotToTarget = 0.0f;
@@ -350,6 +385,7 @@ private:
         float followSmoothSpeed = 0.0f;
         float targetJitterMagnitude = 0.0f;
         float cameraStepMagnitude = 0.0f;
+        float renderedPrimitiveStepMagnitude = 0.0f;
         float distanceDelta = 0.0f;
         int distanceDeltaFlipCount = 0;
         bool oscillationSuspected = false;
@@ -394,10 +430,12 @@ private:
     double m_motionDebugElapsedSeconds = 0.0;
     bool m_motionDebugHasLast = false;
     QVector3D m_motionDebugLastCameraPos = QVector3D(0.0f, 0.0f, 0.0f);
+    QVector3D m_motionDebugLastRenderedPrimitivePos = QVector3D(0.0f, 0.0f, 0.0f);
     float m_motionDebugLastDistance = 0.0f;
     float m_motionDebugLastDistanceDelta = 0.0f;
     int m_motionDebugDistanceFlipCount = 0;
     MotionDebugOverlayOptions m_motionDebugOverlayOptions;
+    std::vector<std::unique_ptr<Model>> m_sceneLightProxyModels;
 
     std::unique_ptr<ViewportRuntime> m_runtime;
     std::unique_ptr<ViewportSceneController> m_sceneController;
