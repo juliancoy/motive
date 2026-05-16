@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,18 @@ class Model;
 class Display
 {
 public:
+    struct WindowDebugState
+    {
+        bool focused = false;
+        bool inputClearedOnFocusLoss = false;
+        std::int64_t lastFocusChangeUnixMs = 0;
+        std::int64_t lastKeyEventUnixMs = 0;
+        int lastKey = GLFW_KEY_UNKNOWN;
+        int lastScancode = 0;
+        int lastAction = GLFW_RELEASE;
+        int lastMods = 0;
+    };
+
     struct ViewportSlot
     {
         Camera* camera = nullptr;
@@ -68,6 +81,7 @@ public:
     void setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap, bool enabled);
     void clearCustomOverlayBitmap();
     void setEditorRenderModels(const std::vector<Model*>& models);
+    void setDebugWindowTitle(const std::string& title);
     void shutdown();
 
     // Input handling (forwarded to camera)
@@ -159,6 +173,9 @@ public:
     // Input routing
     InputRouter* getInputRouter() { return inputRouter.get(); }
     const InputRouter* getInputRouter() const { return inputRouter.get(); }
+    const WindowDebugState& getWindowDebugState() const { return windowDebugState; }
+    const std::string& getWindowTitle() const { return windowTitle; }
+    bool isNativeWindowFocused() const;
 
 private:
     std::vector<std::unique_ptr<Camera>> ownedCameras;
@@ -202,4 +219,6 @@ private:
     Camera* activeCamera = nullptr;
     std::unique_ptr<InputRouter> inputRouter;
     uint32_t lastRenderedImageIndex = 0;
+    std::string windowTitle;
+    WindowDebugState windowDebugState;
 };

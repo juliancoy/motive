@@ -396,6 +396,8 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             return QStringLiteral("Run");
         case AnimState::Jump:
             return QStringLiteral("Jump");
+        case AnimState::Attack:
+            return QStringLiteral("Attack");
         }
         return QStringLiteral("Unknown");
     };
@@ -453,6 +455,11 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             {QStringLiteral("animationTrimEndNormalized"), entry.animationTrimEndNormalized},
             {QStringLiteral("characterRestPointOnReleaseEnabled"), entry.characterRestPointOnReleaseEnabled},
             {QStringLiteral("characterRestPointOnReleaseNormalized"), entry.characterRestPointOnReleaseNormalized},
+            {QStringLiteral("characterAiEnabled"), entry.characterAiEnabled},
+            {QStringLiteral("characterAiUseInverseColors"), entry.characterAiUseInverseColors},
+            {QStringLiteral("characterAiTargetSceneIndex"), entry.characterAiTargetSceneIndex},
+            {QStringLiteral("characterAiMoveSpeed"), entry.characterAiMoveSpeed},
+            {QStringLiteral("characterAiAttackDistance"), entry.characterAiAttackDistance},
             {QStringLiteral("focusPointOffset"), QJsonArray{entry.focusPointOffset.x(), entry.focusPointOffset.y(), entry.focusPointOffset.z()}},
             {QStringLiteral("focusDistance"), entry.focusDistance},
             {QStringLiteral("focusCameraOffset"), QJsonArray{entry.focusCameraOffset.x(), entry.focusCameraOffset.y(), entry.focusCameraOffset.z()}},
@@ -479,6 +486,7 @@ QJsonArray ViewportHierarchyBuilder::sceneProfileJson() const
             sceneItem.insert(QStringLiteral("boundsSize"), QJsonArray{boundsSize.x, boundsSize.y, boundsSize.z});
             const auto& character = model->character;
             sceneItem.insert(QStringLiteral("isControllable"), character.isControllable);
+            sceneItem.insert(QStringLiteral("isAiDriven"), character.isAiDriven);
             sceneItem.insert(QStringLiteral("isGrounded"), character.isGrounded);
             sceneItem.insert(QStringLiteral("jumpRequested"), character.jumpRequested);
             sceneItem.insert(QStringLiteral("keyW"), character.keyW);

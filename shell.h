@@ -41,6 +41,7 @@ public:
     bool selectHierarchySceneItem(int sceneIndex);
     bool selectHierarchyCamera(const QString& cameraId, int cameraIndex = -1);
     bool selectHierarchyLight();
+    void requestProjectStateSave();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -62,7 +63,9 @@ private:
     int selectedSceneItemIndex() const;
     void exportSelectedSceneItemToGltf();
     void saveProjectState();
+    void flushPendingProjectStateSave();
     void saveUiState();
+    void performProjectStateSave();
     QJsonObject captureUiState() const;
     void applyUiState(const QJsonObject& state);
     void maybePromptForGltfConversion(const QString& rootPath);
@@ -106,6 +109,7 @@ private:
     QGroupBox* m_animationSection = nullptr;
     QGroupBox* m_cameraSection = nullptr;
     QGroupBox* m_lightSection = nullptr;
+    QGroupBox* m_lightComputedSection = nullptr;
     QGroupBox* m_transformSection = nullptr;
     QGroupBox* m_placementSection = nullptr;
     QGroupBox* m_physicsSection = nullptr;
@@ -191,6 +195,9 @@ private:
     QDoubleSpinBox* m_lightBrightnessSpin = nullptr;
     QWidget* m_lightColorWidget = nullptr;
     QWidget* m_lightColorContainer = nullptr;
+    QLabel* m_lightDirectionValue = nullptr;
+    QLabel* m_lightAmbientValue = nullptr;
+    QLabel* m_lightDiffuseValue = nullptr;
     QPushButton* m_lightFocusButton = nullptr;
     QWidget* m_translationWidget = nullptr;
     QWidget* m_rotationWidget = nullptr;
@@ -254,6 +261,8 @@ private:
     bool m_updatingInspector = false;
     bool m_updatingCameraSettings = false;
     bool m_suppressHierarchySelectionEffects = false;
+    QTimer* m_projectSaveTimer = nullptr;
+    bool m_projectSaveQueued = false;
     
     // Undo stack for scene operations
     QUndoStack* m_undoStack = nullptr;

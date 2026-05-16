@@ -173,6 +173,7 @@ void MainWindowShell::configureElementInspectorForSelection(int nodeType,
     }
 
     const bool sceneItemNode = nodeType == static_cast<int>(NodeType::SceneItem);
+    const bool lightNode = nodeType == static_cast<int>(NodeType::Light);
     const bool meshNode = nodeType == static_cast<int>(NodeType::Mesh);
     const bool primitiveNode = nodeType == static_cast<int>(NodeType::Primitive);
     const bool materialNode = nodeType == static_cast<int>(NodeType::Material);
@@ -182,7 +183,9 @@ void MainWindowShell::configureElementInspectorForSelection(int nodeType,
 
     if (m_transformSection)
     {
-        m_transformSection->setVisible(sceneItemNode || nodeType == static_cast<int>(NodeType::Camera));
+        m_transformSection->setVisible(sceneItemNode ||
+                                       lightNode ||
+                                       nodeType == static_cast<int>(NodeType::Camera));
     }
     if (m_placementSection)
     {
@@ -389,6 +392,25 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         if (m_lightColorContainer) {
             m_lightColorContainer->setVisible(true);
             m_lightColorContainer->setEnabled(visible);
+        }
+    };
+    const auto setLightComputedInspectorVisible = [this](bool visible)
+    {
+        if (m_lightComputedSection) {
+            m_lightComputedSection->setVisible(true);
+            m_lightComputedSection->setEnabled(visible);
+        }
+        if (m_lightDirectionValue) {
+            m_lightDirectionValue->setVisible(true);
+            m_lightDirectionValue->setEnabled(visible);
+        }
+        if (m_lightAmbientValue) {
+            m_lightAmbientValue->setVisible(true);
+            m_lightAmbientValue->setEnabled(visible);
+        }
+        if (m_lightDiffuseValue) {
+            m_lightDiffuseValue->setVisible(true);
+            m_lightDiffuseValue->setEnabled(visible);
         }
     };
     const auto setFollowTargetInspectorVisible = [this](bool visible, int currentTargetIndex = -1)
@@ -911,7 +933,6 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         // sufficient here.
         if (nodeType == static_cast<int>(ViewportHostWidget::HierarchyNode::Type::Camera) && m_viewportHost)
         {
-            QTreeWidgetItem* currentItem = m_hierarchyTree ? m_hierarchyTree->currentItem() : nullptr;
             int cameraIndex = resolveCameraIndex(currentItem);
             if (cameraIndex < 0)
             {
@@ -1080,6 +1101,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(false);
+            setLightComputedInspectorVisible(false);
             setAnimationInspector(false);
             setGravityInspector(false);
             setCharacterMotionInspector(false);
@@ -1107,9 +1129,16 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             const auto lightLabel = m_viewportHost
                 ? detail::lightLabelFromSceneLight(m_viewportHost->sceneLight())
                 : QStringLiteral("Directional Light");
+            auto formatVector = [](const QVector3D& value) -> QString
+            {
+                return QStringLiteral("%1, %2, %3")
+                    .arg(QString::number(value.x(), 'f', 3))
+                    .arg(QString::number(value.y(), 'f', 3))
+                    .arg(QString::number(value.z(), 'f', 3));
+            };
             setValue(m_inspectorNameValue, lightLabel);
             setValue(m_inspectorPathValue, QStringLiteral("Scene Light"));
-            setValue(m_animationModeValue, QStringLiteral("Static"));
+            setValue(m_animationModeValue, QStringLiteral("Transform-backed light"));
             setValue(m_cameraTypeValue, QStringLiteral("-"));
             setBoundsSummary(-1);
             if (focusContextTab)
@@ -1120,13 +1149,45 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             if (m_viewportHost)
             {
                 const auto light = m_viewportHost->sceneLight();
-                if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(light.editorProxyPosition.x());
-                if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(light.editorProxyPosition.y());
-                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(light.editorProxyPosition.z());
+                const glm::vec3 direction = detail::lightDirectionFromRotationDegrees(light.rotation);
+                const auto runtimeLight = detail::engineLightFromSceneLight(light);
+                const QVector3D directionValue(direction.x, direction.y, direction.z);
+                const QVector3D ambientValue(runtimeLight.ambient.x, runtimeLight.ambient.y, runtimeLight.ambient.z);
+                const QVector3D diffuseValue(runtimeLight.diffuse.x, runtimeLight.diffuse.y, runtimeLight.diffuse.z);
+                if (m_inspectorTranslationX) m_inspectorTranslationX->setValue(light.translation.x());
+                if (m_inspectorTranslationY) m_inspectorTranslationY->setValue(light.translation.y());
+                if (m_inspectorTranslationZ) m_inspectorTranslationZ->setValue(light.translation.z());
+                if (m_inspectorRotationX) m_inspectorRotationX->setValue(light.rotation.x());
+                if (m_inspectorRotationY) m_inspectorRotationY->setValue(light.rotation.y());
+                if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(light.rotation.z());
+                if (m_lightDirectionValue) m_lightDirectionValue->setText(formatVector(directionValue));
+                if (m_lightAmbientValue) m_lightAmbientValue->setText(formatVector(ambientValue));
+                if (m_lightDiffuseValue) m_lightDiffuseValue->setText(formatVector(diffuseValue));
+                const QString authoredInfo = QStringLiteral(
+                                                 "Translation: %1\nRotation: %2\nScale: %3")
+                                                 .arg(formatVector(light.translation))
+                                                 .arg(formatVector(light.rotation))
+                                                 .arg(formatVector(light.scale));
+                const QString kinematicInfo = QStringLiteral(
+                                                  "Direction: %1\nLegacy Direction Cache: %2")
+                                                  .arg(formatVector(directionValue))
+                                                  .arg(formatVector(light.direction));
+                const QString lightingInfo = QStringLiteral(
+                                                 "Type: %1  Brightness: %2\nColor: %3\nAmbient: %4\nDiffuse: %5")
+                                                 .arg(light.type.isEmpty() ? QStringLiteral("directional") : light.type)
+                                                 .arg(QString::number(light.brightness, 'f', 3))
+                                                 .arg(formatVector(light.color))
+                                                 .arg(formatVector(ambientValue))
+                                                 .arg(formatVector(diffuseValue));
+                setObjectRuntimeInspector(true, authoredInfo, kinematicInfo, lightingInfo);
             }
-            if (m_inspectorRotationX) m_inspectorRotationX->setValue(0.0);
-            if (m_inspectorRotationY) m_inspectorRotationY->setValue(0.0);
-            if (m_inspectorRotationZ) m_inspectorRotationZ->setValue(0.0);
+            else
+            {
+                if (m_lightDirectionValue) m_lightDirectionValue->setText(QStringLiteral("-"));
+                if (m_lightAmbientValue) m_lightAmbientValue->setText(QStringLiteral("-"));
+                if (m_lightDiffuseValue) m_lightDiffuseValue->setText(QStringLiteral("-"));
+                setObjectRuntimeInspector(false);
+            }
             if (m_inspectorScaleX) m_inspectorScaleX->setValue(1.0);
             if (m_inspectorScaleY) m_inspectorScaleY->setValue(1.0);
             if (m_inspectorScaleZ) m_inspectorScaleZ->setValue(1.0);
@@ -1136,11 +1197,11 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             setTransformInspectorVisible(true);
             setPrimitiveInspectorVisible(false);
             setLightInspectorVisible(true);
+            setLightComputedInspectorVisible(true);
             setFollowTargetInspectorVisible(false);
             setAnimationInspector(false);
             setGravityInspector(false);
             setCharacterMotionInspector(false);
-            setObjectRuntimeInspector(false);
             setMotionOverlayInspector(true);
             setTextInspector(false);
             if (m_lockScaleXYZCheck) {
@@ -1150,9 +1211,9 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
             if (m_inspectorTranslationX) m_inspectorTranslationX->setEnabled(true);
             if (m_inspectorTranslationY) m_inspectorTranslationY->setEnabled(true);
             if (m_inspectorTranslationZ) m_inspectorTranslationZ->setEnabled(true);
-            if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(false);
-            if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(false);
-            if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(false);
+            if (m_inspectorRotationX) m_inspectorRotationX->setEnabled(true);
+            if (m_inspectorRotationY) m_inspectorRotationY->setEnabled(true);
+            if (m_inspectorRotationZ) m_inspectorRotationZ->setEnabled(true);
             if (m_inspectorScaleX) m_inspectorScaleX->setEnabled(false);
             if (m_inspectorScaleY) m_inspectorScaleY->setEnabled(false);
             if (m_inspectorScaleZ) m_inspectorScaleZ->setEnabled(false);
@@ -1248,6 +1309,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
         if (m_paintOverrideCheck) m_paintOverrideCheck->setChecked(false);
         setPrimitiveInspectorVisible(false);
         setLightInspectorVisible(false);
+        setLightComputedInspectorVisible(false);
         setAnimationInspector(false);
         setCharacterMotionInspector(false);
         setObjectRuntimeInspector(false);
@@ -1351,6 +1413,7 @@ void MainWindowShell::updateInspectorForSelection(QTreeWidgetItem* currentItem, 
                                                            : QStringLiteral("Set Alpha 1"));
     }
     setLightInspectorVisible(false);
+    setLightComputedInspectorVisible(false);
     setTextInspector(isTextItem, &item);
     if (isTextItem)
     {

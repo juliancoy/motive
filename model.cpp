@@ -585,7 +585,7 @@ void Model::disablePhysics(motive::IPhysicsWorld& world)
 
 void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world)
 {
-    if (!character.isControllable)
+    if (!isCharacterRuntimeDriven())
         return;
 
     // Ensure physics body exists for character
@@ -621,14 +621,37 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
     // Get current velocity
     glm::vec3 velocity = physicsBody->getLinearVelocity();
     character.velocity = velocity;
-    
-    // Check if grounded using raycast
+
     glm::vec3 position = getCharacterPosition();
-    motive::RaycastHit groundHit = world.raycast(
-        position, 
-        position + glm::vec3(0, -1.5f, 0)
-    );
-    character.isGrounded = groundHit.hit && groundHit.distance < 1.1f;
+    const float footOffset = std::max(0.0f, position.y - boundsMinWorld.y);
+    const float supportTolerance = std::max(0.08f, footOffset * 0.18f);
+    const float snapDistance = std::max(0.12f, footOffset * 0.25f);
+    const float rayLength = std::max(1.5f, footOffset + 0.75f);
+
+    // Prefer non-self support under the feet, but fall back to the editor-provided
+    // groundHeight when Bullet hovers across uneven triangle support.
+    motive::RaycastHit supportHit;
+    const auto supportHits = world.raycastAll(
+        position + glm::vec3(0.0f, 0.05f, 0.0f),
+        position + glm::vec3(0.0f, -rayLength, 0.0f));
+    void* selfHandle = physicsBody->getNativeHandle();
+    for (const auto& hit : supportHits)
+    {
+        if (!hit.hit || hit.userData == selfHandle)
+        {
+            continue;
+        }
+        supportHit = hit;
+        break;
+    }
+
+    const float distanceToGround = position.y - character.groundHeight;
+    const bool supportedByRay = supportHit.hit && supportHit.distance <= footOffset + supportTolerance;
+    const bool supportedByHeight =
+        distanceToGround <= snapDistance &&
+        distanceToGround >= -supportTolerance &&
+        velocity.y <= 0.5f;
+    character.isGrounded = supportedByRay || supportedByHeight;
 
     // Handle input movement
     if (character.isGrounded)
@@ -640,7 +663,7 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
         glm::vec3 desiredVelocity = character.inputDir * targetMoveSpeed;
         
         // Preserve vertical velocity for gravity
-        desiredVelocity.y = velocity.y;
+        desiredVelocity.y = std::min(velocity.y, 0.0f);
         
         // Apply velocity with some smoothing
         glm::vec3 velocityChange = desiredVelocity - velocity;
@@ -684,6 +707,26 @@ void Model::updateCharacterPhysics(float deltaTime, motive::IPhysicsWorld& world
     
     // Sync transform from physics to model
     physicsBody->syncTransformFromPhysics();
+    position = getCharacterPosition();
+
+    if (character.isGrounded)
+    {
+        const float postSyncDistanceToGround = position.y - character.groundHeight;
+        if (postSyncDistanceToGround <= snapDistance &&
+            postSyncDistanceToGround >= -supportTolerance)
+        {
+            worldTransform[3].y = character.groundHeight;
+            physicsBody->syncTransformToPhysics();
+
+            glm::vec3 snappedVelocity = physicsBody->getLinearVelocity();
+            if (snappedVelocity.y < 0.0f)
+            {
+                snappedVelocity.y = 0.0f;
+                physicsBody->setLinearVelocity(snappedVelocity);
+            }
+            character.velocity = snappedVelocity;
+        }
+    }
 
     auto normalizeAngle = [](float angle) -> float {
         constexpr float kPi = 3.14159265358979323846f;

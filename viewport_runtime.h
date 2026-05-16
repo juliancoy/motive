@@ -35,8 +35,11 @@ public:
     bool isInitialized() const;
 
     void clearInputState();
-    void focusNativeWindow(unsigned long parentWinId);
+    bool focusNativeWindow(unsigned long parentWinId);
     void embedNativeWindow(unsigned long parentWinId);
+    unsigned long nativeWindowId() const;
+    unsigned long nativeParentWindowId() const;
+    QString nativeWindowTitle() const;
 
 private:
     Engine* m_engineRaw = nullptr;
@@ -47,6 +50,7 @@ private:
     float m_bgColorR = 0.2f;
     float m_bgColorG = 0.2f;
     float m_bgColorB = 0.8f;
+    unsigned long m_nativeParentWindowId = 0;
 };
 
 }  // namespace motive::ui

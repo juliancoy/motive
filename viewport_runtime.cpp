@@ -7,6 +7,8 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <stdexcept>
+#include <sstream>
+#include <unistd.h>
 
 #ifdef __linux__
 #define GLFW_EXPOSE_NATIVE_X11
@@ -34,7 +36,9 @@ void ViewportRuntime::initialize(int width, int height, bool use2DPipeline)
 
     m_engineRaw = new Engine();
     // Parallel loading setting is inherited from Engine's compile-time default
-    m_display = m_engineRaw->createWindow(width, height, "Motive Embedded Viewport", false, use2DPipeline, true);
+    std::ostringstream title;
+    title << "Motive Embedded Viewport [pid=" << ::getpid() << "]";
+    m_display = m_engineRaw->createWindow(width, height, title.str().c_str(), false, use2DPipeline, true);
     m_camera = new Camera(m_engineRaw, m_display, glm::vec3(0.0f, 0.0f, 3.0f), glm::vec2(glm::radians(0.0f), 0.0f));
     m_display->addCamera(m_camera);
     m_display->setBackgroundColor(m_bgColorR, m_bgColorG, m_bgColorB);
@@ -157,22 +161,30 @@ void ViewportRuntime::clearInputState()
     }
 }
 
-void ViewportRuntime::focusNativeWindow(unsigned long)
+bool ViewportRuntime::focusNativeWindow(unsigned long parentWinId)
 {
 #ifdef __linux__
     if (!m_display || !m_display->window)
     {
-        return;
+        return false;
+    }
+
+    if (parentWinId != 0)
+    {
+        m_nativeParentWindowId = parentWinId;
     }
 
     X11Display* xDisplay = glfwGetX11Display();
     ::Window child = glfwGetX11Window(m_display->window);
     if (xDisplay && child != 0)
     {
+        XRaiseWindow(xDisplay, child);
         XSetInputFocus(xDisplay, child, RevertToParent, CurrentTime);
         XFlush(xDisplay);
+        return true;
     }
 #endif
+    return false;
 }
 
 void ViewportRuntime::embedNativeWindow(unsigned long parentWinId)
@@ -191,13 +203,46 @@ void ViewportRuntime::embedNativeWindow(unsigned long parentWinId)
         return;
     }
 
+    m_nativeParentWindowId = parentWinId;
     XReparentWindow(xDisplay, child, parent, 0, 0);
     XMapWindow(xDisplay, child);
     XFlush(xDisplay);
     glfwShowWindow(m_display->window);
+    std::ostringstream title;
+    title << "Motive Embedded Viewport [pid=" << ::getpid()
+          << " child=0x" << std::hex << static_cast<unsigned long>(child)
+          << " parent=0x" << static_cast<unsigned long>(parent) << "]";
+    m_display->setDebugWindowTitle(title.str());
 #else
     (void)parentWinId;
 #endif
+}
+
+unsigned long ViewportRuntime::nativeWindowId() const
+{
+#ifdef __linux__
+    if (!m_display || !m_display->window)
+    {
+        return 0;
+    }
+    return static_cast<unsigned long>(glfwGetX11Window(m_display->window));
+#else
+    return 0;
+#endif
+}
+
+unsigned long ViewportRuntime::nativeParentWindowId() const
+{
+    return m_nativeParentWindowId;
+}
+
+QString ViewportRuntime::nativeWindowTitle() const
+{
+    if (!m_display)
+    {
+        return QString();
+    }
+    return QString::fromStdString(m_display->getWindowTitle());
 }
 
 }  // namespace motive::ui

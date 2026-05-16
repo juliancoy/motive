@@ -675,7 +675,7 @@ ObjectTransform Primitive::buildObjectTransformData() const
     data.materialFlags = glm::uvec4(static_cast<uint32_t>(alphaMode),
                                     paintOverrideEnabled ? 1u : 0u,
                                     forceAlphaOne ? 1u : 0u,
-                                    0u);
+                                    invertColorEnabled ? 1u : 0u);
     data.materialParams = glm::vec4(alphaCutoff, 0.0f, 0.0f, 0.0f);
     data.colorOverride = glm::vec4(paintOverrideColor, 1.0f);
     return data;

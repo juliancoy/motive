@@ -135,6 +135,7 @@ public:
     PrimitiveCullMode cullMode = PrimitiveCullMode::Back;
     float alphaCutoff = 0.5f;
     bool paintOverrideEnabled = false;
+    bool invertColorEnabled = false;
     bool forceAlphaOne = false;
     bool depthTestEnabled = true;
     bool depthWriteEnabled = true;

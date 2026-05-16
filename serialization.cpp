@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "camera_follow_settings.h"
+#include "viewport_internal_utils.h"
 
 #include <QFileInfo>
 #include <QJsonObject>
@@ -79,6 +80,9 @@ QJsonObject MainWindowShell::sceneLightToJson(const ViewportHostWidget::SceneLig
     return QJsonObject{
         {QStringLiteral("type"), light.type},
         {QStringLiteral("exists"), light.exists},
+        {QStringLiteral("translation"), QJsonArray{light.translation.x(), light.translation.y(), light.translation.z()}},
+        {QStringLiteral("rotation"), QJsonArray{light.rotation.x(), light.rotation.y(), light.rotation.z()}},
+        {QStringLiteral("scale"), QJsonArray{light.scale.x(), light.scale.y(), light.scale.z()}},
         {QStringLiteral("editorProxyPosition"), QJsonArray{light.editorProxyPosition.x(), light.editorProxyPosition.y(), light.editorProxyPosition.z()}},
         {QStringLiteral("color"), QJsonArray{light.color.x(), light.color.y(), light.color.z()}},
         {QStringLiteral("brightness"), light.brightness},
@@ -108,10 +112,17 @@ ViewportHostWidget::SceneLight MainWindowShell::sceneLightFromJson(const QJsonOb
     const QJsonValue proxyPositionValue = object.contains(QStringLiteral("editorProxyPosition"))
         ? object.value(QStringLiteral("editorProxyPosition"))
         : object.value(QStringLiteral("position"));
-    light.editorProxyPosition = readVector(proxyPositionValue, QVector3D(0.0f, 2.0f, 0.0f));
+    light.translation = readVector(object.value(QStringLiteral("translation")),
+                                   readVector(proxyPositionValue, QVector3D(0.0f, 2.0f, 0.0f)));
+    light.rotation = readVector(object.value(QStringLiteral("rotation")),
+                                detail::lightRotationDegreesForDirection(
+                                    readVector(object.value(QStringLiteral("direction")), QVector3D(0.0f, 0.0f, 1.0f))));
+    light.scale = readVector(object.value(QStringLiteral("scale")), QVector3D(1.0f, 1.0f, 1.0f));
+    light.editorProxyPosition = light.translation;
     light.color = readVector(object.value(QStringLiteral("color")), QVector3D(1.0f, 1.0f, 1.0f));
     light.brightness = static_cast<float>(object.value(QStringLiteral("brightness")).toDouble(1.0));
-    light.direction = readVector(object.value(QStringLiteral("direction")), QVector3D(0.0f, 0.0f, 1.0f));
+    const glm::vec3 direction = detail::lightDirectionFromRotationDegrees(light.rotation);
+    light.direction = QVector3D(direction.x, direction.y, direction.z);
     light.ambient = readVector(object.value(QStringLiteral("ambient")), QVector3D(0.1f, 0.1f, 0.1f));
     light.diffuse = readVector(object.value(QStringLiteral("diffuse")), QVector3D(0.9f, 0.9f, 0.9f));
     return light;
@@ -162,6 +173,11 @@ QJsonArray MainWindowShell::sceneItemsToJson(const QList<ViewportHostWidget::Sce
             {QStringLiteral("focusDistance"), item.focusDistance},
             {QStringLiteral("focusCameraOffset"), QJsonArray{item.focusCameraOffset.x(), item.focusCameraOffset.y(), item.focusCameraOffset.z()}},
             {QStringLiteral("focusCameraOffsetValid"), item.focusCameraOffsetValid},
+            {QStringLiteral("characterAiEnabled"), item.characterAiEnabled},
+            {QStringLiteral("characterAiUseInverseColors"), item.characterAiUseInverseColors},
+            {QStringLiteral("characterAiTargetSceneIndex"), item.characterAiTargetSceneIndex},
+            {QStringLiteral("characterAiMoveSpeed"), item.characterAiMoveSpeed},
+            {QStringLiteral("characterAiAttackDistance"), item.characterAiAttackDistance},
             {QStringLiteral("textContent"), item.textContent},
             {QStringLiteral("textFontPath"), item.textFontPath},
             {QStringLiteral("textPixelHeight"), item.textPixelHeight},
@@ -245,6 +261,11 @@ QList<ViewportHostWidget::SceneItem> MainWindowShell::sceneItemsFromJson(const Q
             readVector(object.value(QStringLiteral("focusCameraOffset")), QVector3D(0.0f, 0.0f, 0.0f)),
             object.value(QStringLiteral("focusCameraOffsetValid")).toBool(false)
         };
+        sceneItem.characterAiEnabled = object.value(QStringLiteral("characterAiEnabled")).toBool(false);
+        sceneItem.characterAiUseInverseColors = object.value(QStringLiteral("characterAiUseInverseColors")).toBool(false);
+        sceneItem.characterAiTargetSceneIndex = object.value(QStringLiteral("characterAiTargetSceneIndex")).toInt(-1);
+        sceneItem.characterAiMoveSpeed = static_cast<float>(object.value(QStringLiteral("characterAiMoveSpeed")).toDouble(2.4));
+        sceneItem.characterAiAttackDistance = static_cast<float>(object.value(QStringLiteral("characterAiAttackDistance")).toDouble(1.2));
         sceneItem.textContent = object.value(QStringLiteral("textContent")).toString(QStringLiteral("Text"));
         sceneItem.textFontPath = object.value(QStringLiteral("textFontPath")).toString();
         sceneItem.textPixelHeight = object.value(QStringLiteral("textPixelHeight")).toInt(56);

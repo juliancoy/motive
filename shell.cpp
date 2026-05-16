@@ -855,6 +855,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         updateWasdRoutingStatus();
         saveProjectState();
     });
+    m_viewportHost->setRuntimePersistenceChangedCallback([this]()
+    {
+        saveProjectState();
+    });
     m_viewportHost->setCameraChangedCallback([this]()
     {
         updateCameraSettingsPanel();
@@ -1087,6 +1091,15 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     m_lightColorWidget = new QWidget(inspectorPanel);
     m_lightColorWidget->setFixedSize(60, 24);
     m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: #ffffff; border: 1px solid #888;"));
+    m_lightDirectionValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_lightDirectionValue->setWordWrap(true);
+    m_lightDirectionValue->setToolTip(QStringLiteral("Derived from the light's rotation. Edit Rotation on the Overview tab to change it."));
+    m_lightAmbientValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_lightAmbientValue->setWordWrap(true);
+    m_lightAmbientValue->setToolTip(QStringLiteral("Computed from light type, brightness, and color."));
+    m_lightDiffuseValue = new QLabel(QStringLiteral("-"), inspectorPanel);
+    m_lightDiffuseValue->setWordWrap(true);
+    m_lightDiffuseValue->setToolTip(QStringLiteral("Computed from light type, brightness, and color."));
     auto* lightColorButton = new QPushButton(QStringLiteral("Change"), inspectorPanel);
     m_lightFocusButton = new QPushButton(QStringLiteral("Focus"), inspectorPanel);
     m_lightColorContainer = new QWidget(inspectorPanel);
@@ -1370,6 +1383,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
     lightLayout->addRow(QStringLiteral("Color"), m_lightColorContainer);
     lightLayout->addRow(QStringLiteral("Actions"), m_lightFocusButton);
 
+    m_lightComputedSection = new QGroupBox(QStringLiteral("Computed Output"), visualTab);
+    m_lightComputedSection->setToolTip(QStringLiteral("Read-only values derived from the authored light transform and lighting settings."));
+    auto* lightComputedLayout = new QFormLayout(m_lightComputedSection);
+    lightComputedLayout->addRow(QStringLiteral("Derived Direction"), m_lightDirectionValue);
+    lightComputedLayout->addRow(QStringLiteral("Computed Ambient"), m_lightAmbientValue);
+    lightComputedLayout->addRow(QStringLiteral("Computed Diffuse"), m_lightDiffuseValue);
+
     m_transformSection = new QGroupBox(QStringLiteral("Transform"), overviewTab);
     auto* transformLayout = new QFormLayout(m_transformSection);
     transformLayout->addRow(QStringLiteral("Translation"), m_translationWidget);
@@ -1451,6 +1471,7 @@ MainWindowShell::MainWindowShell(QWidget* parent)
 
     visualLayout->addWidget(m_materialSection);
     visualLayout->addWidget(m_lightSection);
+    visualLayout->addWidget(m_lightComputedSection);
     visualLayout->addStretch(1);
 
     motionLayout->addWidget(m_animationSection);
@@ -1876,6 +1897,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         light.type = m_lightTypeCombo->currentData().toString();
         light.brightness = static_cast<float>(m_lightBrightnessSpin->value());
         m_viewportHost->setSceneLight(light);
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
         saveProjectState();
     };
     connect(m_lightTypeCombo, &QComboBox::currentIndexChanged, this, [applyLightInspector]() { applyLightInspector(); });
@@ -1898,6 +1923,10 @@ MainWindowShell::MainWindowShell(QWidget* parent)
             m_lightColorWidget->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;").arg(color.name()));
         }
         m_viewportHost->setSceneLight(light);
+        if (m_hierarchyTree && m_hierarchyTree->currentItem())
+        {
+            updateInspectorForSelection(m_hierarchyTree->currentItem());
+        }
         saveProjectState();
     });
     connect(m_lightFocusButton, &QPushButton::clicked, this, [this]() {
@@ -2598,8 +2627,13 @@ MainWindowShell::MainWindowShell(QWidget* parent)
         if (row == MainWindowShell::kHierarchyLightIndex && m_viewportHost) {
             auto light = m_viewportHost->sceneLight();
             light.exists = true;
-            light.editorProxyPosition = translation;
+            light.translation = translation;
+            light.rotation = rotation;
             m_viewportHost->setSceneLight(light);
+            if (current)
+            {
+                updateInspectorForSelection(current);
+            }
             saveProjectState();
             return;
         }
@@ -3334,6 +3368,7 @@ bool MainWindowShell::eventFilter(QObject* watched, QEvent* event)
 void MainWindowShell::closeEvent(QCloseEvent* event)
 {
     saveUiState();
+    flushPendingProjectStateSave();
     QMainWindow::closeEvent(event);
 }
 

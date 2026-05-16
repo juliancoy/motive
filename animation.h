@@ -103,7 +103,12 @@ void addFbxMeshBinding(FbxRuntime& runtime,
                        std::vector<glm::uvec4> jointIndices,
                        std::vector<glm::vec4> jointWeights);
 void loadFbxSidecarClips(FbxRuntime& runtime, const std::string& fbxPath);
-void setFbxPlaybackState(FbxRuntime& runtime, const std::string& clipName, bool playing, bool loop, float speed);
+void setFbxPlaybackState(FbxRuntime& runtime,
+                         const std::string& clipName,
+                         bool playing,
+                         bool loop,
+                         float speed,
+                         bool preserveNormalizedTime = false);
 void setFbxPlaybackOptions(FbxRuntime& runtime,
                            bool centroidNormalizationEnabled,
                            float trimStartNormalized,

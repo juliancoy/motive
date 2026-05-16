@@ -53,14 +53,66 @@ namespace motive::ui {
 
 namespace {
 
+QString formatWindowId(unsigned long value)
+{
+    return QStringLiteral("0x%1").arg(QString::number(static_cast<qulonglong>(value), 16));
+}
+
+QJsonArray effectiveKeyArray(const InputRouter::DebugState& debugState)
+{
+    static const std::array<const char*, 6> kLabels = {"W", "A", "S", "D", "Q", "E"};
+    QJsonArray keys;
+    for (int i = 0; i < static_cast<int>(kLabels.size()); ++i)
+    {
+        if (debugState.effectiveKeys[static_cast<size_t>(i)])
+        {
+            keys.append(QString::fromLatin1(kLabels[static_cast<size_t>(i)]));
+        }
+    }
+    return keys;
+}
+
 bool couplingRequiresPhysics(const Model& model)
 {
     return model.getAnimationPhysicsCoupling() != "AnimationOnly";
 }
 
+bool isCharacterRuntimeDriven(const Model& model)
+{
+    return model.character.isControllable || model.character.isAiDriven;
+}
+
 bool couplingUsesKinematicBody(const Model& model)
 {
-    return !model.character.isControllable && model.getAnimationPhysicsCoupling() == "Kinematic";
+    return !isCharacterRuntimeDriven(model) && model.getAnimationPhysicsCoupling() == "Kinematic";
+}
+
+void normalizeSceneLightTransform(ViewportHostWidget::SceneLight& light)
+{
+    light.editorProxyPosition = light.translation;
+    const glm::vec3 direction = detail::lightDirectionFromRotationDegrees(light.rotation);
+    light.direction = QVector3D(direction.x, direction.y, direction.z);
+    if (!std::isfinite(light.scale.x()) || !std::isfinite(light.scale.y()) || !std::isfinite(light.scale.z()) ||
+        light.scale.x() <= 0.0f || light.scale.y() <= 0.0f || light.scale.z() <= 0.0f)
+    {
+        light.scale = QVector3D(1.0f, 1.0f, 1.0f);
+    }
+}
+
+QVector3D sceneTranslationForRuntimeWorldTransform(const Model& model,
+                                                   const QVector3D& sceneRotationDegrees,
+                                                   const QVector3D& sceneScale)
+{
+    glm::mat4 rs(1.0f);
+    rs = glm::rotate(rs, glm::radians(sceneRotationDegrees.x()), glm::vec3(1.0f, 0.0f, 0.0f));
+    rs = glm::rotate(rs, glm::radians(sceneRotationDegrees.y()), glm::vec3(0.0f, 1.0f, 0.0f));
+    rs = glm::rotate(rs, glm::radians(sceneRotationDegrees.z()), glm::vec3(0.0f, 0.0f, 1.0f));
+    rs = glm::scale(rs, glm::vec3(sceneScale.x(), sceneScale.y(), sceneScale.z()));
+
+    const glm::vec3 runtimeTranslation = glm::vec3(model.worldTransform[3]);
+    const glm::vec3 normalizedBaseOffset = glm::vec3((rs * model.normalizedBaseTransform)[3]);
+    const glm::vec3 sceneTranslation = runtimeTranslation - normalizedBaseOffset;
+    return QVector3D(sceneTranslation.x, sceneTranslation.y, sceneTranslation.z);
 }
 
 QJsonObject primitiveOverrideObject(int meshIndex, int primitiveIndex, const QString& cullMode, bool forceAlphaOne)
@@ -254,13 +306,7 @@ std::vector<Vertex> buildDirectionalApertureVertices()
 
 glm::vec3 normalizedLightDirection(const ViewportHostWidget::SceneLight& light)
 {
-    glm::vec3 direction(light.direction.x(), light.direction.y(), light.direction.z());
-    if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z) ||
-        glm::length(direction) <= 1e-5f)
-    {
-        return glm::vec3(0.0f, 0.0f, 1.0f);
-    }
-    return glm::normalize(direction);
+    return detail::lightDirectionFromRotationDegrees(light.rotation);
 }
 
 glm::quat lightDirectionOrientation(const glm::vec3& direction)
@@ -379,6 +425,23 @@ Model* firstControllableModel(Engine* engine)
         }
     }
     return nullptr;
+}
+
+int firstControllableModelSceneIndex(Engine* engine)
+{
+    if (!engine)
+    {
+        return -1;
+    }
+    for (int i = 0; i < static_cast<int>(engine->models.size()); ++i)
+    {
+        const auto& model = engine->models[static_cast<size_t>(i)];
+        if (model && model->character.isControllable)
+        {
+            return i;
+        }
+    }
+    return -1;
 }
 
 Model* firstEnvironmentSurfaceModel(Engine* engine,
@@ -843,20 +906,212 @@ bool resolveCharacterWallsFromScene(Model& character, const Model& sceneModel)
     return true;
 }
 
+float characterCollisionRadius(const Model& character)
+{
+    constexpr float kFallbackRadius = 0.34f;
+    const glm::vec3 extents = glm::max(character.boundsMaxWorld - character.boundsMinWorld, glm::vec3(0.0f));
+    const float halfWidth = std::max(extents.x, extents.z) * 0.25f;
+    if (!std::isfinite(halfWidth) || halfWidth <= 0.01f)
+    {
+        return kFallbackRadius;
+    }
+    return std::clamp(halfWidth, 0.28f, 0.55f);
+}
+
+bool resolveCharacterCharacterCollisions(Engine& engine)
+{
+    constexpr float kCollisionSkin = 0.03f;
+    constexpr int kIterations = 2;
+
+    std::vector<Model*> characters;
+    characters.reserve(engine.models.size());
+    for (auto& modelPtr : engine.models)
+    {
+        if (!modelPtr || !modelPtr->isCharacterRuntimeDriven())
+        {
+            continue;
+        }
+        characters.push_back(modelPtr.get());
+    }
+
+    if (characters.size() < 2)
+    {
+        return false;
+    }
+
+    bool resolvedAny = false;
+    for (int iteration = 0; iteration < kIterations; ++iteration)
+    {
+        bool resolvedThisIteration = false;
+        for (size_t i = 0; i < characters.size(); ++i)
+        {
+            Model* a = characters[i];
+            if (!a)
+            {
+                continue;
+            }
+            for (size_t j = i + 1; j < characters.size(); ++j)
+            {
+                Model* b = characters[j];
+                if (!b)
+                {
+                    continue;
+                }
+
+                glm::vec3 posA = glm::vec3(a->worldTransform[3]);
+                glm::vec3 posB = glm::vec3(b->worldTransform[3]);
+                glm::vec2 delta(posB.x - posA.x, posB.z - posA.z);
+                float distance = glm::length(delta);
+                const float minDistance =
+                    characterCollisionRadius(*a) + characterCollisionRadius(*b) + kCollisionSkin;
+                if (distance >= minDistance)
+                {
+                    continue;
+                }
+
+                glm::vec2 normal(0.0f);
+                if (distance <= 1e-5f)
+                {
+                    const float angle = static_cast<float>((i * 31 + j * 17) % 360) * 0.01745329252f;
+                    normal = glm::vec2(std::cos(angle), std::sin(angle));
+                    distance = 0.0f;
+                }
+                else
+                {
+                    normal = delta / distance;
+                }
+
+                const float penetration = minDistance - distance;
+                float pushAWeight = 0.5f;
+                float pushBWeight = 0.5f;
+                if (a->character.isControllable && b->character.isAiDriven)
+                {
+                    pushAWeight = 0.10f;
+                    pushBWeight = 0.90f;
+                }
+                else if (a->character.isAiDriven && b->character.isControllable)
+                {
+                    pushAWeight = 0.90f;
+                    pushBWeight = 0.10f;
+                }
+
+                posA.x -= normal.x * penetration * pushAWeight;
+                posA.z -= normal.y * penetration * pushAWeight;
+                posB.x += normal.x * penetration * pushBWeight;
+                posB.z += normal.y * penetration * pushBWeight;
+
+                glm::mat4 transformA = a->worldTransform;
+                glm::mat4 transformB = b->worldTransform;
+                transformA[3] = glm::vec4(posA, 1.0f);
+                transformB[3] = glm::vec4(posB, 1.0f);
+                a->setWorldTransform(transformA);
+                b->setWorldTransform(transformB);
+
+                const glm::vec2 velA(a->character.velocity.x, a->character.velocity.z);
+                const glm::vec2 velB(b->character.velocity.x, b->character.velocity.z);
+                const float inwardSpeedA = glm::dot(velA, normal);
+                const float inwardSpeedB = glm::dot(velB, -normal);
+                if (inwardSpeedA > 0.0f)
+                {
+                    const glm::vec2 adjusted = velA - normal * inwardSpeedA;
+                    a->character.velocity.x = adjusted.x;
+                    a->character.velocity.z = adjusted.y;
+                }
+                if (inwardSpeedB > 0.0f)
+                {
+                    const glm::vec2 adjusted = velB + normal * inwardSpeedB;
+                    b->character.velocity.x = adjusted.x;
+                    b->character.velocity.z = adjusted.y;
+                }
+
+                if (a->getPhysicsBody())
+                {
+                    a->getPhysicsBody()->syncTransformToPhysics();
+                }
+                if (b->getPhysicsBody())
+                {
+                    b->getPhysicsBody()->syncTransformToPhysics();
+                }
+
+                resolvedThisIteration = true;
+                resolvedAny = true;
+            }
+        }
+
+        if (!resolvedThisIteration)
+        {
+            break;
+        }
+    }
+
+    return resolvedAny;
+}
+
 void updateCharacterGroundFromSceneSurface(Model& character, const Model& surfaceModel)
 {
     constexpr float kMaxStepUp = 0.45f;
     constexpr float kPhysicsFloorY = 0.0f;
+    constexpr float kMaxGroundDropWhileGrounded = 1.25f;
     const glm::vec3 origin = glm::vec3(character.worldTransform[3]);
     const float footOffset = std::max(0.0f, origin.y - character.boundsMinWorld.y);
-    character.character.groundHeight = kPhysicsFloorY + footOffset;
+    const float previousGroundHeight = character.character.groundHeight;
+    float resolvedGroundHeight = kPhysicsFloorY + footOffset;
 
     const float maxSurfaceY = character.boundsMinWorld.y + kMaxStepUp;
     float surfaceY = 0.0f;
     if (sampleModelSurfaceYAtXZ(surfaceModel, glm::vec2(origin.x, origin.z), maxSurfaceY, surfaceY))
     {
-        character.character.groundHeight = std::max(kPhysicsFloorY, surfaceY) + footOffset;
+        const float sampledGroundHeight = std::max(kPhysicsFloorY, surfaceY) + footOffset;
+        const bool preservePreviousSupport =
+            (character.character.isGrounded || character.character.wasGroundedLastFrame) &&
+            std::isfinite(previousGroundHeight) &&
+            sampledGroundHeight < previousGroundHeight - kMaxGroundDropWhileGrounded;
+        resolvedGroundHeight = preservePreviousSupport ? previousGroundHeight : sampledGroundHeight;
     }
+    character.character.groundHeight = resolvedGroundHeight;
+}
+
+bool snapCharacterToEnvironmentSurface(Model& character, const Model& surfaceModel)
+{
+    character.recomputeBounds();
+
+    const glm::vec3 origin = glm::vec3(character.worldTransform[3]);
+    const float footOffset = std::max(0.0f, origin.y - character.boundsMinWorld.y);
+    float surfaceY = 0.0f;
+    if (!sampleModelSurfaceYAtXZ(surfaceModel,
+                                 glm::vec2(origin.x, origin.z),
+                                 surfaceModel.boundsMaxWorld.y + 1.0f,
+                                 surfaceY))
+    {
+        return false;
+    }
+
+    const float resolvedOriginY = surfaceY + footOffset;
+    if (!std::isfinite(resolvedOriginY))
+    {
+        return false;
+    }
+
+    glm::mat4 transform = character.worldTransform;
+    transform[3].y = resolvedOriginY;
+    character.setWorldTransform(transform);
+    character.recomputeBounds();
+    updateCharacterGroundFromSceneSurface(character, surfaceModel);
+    character.character.velocity.y = 0.0f;
+    character.character.isGrounded = true;
+    character.character.wasGroundedLastFrame = true;
+    character.character.airborneTimer = 0.0f;
+    character.character.lastAirborneVerticalVelocity = 0.0f;
+    character.character.jumpRequested = false;
+    character.character.jumpStartedFromInput = false;
+    character.character.jumpPhase = Model::CharacterController::JumpPhase::None;
+    character.character.jumpPhaseTimer = 0.0f;
+
+    if (character.getPhysicsBody())
+    {
+        character.getPhysicsBody()->syncTransformToPhysics();
+    }
+    return true;
 }
 
 int findFollowCameraIndexForScene(Display* display, int sceneIndex)
@@ -1069,7 +1324,7 @@ void reconfigurePhysicsBodyForMode(Model& model, motive::IPhysicsWorld& physicsW
 {
     if (!couplingRequiresPhysics(model))
     {
-        if (model.getPhysicsBody() && !model.character.isControllable)
+        if (model.getPhysicsBody() && !isCharacterRuntimeDriven(model))
         {
             model.disablePhysics(physicsWorld);
         }
@@ -1077,14 +1332,14 @@ void reconfigurePhysicsBodyForMode(Model& model, motive::IPhysicsWorld& physicsW
     }
 
     motive::PhysicsBodyConfig config;
-    config.shapeType = model.character.isControllable
+    config.shapeType = isCharacterRuntimeDriven(model)
         ? motive::CollisionShapeType::Capsule
         : motive::CollisionShapeType::Box;
-    config.mass = model.character.isControllable ? 70.0f : 1.0f;
-    config.friction = model.character.isControllable ? 0.3f : 0.5f;
+    config.mass = isCharacterRuntimeDriven(model) ? 70.0f : 1.0f;
+    config.friction = isCharacterRuntimeDriven(model) ? 0.3f : 0.5f;
     config.restitution = 0.0f;
     config.useModelBounds = true;
-    config.isCharacter = model.character.isControllable;
+    config.isCharacter = isCharacterRuntimeDriven(model);
     config.isKinematic = couplingUsesKinematicBody(model);
     config.useGravity = model.getUseGravity();
     config.customGravity = model.getCustomGravity();
@@ -1351,6 +1606,21 @@ ViewportHostWidget::ViewportHostWidget(QWidget* parent)
         "}"));
     m_cameraDirectionLabel->setMinimumWidth(260);
     m_cameraDirectionLabel->hide();
+    m_windowDebugBadgeLabel = new QLabel(m_renderSurface);
+    m_windowDebugBadgeLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_windowDebugBadgeLabel->setTextFormat(Qt::PlainText);
+    m_windowDebugBadgeLabel->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        " color: #e5f9ee;"
+        " background: rgba(15, 23, 42, 190);"
+        " border: 1px solid rgba(34, 197, 94, 180);"
+        " border-radius: 8px;"
+        " padding: 6px 8px;"
+        " font-family: 'DejaVu Sans Mono';"
+        " font-size: 11px;"
+        "}"));
+    m_windowDebugBadgeLabel->setMinimumWidth(320);
+    m_windowDebugBadgeLabel->hide();
     layout->addWidget(m_renderSurface, 1);
 
     m_renderTimer.setInterval(16);
@@ -1397,6 +1667,7 @@ void ViewportHostWidget::loadAssetFromPath(const QString& path)
     qDebug() << "[ViewportHost] loadAssetFromPath" << path;
     m_tpsBootstrapPending = true;
     m_tpsBootstrapApplied = false;
+    m_preserveScenePlacementOnBootstrap = false;
     m_sceneController->loadAssetFromPath(path);
 }
 
@@ -1405,9 +1676,40 @@ void ViewportHostWidget::loadSceneFromItems(const QList<SceneItem>& items)
     qDebug() << "[ViewportHost] loadSceneFromItems count=" << items.size();
     m_tpsBootstrapPending = true;
     m_tpsBootstrapApplied = false;
+    m_preserveScenePlacementOnBootstrap = true;
     m_sceneController->loadSceneFromItems(items);
     bootstrapThirdPersonShooter(false);
     notifySceneChanged();
+}
+
+bool ViewportHostWidget::focusViewportNativeWindow()
+{
+    if (!m_runtime)
+    {
+        return false;
+    }
+
+    setFocus(Qt::OtherFocusReason);
+    if (m_renderSurface)
+    {
+        m_renderSurface->setFocus(Qt::OtherFocusReason);
+    }
+    const unsigned long targetWinId = static_cast<unsigned long>(m_renderSurface ? m_renderSurface->winId() : winId());
+    const bool focused = m_runtime->focusNativeWindow(targetWinId);
+    qDebug() << "[ViewportHost] focusViewportNativeWindow target="
+             << QString::number(static_cast<qulonglong>(targetWinId), 16)
+             << "focused=" << focused;
+    updateWindowDebugBadge();
+    return focused;
+}
+
+void ViewportHostWidget::clearRuntimeInputState()
+{
+    if (m_runtime)
+    {
+        m_runtime->clearInputState();
+    }
+    updateWindowDebugBadge();
 }
 
 void ViewportHostWidget::refresh()
@@ -1441,7 +1743,26 @@ QString ViewportHostWidget::currentAssetPath() const
 
 QList<ViewportHostWidget::SceneItem> ViewportHostWidget::sceneItems() const
 {
-    return m_sceneController->sceneItems();
+    QList<SceneItem> items = m_sceneController->sceneItems();
+    if (!m_runtime || !m_runtime->engine())
+    {
+        return items;
+    }
+
+    const auto& models = m_runtime->engine()->models;
+    const qsizetype loadedCount = std::min(items.size(), static_cast<qsizetype>(models.size()));
+    for (qsizetype i = 0; i < loadedCount; ++i)
+    {
+        const auto& model = models[static_cast<size_t>(i)];
+        if (!model || !model->isCharacterRuntimeDriven())
+        {
+            continue;
+        }
+        items[i].translation = sceneTranslationForRuntimeWorldTransform(*model,
+                                                                        items[i].rotation,
+                                                                        items[i].scale);
+    }
+    return items;
 }
 
 QList<ViewportHostWidget::HierarchyNode> ViewportHostWidget::hierarchyItems() const
@@ -1635,7 +1956,7 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     debug.insert(QStringLiteral("targetTrackingSource"), usingTrackedTarget ? QStringLiteral("cameraTracker") : QStringLiteral("modelAnchor"));
     QString targetAnchorMode = QStringLiteral("worldTransform");
     bool targetAnchorReferencesPreprocessedFrames = false;
-    if (target->character.isControllable && target->followAnchorLocalCenterInitialized)
+    if (target->isCharacterRuntimeDriven() && target->followAnchorLocalCenterInitialized)
     {
         targetAnchorMode = QStringLiteral("stableLocalAnchor");
     }
@@ -1650,6 +1971,7 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
     debug.insert(QStringLiteral("targetAnimationPreprocessedFrameCounter"), static_cast<qint64>(target->animationPreprocessedFrameCounter));
     debug.insert(QStringLiteral("targetVelocity"), QJsonArray{target->character.velocity.x, target->character.velocity.y, target->character.velocity.z});
     debug.insert(QStringLiteral("targetControllable"), target->character.isControllable);
+    debug.insert(QStringLiteral("targetAiDriven"), target->character.isAiDriven);
     debug.insert(QStringLiteral("distanceToTarget"), distance);
     debug.insert(QStringLiteral("frontDotToTarget"), frontDotToTarget);
     debug.insert(QStringLiteral("targetNdc"), QJsonArray{ndcX, ndcY, ndcZ});
@@ -1696,6 +2018,78 @@ QJsonObject ViewportHostWidget::cameraTrackingDebugJson() const
             s_lastWarningLog = now;
         }
     }
+    return debug;
+}
+
+QJsonObject ViewportHostWidget::windowDebugJson() const
+{
+    QJsonObject debug;
+    debug.insert(QStringLiteral("ok"), m_runtime && m_runtime->display());
+    debug.insert(QStringLiteral("hostWidgetFocused"), hasFocus());
+    debug.insert(QStringLiteral("renderSurfaceFocused"), m_renderSurface && m_renderSurface->hasFocus());
+    debug.insert(QStringLiteral("focusedViewportIndex"), focusedViewportIndex());
+    debug.insert(QStringLiteral("focusedViewportCameraId"), focusedViewportCameraId());
+
+    if (QWidget* topLevel = window(); QWidget* focusWidget = topLevel ? topLevel->focusWidget() : nullptr)
+    {
+        debug.insert(QStringLiteral("qtFocusWidgetClass"), QString::fromLatin1(focusWidget->metaObject()->className()));
+        debug.insert(QStringLiteral("qtFocusWidgetName"), focusWidget->objectName());
+        debug.insert(QStringLiteral("qtFocusWidgetVisible"), focusWidget->isVisible());
+    }
+    else
+    {
+        debug.insert(QStringLiteral("qtFocusWidgetClass"), QString());
+        debug.insert(QStringLiteral("qtFocusWidgetName"), QString());
+        debug.insert(QStringLiteral("qtFocusWidgetVisible"), false);
+    }
+
+    if (!m_runtime || !m_runtime->display())
+    {
+        debug.insert(QStringLiteral("error"), QStringLiteral("runtime not initialized"));
+        return debug;
+    }
+
+    Display* display = m_runtime->display();
+    const Display::WindowDebugState& windowState = display->getWindowDebugState();
+    debug.insert(QStringLiteral("nativeWindow"), QJsonObject{
+        {QStringLiteral("title"), m_runtime->nativeWindowTitle()},
+        {QStringLiteral("embedded"), display->embeddedMode},
+        {QStringLiteral("glfwFocused"), display->isNativeWindowFocused()},
+        {QStringLiteral("callbackFocused"), windowState.focused},
+        {QStringLiteral("nativeWindowId"), formatWindowId(m_runtime->nativeWindowId())},
+        {QStringLiteral("nativeWindowIdValue"), static_cast<qint64>(m_runtime->nativeWindowId())},
+        {QStringLiteral("nativeParentWindowId"), formatWindowId(m_runtime->nativeParentWindowId())},
+        {QStringLiteral("nativeParentWindowIdValue"), static_cast<qint64>(m_runtime->nativeParentWindowId())},
+        {QStringLiteral("lastFocusChangeUnixMs"), static_cast<qint64>(windowState.lastFocusChangeUnixMs)},
+        {QStringLiteral("lastKeyEventUnixMs"), static_cast<qint64>(windowState.lastKeyEventUnixMs)},
+        {QStringLiteral("lastKey"), windowState.lastKey},
+        {QStringLiteral("lastScancode"), windowState.lastScancode},
+        {QStringLiteral("lastAction"), windowState.lastAction},
+        {QStringLiteral("lastMods"), windowState.lastMods},
+        {QStringLiteral("clearedInputOnFocusLoss"), windowState.inputClearedOnFocusLoss}
+    });
+
+    if (const InputRouter* inputRouter = m_runtime->getInputRouter())
+    {
+        const InputRouter::DebugState& inputDebug = inputRouter->getDebugState();
+        debug.insert(QStringLiteral("inputRouter"), QJsonObject{
+            {QStringLiteral("lastInputSource"), QString::fromStdString(inputDebug.lastInputSource)},
+            {QStringLiteral("lastKeyName"), QString::fromStdString(inputDebug.lastKeyName)},
+            {QStringLiteral("lastKey"), inputDebug.lastKey},
+            {QStringLiteral("lastAction"), inputDebug.lastAction},
+            {QStringLiteral("lastKeyEventUnixMs"), static_cast<qint64>(inputDebug.lastKeyEventUnixMs)},
+            {QStringLiteral("lastUpdateUnixMs"), static_cast<qint64>(inputDebug.lastUpdateUnixMs)},
+            {QStringLiteral("jumpRequested"), inputDebug.jumpRequested},
+            {QStringLiteral("sprintRequested"), inputDebug.sprintRequested},
+            {QStringLiteral("characterInputActive"), inputDebug.characterInputActive},
+            {QStringLiteral("simulatedInputActive"), inputDebug.simulatedInputActive},
+            {QStringLiteral("nativeWindowFocused"), inputDebug.nativeWindowFocused},
+            {QStringLiteral("characterTargetPresent"), inputDebug.characterTargetPresent},
+            {QStringLiteral("characterTargetControllable"), inputDebug.characterTargetControllable},
+            {QStringLiteral("effectiveKeys"), effectiveKeyArray(inputDebug)}
+        });
+    }
+
     return debug;
 }
 
@@ -2166,6 +2560,61 @@ void ViewportHostWidget::updateCameraDirectionIndicator()
     m_cameraDirectionLabel->raise();
 }
 
+void ViewportHostWidget::updateWindowDebugBadge()
+{
+    if (!m_windowDebugBadgeLabel)
+    {
+        return;
+    }
+
+    const QJsonObject debug = windowDebugJson();
+    if (!debug.value(QStringLiteral("ok")).toBool(false))
+    {
+        m_windowDebugBadgeLabel->hide();
+        return;
+    }
+
+    const QJsonObject nativeWindow = debug.value(QStringLiteral("nativeWindow")).toObject();
+    const QJsonObject inputRouter = debug.value(QStringLiteral("inputRouter")).toObject();
+    const bool focused = nativeWindow.value(QStringLiteral("glfwFocused")).toBool(false) ||
+                         debug.value(QStringLiteral("renderSurfaceFocused")).toBool(false);
+    QStringList keys;
+    const QJsonArray effectiveKeys = inputRouter.value(QStringLiteral("effectiveKeys")).toArray();
+    for (const QJsonValue& value : effectiveKeys)
+    {
+        keys.append(value.toString());
+    }
+
+    const QString borderColor = focused ? QStringLiteral("rgba(34, 197, 94, 180)")
+                                        : QStringLiteral("rgba(245, 158, 11, 180)");
+    m_windowDebugBadgeLabel->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        " color: #e5f9ee;"
+        " background: rgba(15, 23, 42, 190);"
+        " border: 1px solid %1;"
+        " border-radius: 8px;"
+        " padding: 6px 8px;"
+        " font-family: 'DejaVu Sans Mono';"
+        " font-size: 11px;"
+        "}").arg(borderColor));
+    m_windowDebugBadgeLabel->setText(
+        QStringLiteral("%1\n%2 parent=%3\nkeys=%4 source=%5\nviewport=%6 camera=%7")
+            .arg(focused ? QStringLiteral("VIEWPORT FOCUSED") : QStringLiteral("VIEWPORT UNFOCUSED"))
+            .arg(nativeWindow.value(QStringLiteral("nativeWindowId")).toString())
+            .arg(nativeWindow.value(QStringLiteral("nativeParentWindowId")).toString())
+            .arg(keys.isEmpty() ? QStringLiteral("-") : keys.join(QStringLiteral(",")))
+            .arg(inputRouter.value(QStringLiteral("lastInputSource")).toString())
+            .arg(debug.value(QStringLiteral("focusedViewportIndex")).toInt())
+            .arg(debug.value(QStringLiteral("focusedViewportCameraId")).toString()));
+    m_windowDebugBadgeLabel->adjustSize();
+    const int margin = 12;
+    const int surfaceWidth = m_renderSurface ? m_renderSurface->width() : width();
+    const int x = std::max(margin, surfaceWidth - m_windowDebugBadgeLabel->width() - margin);
+    m_windowDebugBadgeLabel->move(x, margin);
+    m_windowDebugBadgeLabel->show();
+    m_windowDebugBadgeLabel->raise();
+}
+
 QImage ViewportHostWidget::primitiveTexturePreview(int sceneIndex, int meshIndex, int primitiveIndex) const
 {
     if (!m_runtime->engine() || sceneIndex < 0 || meshIndex < 0 || primitiveIndex < 0)
@@ -2597,6 +3046,10 @@ void ViewportHostWidget::setCharacterControlState(int sceneIndex, bool enabled, 
     qDebug() << "[ViewportHost][DEBUG] Setting character.isControllable =" << enabled
              << " for model" << sceneIndex << "(was:" << model->character.isControllable << ")";
     model->character.isControllable = enabled;
+    if (enabled)
+    {
+        model->character.isAiDriven = false;
+    }
     
     // Character controllability controls input ownership only. Physics coupling
     // is explicit scene state; the default TPS setup uses the arcade controller
@@ -2841,12 +3294,15 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
         return false;
     }
 
+    const bool preservePlacement = m_preserveScenePlacementOnBootstrap && !force;
+
     // Gameplay convention: Motive editor/world uses Y-up with the XZ plane at Y=0
     // as the authoritative walkable ground. Imported environments may have large
     // visual bounds, but TPS character placement should be deterministic.
     const float worldGroundY = 0.0f;
 
-    if (environmentIndex >= 0 &&
+    if (!preservePlacement &&
+        environmentIndex >= 0 &&
         environmentIndex < static_cast<int>(m_runtime->engine()->models.size()) &&
         m_runtime->engine()->models[static_cast<size_t>(environmentIndex)])
     {
@@ -2868,7 +3324,7 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
     }
 
     auto entriesBeforePlacement = m_sceneController->loadedEntries();
-    if (nathanIndex < entriesBeforePlacement.size())
+    if (!preservePlacement && nathanIndex < entriesBeforePlacement.size())
     {
         const auto& entry = entriesBeforePlacement[nathanIndex];
         m_sceneController->updateSceneItemTransform(nathanIndex,
@@ -2963,13 +3419,185 @@ bool ViewportHostWidget::bootstrapThirdPersonShooter(bool force)
         setActiveCamera(followCameraIndex);
     }
     setFreeFlyCameraEnabled(false);
+    const bool addedZombies = ensureNathanZombieHorde(nathanIndex);
+    bool snappedCharacters = false;
+    if (environmentIndex >= 0 &&
+        environmentIndex < static_cast<int>(m_runtime->engine()->models.size()) &&
+        m_runtime->engine()->models[static_cast<size_t>(environmentIndex)])
+    {
+        Model* environment = m_runtime->engine()->models[static_cast<size_t>(environmentIndex)].get();
+        const auto snappedEntries = m_sceneController->loadedEntries();
+        for (int i = 0; i < snappedEntries.size() && i < static_cast<int>(m_runtime->engine()->models.size()); ++i)
+        {
+            Model* model = modelForSceneIndex(m_runtime->engine(), i);
+            if (!model || !model->isCharacterRuntimeDriven())
+            {
+                continue;
+            }
+            snappedCharacters = snapCharacterToEnvironmentSurface(*model, *environment) || snappedCharacters;
+        }
+    }
+    if (addedZombies || snappedCharacters)
+    {
+        notifySceneChanged();
+    }
 
     m_tpsBootstrapApplied = true;
     m_tpsBootstrapPending = false;
+    m_preserveScenePlacementOnBootstrap = false;
     qDebug() << "[ViewportHost] TPS bootstrap applied. Nathan index =" << nathanIndex
              << " environment index =" << environmentIndex
-             << " follow camera index =" << followCameraIndex;
+             << " follow camera index =" << followCameraIndex
+             << " preservePlacement =" << preservePlacement;
     return true;
+}
+
+bool ViewportHostWidget::ensureNathanZombieHorde(int nathanIndex)
+{
+    if (!m_runtime || !m_runtime->engine() || !m_sceneController)
+    {
+        return false;
+    }
+    const auto& entries = m_sceneController->loadedEntries();
+    if (nathanIndex < 0 || nathanIndex >= entries.size())
+    {
+        return false;
+    }
+
+    int existingZombieCount = 0;
+    for (const SceneItem& entry : entries)
+    {
+        if (entry.characterAiEnabled && pathLooksLikeNathanCharacter(entry.sourcePath))
+        {
+            ++existingZombieCount;
+        }
+    }
+
+    constexpr int kTargetZombieCount = 3;
+    if (existingZombieCount >= kTargetZombieCount)
+    {
+        return false;
+    }
+
+    const SceneItem nathanEntry = entries[nathanIndex];
+
+    static const std::array<QVector3D, 3> kSpawnOffsets = {
+        QVector3D(6.0f, 0.0f, -4.0f),
+        QVector3D(-5.5f, 0.0f, 5.0f),
+        QVector3D(0.0f, 0.0f, 7.0f)
+    };
+
+    bool addedAny = false;
+    for (int zombieIndex = existingZombieCount; zombieIndex < kTargetZombieCount; ++zombieIndex)
+    {
+        SceneItem zombie = nathanEntry;
+        zombie.name = QStringLiteral("Nathan Zombie %1").arg(zombieIndex + 1);
+        zombie.translation = nathanEntry.translation +
+                             kSpawnOffsets[static_cast<size_t>(zombieIndex % static_cast<int>(kSpawnOffsets.size()))];
+        zombie.rotation = QVector3D(0.0f, 0.0f, 0.0f);
+        zombie.characterAiEnabled = true;
+        zombie.characterAiUseInverseColors = true;
+        zombie.characterAiTargetSceneIndex = nathanIndex;
+        zombie.characterAiMoveSpeed = std::max(2.2f, nathanEntry.characterMoveSpeed * 0.8f);
+        zombie.characterAiAttackDistance = 1.25f;
+        zombie.paintOverrideEnabled = false;
+        zombie.paintOverrideColor = QVector3D(1.0f, 0.0f, 1.0f);
+        m_sceneController->appendSceneItem(zombie);
+        addedAny = true;
+    }
+
+    return addedAny;
+}
+
+void ViewportHostWidget::updateNathanZombieAi(int nathanSceneIndex, float dt)
+{
+    if (!m_runtime || !m_runtime->engine() || !m_sceneController || dt <= 0.0f)
+    {
+        return;
+    }
+
+    Model* nathan = modelForSceneIndex(m_runtime->engine(), nathanSceneIndex);
+    if (!nathan)
+    {
+        return;
+    }
+
+    const glm::vec3 nathanPos = nathan->getCharacterPosition();
+    auto& entries = m_sceneController->loadedEntries();
+    for (int i = 0; i < entries.size() && i < static_cast<int>(m_runtime->engine()->models.size()); ++i)
+    {
+        SceneItem& entry = entries[i];
+        if (!entry.characterAiEnabled)
+        {
+            continue;
+        }
+        Model* zombie = modelForSceneIndex(m_runtime->engine(), i);
+        if (!zombie)
+        {
+            continue;
+        }
+
+        zombie->character.isAiDriven = true;
+        zombie->character.isControllable = false;
+        zombie->character.moveSpeed = std::max(0.1f, entry.characterAiMoveSpeed);
+        zombie->character.phaseThroughWalls = false;
+        zombie->character.keyW = false;
+        zombie->character.keyA = false;
+        zombie->character.keyS = false;
+        zombie->character.keyD = false;
+        zombie->character.keyQ = false;
+        zombie->character.keyShift = false;
+        zombie->character.jumpRequested = false;
+        zombie->character.attackRequested = false;
+
+        const int targetSceneIndex = entry.characterAiTargetSceneIndex >= 0
+            ? entry.characterAiTargetSceneIndex
+            : nathanSceneIndex;
+        Model* target = modelForSceneIndex(m_runtime->engine(), targetSceneIndex);
+        if (!target)
+        {
+            zombie->character.inputDir = glm::vec3(0.0f);
+            continue;
+        }
+
+        const glm::vec3 toTarget = target->getCharacterPosition() - zombie->getCharacterPosition();
+        glm::vec2 planar(toTarget.x, toTarget.z);
+        const float planarDistance = glm::length(planar);
+        const float verticalDistance = std::abs(toTarget.y);
+        const float attackDistance = std::max(0.3f, entry.characterAiAttackDistance);
+        const bool canAttackFromCurrentSupport = verticalDistance <= 1.75f;
+        if (planarDistance <= attackDistance && canAttackFromCurrentSupport)
+        {
+            zombie->character.attackRequested = true;
+            zombie->character.inputDir = glm::vec3(0.0f);
+            if (planarDistance > 1e-4f)
+            {
+                planar /= planarDistance;
+                const float facingYaw = std::atan2(planar.x, planar.y);
+                glm::mat4 facingTransform = zombie->worldTransform;
+                const glm::vec3 currentPos = glm::vec3(facingTransform[3]);
+                const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+                const glm::vec3 forward(std::sin(facingYaw), 0.0f, std::cos(facingYaw));
+                const glm::vec3 right = glm::normalize(glm::cross(worldUp, forward));
+                const glm::vec3 up = glm::normalize(glm::cross(forward, right));
+                const float scaleX = glm::max(glm::length(glm::vec3(facingTransform[0])), 0.0001f);
+                const float scaleY = glm::max(glm::length(glm::vec3(facingTransform[1])), 0.0001f);
+                const float scaleZ = glm::max(glm::length(glm::vec3(facingTransform[2])), 0.0001f);
+                facingTransform[0] = glm::vec4(right * scaleX, 0.0f);
+                facingTransform[1] = glm::vec4(up * scaleY, 0.0f);
+                facingTransform[2] = glm::vec4(forward * scaleZ, 0.0f);
+                facingTransform[3] = glm::vec4(currentPos, 1.0f);
+                zombie->setWorldTransform(facingTransform);
+            }
+            continue;
+        }
+
+        if (planarDistance > 1e-4f)
+        {
+            planar /= planarDistance;
+        }
+        zombie->character.inputDir = glm::vec3(planar.x, 0.0f, planar.y);
+    }
 }
 
 QJsonObject ViewportHostWidget::bootstrapThirdPersonShooterReport(bool force)
@@ -3012,6 +3640,7 @@ QJsonObject ViewportHostWidget::thirdPersonShooterStateJson() const
     state.insert(QStringLiteral("runtimeReady"), runtimeReady);
     state.insert(QStringLiteral("bootstrapPending"), m_tpsBootstrapPending);
     state.insert(QStringLiteral("bootstrapApplied"), m_tpsBootstrapApplied);
+    state.insert(QStringLiteral("preservePlacementOnBootstrap"), m_preserveScenePlacementOnBootstrap);
 
     int nathanIndex = -1;
     int environmentIndex = -1;
@@ -4301,6 +4930,7 @@ void ViewportHostWidget::createSceneLight()
     }
 
     m_sceneLight.exists = true;
+    normalizeSceneLightTransform(m_sceneLight);
     applySceneLightToRuntime();
     rebuildSceneLightProxyModel();
     notifySceneChanged();
@@ -4309,6 +4939,7 @@ void ViewportHostWidget::createSceneLight()
 void ViewportHostWidget::setSceneLight(const SceneLight& light)
 {
     m_sceneLight = light;
+    normalizeSceneLightTransform(m_sceneLight);
     applySceneLightToRuntime();
     rebuildSceneLightProxyModel();
     notifySceneChanged();
@@ -4699,7 +5330,7 @@ void ViewportHostWidget::focusSceneLight()
     {
         selectedCamera = m_runtime->camera();
     }
-    m_cameraController->focusWorldPoint(m_sceneLight.editorProxyPosition, 3.0f, 0.25f, selectedCamera);
+    m_cameraController->focusWorldPoint(m_sceneLight.translation, 3.0f, 0.25f, selectedCamera);
     if (m_cameraChangedCallback)
     {
         m_cameraChangedCallback();
@@ -4709,6 +5340,11 @@ void ViewportHostWidget::focusSceneLight()
 void ViewportHostWidget::setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback)
 {
     m_sceneChangedCallback = std::move(callback);
+}
+
+void ViewportHostWidget::setRuntimePersistenceChangedCallback(std::function<void()> callback)
+{
+    m_runtimePersistenceChangedCallback = std::move(callback);
 }
 
 void ViewportHostWidget::setCameraChangedCallback(std::function<void()> callback)
@@ -4748,16 +5384,15 @@ void ViewportHostWidget::resizeEvent(QResizeEvent* event)
     layoutViewportSelectors();
     updateViewportBorders();
     updateCameraDirectionIndicator();
+    updateWindowDebugBadge();
 }
 
 void ViewportHostWidget::focusInEvent(QFocusEvent* event)
 {
     QWidget::focusInEvent(event);
-    if (m_runtime)
-    {
-        m_runtime->focusNativeWindow(static_cast<unsigned long>(winId()));
-    }
+    focusViewportNativeWindow();
     updateViewportBorders();
+    updateWindowDebugBadge();
 }
 
 void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
@@ -4772,6 +5407,7 @@ void ViewportHostWidget::focusOutEvent(QFocusEvent* event)
         m_cameraChangedCallback();
     }
     updateViewportBorders();
+    updateWindowDebugBadge();
 }
 
 void ViewportHostWidget::mousePressEvent(QMouseEvent* event)
@@ -4781,6 +5417,7 @@ void ViewportHostWidget::mousePressEvent(QMouseEvent* event)
     {
         m_renderSurface->setFocus(Qt::MouseFocusReason);
     }
+    focusViewportNativeWindow();
     setFocusedViewportIndex(viewportIndexAt(event->pos()));
     
     // In follow mode, camera handles orbit input directly.
@@ -5027,6 +5664,7 @@ void ViewportHostWidget::ensureViewportInitialized()
                     {
                         m_renderSurface->setFocus(Qt::MouseFocusReason);
                     }
+                    focusViewportNativeWindow();
                     setFocusedViewportIndex(viewportIndexAt(hostPoint));
                 }, Qt::QueuedConnection);
             });
@@ -5064,6 +5702,7 @@ void ViewportHostWidget::ensureViewportInitialized()
         const unsigned long targetWinId = static_cast<unsigned long>(m_renderSurface ? m_renderSurface->winId() : winId());
         m_runtime->embedNativeWindow(targetWinId);
         m_runtime->resize(renderW, renderH);
+        focusViewportNativeWindow();
         updateViewportLayout();
         syncViewportSelectorChoices();
         layoutViewportSelectors();
@@ -5096,6 +5735,7 @@ void ViewportHostWidget::addAssetToScene(const QString& path)
     m_sceneController->addAssetToScene(path);
     m_tpsBootstrapPending = true;
     m_tpsBootstrapApplied = false;
+    m_preserveScenePlacementOnBootstrap = false;
     bootstrapThirdPersonShooter(false);
     notifySceneChanged();
 }
@@ -5122,6 +5762,8 @@ void ViewportHostWidget::renderFrame()
     const auto now = std::chrono::steady_clock::now();
     const double deltaSeconds = std::chrono::duration<double>(now - lastFrameTime).count();
     lastFrameTime = now;
+    const std::uint64_t nowMs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
     
     const float dt = static_cast<float>(deltaSeconds);
 
@@ -5134,6 +5776,12 @@ void ViewportHostWidget::renderFrame()
 
         auto* physicsWorld = m_runtime->engine()->getPhysicsWorld();
         auto& entries = m_sceneController->loadedEntries();
+        bool runtimeCharacterTranslationsChanged = false;
+        const int controllableSceneIndex = firstControllableModelSceneIndex(m_runtime->engine());
+        if (controllableSceneIndex >= 0)
+        {
+            updateNathanZombieAi(controllableSceneIndex, dt);
+        }
         Model* environmentSurface = nullptr;
         for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
         {
@@ -5157,7 +5805,7 @@ void ViewportHostWidget::renderFrame()
                 }
 
                 // Update character/controller state before stepping the world.
-                if (model->character.isControllable)
+                if (model->isCharacterRuntimeDriven())
                 {
                     if (environmentSurface && environmentSurface != model.get())
                     {
@@ -5189,7 +5837,7 @@ void ViewportHostWidget::renderFrame()
                 // Single-owner rule: controllable characters drive their own animation
                 // state from character input/physics. Scene-entry playback controls
                 // apply only to non-controllable scene items.
-                if (!model->character.isControllable)
+                if (!model->isCharacterRuntimeDriven())
                 {
                     model->setAnimationPlaybackState(entry.activeAnimationClip.toStdString(),
                                                      entry.animationPlaying,
@@ -5206,8 +5854,40 @@ void ViewportHostWidget::renderFrame()
                                             glm::vec3(entry.paintOverrideColor.x(),
                                                       entry.paintOverrideColor.y(),
                                                       entry.paintOverrideColor.z()));
+                    model->setInverseColorEnabled(entry.characterAiEnabled && entry.characterAiUseInverseColors);
+                }
+
+                if (model->isCharacterRuntimeDriven())
+                {
+                    const QVector3D currentTranslation = entry.translation;
+                    const QVector3D updatedTranslation =
+                        sceneTranslationForRuntimeWorldTransform(*model, entry.rotation, entry.scale);
+                    if ((updatedTranslation - currentTranslation).lengthSquared() > 0.0001f)
+                    {
+                        entries[static_cast<int>(i)].translation = updatedTranslation;
+                        runtimeCharacterTranslationsChanged = true;
+                    }
                 }
                 model->updateAnimation(deltaSeconds);
+            }
+        }
+
+        if (resolveCharacterCharacterCollisions(*m_runtime->engine()))
+        {
+            runtimeCharacterTranslationsChanged = true;
+            for (size_t i = 0; i < m_runtime->engine()->models.size() && i < static_cast<size_t>(entries.size()); ++i)
+            {
+                auto& model = m_runtime->engine()->models[i];
+                if (!model || !model->isCharacterRuntimeDriven())
+                {
+                    continue;
+                }
+                const glm::vec3 runtimeTranslation = glm::vec3(model->worldTransform[3]);
+                (void)runtimeTranslation;
+                entries[static_cast<int>(i)].translation =
+                    sceneTranslationForRuntimeWorldTransform(*model,
+                                                             entries[static_cast<int>(i)].rotation,
+                                                             entries[static_cast<int>(i)].scale);
             }
         }
 
@@ -5221,6 +5901,23 @@ void ViewportHostWidget::renderFrame()
             // Shared camera/input runtime update path used by both editor and standalone.
             m_runtime->display()->updateRuntimeControllers(dt);
         }
+
+        if (runtimeCharacterTranslationsChanged &&
+            (m_lastRuntimeCharacterPersistenceSyncMs == 0 ||
+             nowMs - m_lastRuntimeCharacterPersistenceSyncMs >= 400))
+        {
+            m_lastRuntimeCharacterPersistenceSyncMs = nowMs;
+            if (m_runtimePersistenceChangedCallback)
+            {
+                QTimer::singleShot(0, this, [this]()
+                {
+                    if (m_runtimePersistenceChangedCallback)
+                    {
+                        m_runtimePersistenceChangedCallback();
+                    }
+                });
+            }
+        }
     }
 
     captureMotionDebugFrame(dt);
@@ -5233,6 +5930,7 @@ void ViewportHostWidget::renderFrame()
         m_runtime->display()->clearCustomOverlayBitmap();
     }
     updateCameraDirectionIndicator();
+    updateWindowDebugBadge();
     m_runtime->render();
     notifyCameraChangedIfNeeded();
 }
@@ -5414,12 +6112,14 @@ void ViewportHostWidget::rebuildSceneLightProxyModel()
         m_sceneLightProxyModels.back()->name = "Editor Light Area";
     }
 
-    const glm::vec3 position(m_sceneLight.editorProxyPosition.x(),
-                             m_sceneLight.editorProxyPosition.y(),
-                             m_sceneLight.editorProxyPosition.z());
-    const glm::vec3 direction = normalizedLightDirection(m_sceneLight);
+    const glm::vec3 position(m_sceneLight.translation.x(),
+                             m_sceneLight.translation.y(),
+                             m_sceneLight.translation.z());
     const glm::mat4 translation = glm::translate(glm::mat4(1.0f), position);
-    const glm::mat4 orientation = glm::mat4_cast(lightDirectionOrientation(direction));
+    glm::mat4 orientation(1.0f);
+    orientation = glm::rotate(orientation, glm::radians(m_sceneLight.rotation.x()), glm::vec3(1.0f, 0.0f, 0.0f));
+    orientation = glm::rotate(orientation, glm::radians(m_sceneLight.rotation.y()), glm::vec3(0.0f, 1.0f, 0.0f));
+    orientation = glm::rotate(orientation, glm::radians(m_sceneLight.rotation.z()), glm::vec3(0.0f, 0.0f, 1.0f));
     const float brightness = std::max(m_sceneLight.brightness, 0.0f);
     const float haloScale = 1.0f + std::min(brightness, 8.0f) * 0.10f;
     const float arrowScale = 1.0f + std::min(brightness, 6.0f) * 0.05f;

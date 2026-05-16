@@ -97,6 +97,7 @@ public:
         float groundHeight = 0.0f;
         bool isGrounded = false;
         bool isControllable = false;  // Set true for player character
+        bool isAiDriven = false;
         bool jumpRequested = false;     // Set true to trigger jump
         
         // Directional key states for animation selection
@@ -109,7 +110,7 @@ public:
         bool phaseThroughWalls = false;
         
         // Animation state
-        enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump };
+        enum class AnimState { Idle, ComeToRest, WalkForward, WalkBackward, WalkLeft, WalkRight, Run, Jump, Attack };
         enum class JumpPhase { None, Start, Apex, Fall, Land };
         AnimState currentAnimState = AnimState::Idle;
         JumpPhase jumpPhase = JumpPhase::None;
@@ -141,6 +142,7 @@ public:
         std::string animFall = "fall";                  // or "falling", "fall_loop"
         std::string animLand = "land";                  // or "landing"
         std::string animComeToRest = "stop";            // or "brake", "halt", "run_to_idle"
+        std::string animAttack = "attack";
         
         // Crouching
         std::string animCrouchIdle = "crouch_idle";
@@ -180,6 +182,13 @@ public:
         float comeToRestTimer = 0.0f;
         float moveIntentGraceDuration = 0.10f;
         float moveIntentGraceTimer = 0.0f;
+        glm::vec2 smoothedLocalMoveIntent = glm::vec2(0.0f);
+        float locomotionIntentSmoothing = 12.0f;
+        float locomotionStartSpeedThreshold = 0.18f;
+        float locomotionStopSpeedThreshold = 0.08f;
+        float locomotionStateMinDuration = 0.12f;
+        float locomotionStateTimer = 0.0f;
+        float locomotionDirectionSwitchBias = 0.18f;
         float jumpStartMinDuration = 0.08f;
         float jumpLandMinDuration = 0.12f;
         float jumpFallVelocityThreshold = -0.5f;
@@ -190,12 +199,20 @@ public:
         bool jumpStartedFromInput = false;
         float proceduralIdleTime = 0.0f;
         float proceduralJumpTime = 0.0f;
+        float proceduralAttackTime = 0.0f;
         bool wasGroundedLastFrame = true;
         AnimState previousAnimState = AnimState::Idle;
         bool hadMoveKeyIntentLastFrame = false;
         bool pendingRestPointLatch = false;
         bool enableRestPointOnMoveRelease = true;
         float restPointNormalizedOnMoveRelease = 1.0f;
+        bool attackRequested = false;
+        bool attackActive = false;
+        float attackActiveTimer = 0.0f;
+        float attackDuration = 0.52f;
+        float attackCooldownTimer = 0.0f;
+        float attackCooldownDuration = 0.75f;
+        float attackAnimationSpeed = 1.0f;
     };
 
     struct AnimationRuntimeState
@@ -230,7 +247,12 @@ public:
     void setSceneTransform(const glm::vec3& translation, const glm::vec3& rotationDegrees, const glm::vec3& scaleFactors);
     void setWorldTransform(const glm::mat4& transform);
     void setPaintOverride(bool enabled, const glm::vec3& color);
-    void setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed);
+    void setInverseColorEnabled(bool enabled);
+    void setAnimationPlaybackState(const std::string& clipName,
+                                   bool playing,
+                                   bool loop,
+                                   float speed,
+                                   bool preserveNormalizedTime = false);
     void setAnimationProcessingOptions(bool centroidNormalizationEnabled,
                                        float trimStartNormalized,
                                        float trimEndNormalized);
@@ -242,8 +264,10 @@ public:
     void setCharacterInput(const glm::vec3& moveDir);  // Called from input handler
     void applyProceduralIdleAnimation(double deltaSeconds);  // Generate idle when no clip exists
     void applyProceduralJumpAnimation(double deltaSeconds);  // Generate jump when no clip exists
+    void applyProceduralAttackAnimation(double deltaSeconds);  // Generate attack lash when no clip exists
     glm::vec3 getCharacterPosition() const { return glm::vec3(worldTransform[3]); }
     glm::vec3 getFollowAnchorPosition() const;
+    bool isCharacterRuntimeDriven() const { return character.isControllable || character.isAiDriven; }
     
     // Set standard human animation names for character controller
     // Use this to configure which animations play for each movement direction
@@ -288,6 +312,8 @@ public:
     bool proceduralIdleBaseVerticesValid = false;
     std::vector<std::vector<Vertex>> proceduralJumpBaseVertices;
     bool proceduralJumpBaseVerticesValid = false;
+    std::vector<std::vector<Vertex>> proceduralAttackBaseVertices;
+    bool proceduralAttackBaseVerticesValid = false;
     bool animationPreprocessedFrameValid = false;
     uint64_t animationPreprocessedFrameCounter = 0;
     

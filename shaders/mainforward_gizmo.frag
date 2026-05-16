@@ -22,12 +22,17 @@ void main()
     const uint alphaMode = objectUBO.materialFlags.x;
     const bool useColorOverride = objectUBO.materialFlags.y != 0u;
     const bool forceAlphaOne = objectUBO.materialFlags.z != 0u;
+    const bool invertColor = objectUBO.materialFlags.w != 0u;
     const float alphaCutoff = objectUBO.materialParams.x;
 
     vec4 sampledColor = texture(texSampler, fragTexCoord);
     if (useColorOverride)
     {
         sampledColor.rgb = objectUBO.colorOverride.rgb;
+    }
+    else if (invertColor)
+    {
+        sampledColor.rgb = vec3(1.0) - sampledColor.rgb;
     }
 
     if ((alphaMode == 1u || (alphaMode == 2u && useColorOverride)) && sampledColor.a < alphaCutoff)

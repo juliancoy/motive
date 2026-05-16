@@ -5,6 +5,7 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
+#include <cstdint>
 
 #include "camera.h"
 #include "display.h"
@@ -21,6 +22,33 @@ InputRouter::~InputRouter()
 {
 }
 
+namespace
+{
+std::int64_t unixTimeMsNow()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+std::string debugKeyName(int key)
+{
+    switch (key)
+    {
+        case GLFW_KEY_W: return "W";
+        case GLFW_KEY_A: return "A";
+        case GLFW_KEY_S: return "S";
+        case GLFW_KEY_D: return "D";
+        case GLFW_KEY_Q: return "Q";
+        case GLFW_KEY_E: return "E";
+        case GLFW_KEY_SPACE: return "Space";
+        case GLFW_KEY_LEFT_SHIFT: return "LeftShift";
+        case GLFW_KEY_RIGHT_SHIFT: return "RightShift";
+        default: return "Unknown";
+    }
+}
+}
+
 void InputRouter::setDisplay(Display* display)
 {
     m_display = display;
@@ -33,6 +61,11 @@ void InputRouter::setCharacterTarget(Model* model)
 
 void InputRouter::handleKey(int key, int action)
 {
+    m_debugState.lastKey = key;
+    m_debugState.lastAction = action;
+    m_debugState.lastKeyName = debugKeyName(key);
+    m_debugState.lastKeyEventUnixMs = unixTimeMsNow();
+
     const bool pressed = (action != GLFW_RELEASE);
 
     switch (key)
@@ -80,6 +113,12 @@ void InputRouter::handleKey(int key, int action)
         m_characterTarget->character.keyShift = m_inputState.sprintRequested;
         m_characterTarget->character.phaseThroughWalls = m_inputState.keysPressed[4];
     }
+
+    std::cout << "[InputRouter] key=" << m_debugState.lastKeyName
+              << " action=" << action
+              << " targetControllable="
+              << ((m_characterTarget && m_characterTarget->character.isControllable) ? "true" : "false")
+              << std::endl;
 }
 
 void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::vec3& inout_cameraPos)
@@ -89,6 +128,9 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
     if (!camera)
     {
         m_isCharacterInputActive = false;
+        m_debugState.lastInputSource = "no_camera";
+        m_debugState.characterInputActive = false;
+        m_debugState.lastUpdateUnixMs = unixTimeMsNow();
         return;
     }
 
@@ -102,6 +144,7 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
     // behavior when release events are missed due to focus/input capture transitions.
     if (m_simulatedInputActive)
     {
+        m_debugState.lastInputSource = "simulated";
         for (int i = 0; i < 6; ++i)
         {
             m_inputState.keysPressed[i] = m_simulatedKeys[static_cast<size_t>(i)];
@@ -116,8 +159,10 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
     else if (m_display && m_display->window)
     {
         const bool nativeFocused = (glfwGetWindowAttrib(m_display->window, GLFW_FOCUSED) == GLFW_TRUE);
+        m_debugState.nativeWindowFocused = nativeFocused;
         if (nativeFocused)
         {
+            m_debugState.lastInputSource = "nativeKeyboard";
             m_inputState.keysPressed[0] = (glfwGetKey(m_display->window, GLFW_KEY_W) == GLFW_PRESS);
             m_inputState.keysPressed[1] = (glfwGetKey(m_display->window, GLFW_KEY_A) == GLFW_PRESS);
             m_inputState.keysPressed[2] = (glfwGetKey(m_display->window, GLFW_KEY_S) == GLFW_PRESS);
@@ -128,7 +173,23 @@ void InputRouter::update(float deltaTime, const glm::vec3& cameraRotation, glm::
                 (glfwGetKey(m_display->window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) ||
                 (glfwGetKey(m_display->window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
         }
+        else
+        {
+            m_debugState.lastInputSource = "windowUnfocused";
+        }
     }
+
+    for (int i = 0; i < 6; ++i)
+    {
+        m_debugState.effectiveKeys[static_cast<size_t>(i)] = m_inputState.keysPressed[i];
+    }
+    m_debugState.jumpRequested = m_inputState.jumpRequested;
+    m_debugState.sprintRequested = m_inputState.sprintRequested;
+    m_debugState.simulatedInputActive = m_simulatedInputActive;
+    m_debugState.characterTargetPresent = (m_characterTarget != nullptr);
+    m_debugState.characterTargetControllable =
+        (m_characterTarget && m_characterTarget->character.isControllable);
+    m_debugState.lastUpdateUnixMs = unixTimeMsNow();
 
     updateForMode(deltaTime,
                   cameraRotation,
@@ -150,6 +211,7 @@ void InputRouter::setSimulatedInput(const std::array<bool, 6>& keys,
     const float clampedDuration = std::max(0.0f, durationSeconds);
     m_simulatedInputExpiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(
         static_cast<int>(clampedDuration * 1000.0f));
+    m_debugState.simulatedInputActive = true;
 }
 
 void InputRouter::clearSimulatedInput()
@@ -165,6 +227,7 @@ void InputRouter::clearSimulatedInput()
     }
     m_inputState.inputDir = glm::vec3(0.0f);
     m_inputState.sprintRequested = false;
+    m_debugState.simulatedInputActive = false;
     if (m_characterTarget && m_characterTarget->character.isControllable)
     {
         m_characterTarget->character.keyW = false;
@@ -194,6 +257,7 @@ void InputRouter::updateForMode(float deltaTime,
     if (routeCharacterInput)
     {
         m_isCharacterInputActive = true;
+        m_debugState.characterInputActive = true;
         
         const float yaw = cameraRotation.x;
         // Match camera forward convention used by rendering:
@@ -240,6 +304,7 @@ void InputRouter::updateForMode(float deltaTime,
     else
     {
         m_isCharacterInputActive = false;
+        m_debugState.characterInputActive = false;
         m_inputState.inputDir = glm::vec3(0.0f);
         m_inputState.jumpRequested = false;
         m_inputState.sprintRequested = false;
@@ -296,6 +361,15 @@ void InputRouter::clearInput()
     m_inputState.inputDir = glm::vec3(0.0f);
     m_inputState.jumpRequested = false;
     m_inputState.sprintRequested = false;
+    m_debugState.lastInputSource = "cleared";
+    m_debugState.jumpRequested = false;
+    m_debugState.sprintRequested = false;
+    m_debugState.characterInputActive = false;
+    m_debugState.lastUpdateUnixMs = unixTimeMsNow();
+    for (bool& key : m_debugState.effectiveKeys)
+    {
+        key = false;
+    }
     clearSimulatedInput();
     
     if (m_characterTarget)

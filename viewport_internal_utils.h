@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QString>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -55,6 +56,35 @@ inline glm::vec2 cameraRotationForDirection(const glm::vec3& direction)
     return glm::vec2(yaw, pitch);
 }
 
+inline glm::vec3 lightDirectionFromRotationDegrees(const QVector3D& rotationDegrees)
+{
+    const float pitch = glm::radians(rotationDegrees.x());
+    const float yaw = glm::radians(rotationDegrees.y());
+    glm::vec3 direction(std::sin(yaw) * std::cos(pitch),
+                        -std::sin(pitch),
+                        std::cos(yaw) * std::cos(pitch));
+    if (glm::length(direction) <= 1e-6f)
+    {
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    return glm::normalize(direction);
+}
+
+inline QVector3D lightRotationDegreesForDirection(const QVector3D& directionValue)
+{
+    glm::vec3 direction(directionValue.x(), directionValue.y(), directionValue.z());
+    if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z) ||
+        glm::length(direction) <= 1e-6f)
+    {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    direction = glm::normalize(direction);
+    const float yaw = std::atan2(direction.x, direction.z);
+    const float pitch = std::atan2(-direction.y, std::sqrt(direction.x * direction.x + direction.z * direction.z));
+    return QVector3D(glm::degrees(pitch), glm::degrees(yaw), 0.0f);
+}
+
 inline float framingDistanceForModel(const Model& model)
 {
     return std::max(std::max(model.boundsRadius, 0.5f) * 3.0f, 2.0f);
@@ -72,7 +102,7 @@ inline std::filesystem::path defaultScenePath()
 
 inline Light engineLightFromSceneLight(const ViewportHostWidget::SceneLight& sceneLight)
 {
-    const glm::vec3 direction(sceneLight.direction.x(), sceneLight.direction.y(), sceneLight.direction.z());
+    const glm::vec3 direction = lightDirectionFromRotationDegrees(sceneLight.rotation);
     const glm::vec3 color(sceneLight.color.x(), sceneLight.color.y(), sceneLight.color.z());
     const float brightness = std::max(0.0f, sceneLight.brightness);
 

@@ -64,6 +64,7 @@ void main() {
     const uint alphaMode = objectUBO.materialFlags.x;
     const bool useColorOverride = objectUBO.materialFlags.y != 0u;
     const bool forceAlphaOne = objectUBO.materialFlags.z != 0u;
+    const bool invertColor = objectUBO.materialFlags.w != 0u;
     const float alphaCutoff = objectUBO.materialParams.x;
     vec3 normal = normalize(fragNormal);
     vec3 lightDir = normalize(lightUBO.direction.xyz);
@@ -96,6 +97,10 @@ void main() {
 
     if (useColorOverride) {
         sampledColor.rgb = objectUBO.colorOverride.rgb;
+    }
+    else if (invertColor)
+    {
+        sampledColor.rgb = vec3(1.0) - sampledColor.rgb;
     }
 
     outColor = vec4(sampledColor.rgb * lighting, sampledColor.a);

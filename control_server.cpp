@@ -924,6 +924,7 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         payload.insert(QStringLiteral("focusedViewportIndex"), data.focusedViewportIndex);
         payload.insert(QStringLiteral("focusedViewportCameraId"), data.focusedViewportCameraId);
         payload.insert(QStringLiteral("viewportCameraIds"), viewportCameraIdsArray);
+        payload.insert(QStringLiteral("windowDebug"), data.windowDebug);
         return jsonResponse(200, compactJson(payload));
     }
 
@@ -971,8 +972,17 @@ QByteArray EngineUiControlServer::buildResponse(const QByteArray& request) const
         QJsonObject payload;
         payload.insert(QStringLiteral("ok"), true);
         payload.insert(QStringLiteral("window"), data.uiDebug.value(QStringLiteral("window")).toObject());
+        payload.insert(QStringLiteral("windowDebug"), data.windowDebug);
         payload.insert(QStringLiteral("splitters"), data.uiDebug.value(QStringLiteral("splitters")).toArray());
         payload.insert(QStringLiteral("dockWidgets"), data.uiDebug.value(QStringLiteral("dockWidgets")).toArray());
+        return jsonResponse(200, compactJson(payload));
+    }
+
+    if (path == "/profile/window_debug")
+    {
+        const EngineUiControlServer::ProfileData data = invokeProfileDataProvider(m_profileDataProvider);
+        QJsonObject payload = data.windowDebug;
+        payload.insert(QStringLiteral("ok"), true);
         return jsonResponse(200, compactJson(payload));
     }
 

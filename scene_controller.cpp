@@ -238,6 +238,8 @@ void applyAnimationSettingsToModel(const ViewportHostWidget::SceneItem& entry, M
                                         entry.animationTrimStartNormalized,
                                         entry.animationTrimEndNormalized);
     model.setAnimationPhysicsCoupling(entry.animationPhysicsCoupling.toStdString());
+    model.setInverseColorEnabled(entry.characterAiEnabled && entry.characterAiUseInverseColors);
+    model.character.isAiDriven = entry.characterAiEnabled;
     model.character.moveSpeed = entry.characterMoveSpeed;
     model.character.idleAnimSpeed = entry.characterIdleAnimationSpeed;
     model.character.walkAnimSpeed = entry.characterWalkAnimationSpeed;
@@ -434,6 +436,34 @@ void ViewportSceneController::addAssetToScene(const QString& path)
     catch (const std::exception& ex)
     {
         qWarning() << "[ViewportHost] Failed to add scene asset:" << path << ex.what();
+    }
+}
+
+void ViewportSceneController::appendSceneItem(const ViewportHostWidget::SceneItem& item)
+{
+    m_sceneEntries.push_back(item);
+    const int sceneIndex = m_sceneEntries.size() - 1;
+    if (!m_runtime.isInitialized() || !m_runtime.engine())
+    {
+        return;
+    }
+    if (isTextOverlaySceneItem(item))
+    {
+        applyTextSceneItemToModel(m_runtime, sceneIndex, m_sceneEntries[sceneIndex]);
+        return;
+    }
+    if (isCoordinatePlaneIndicatorSceneItem(item))
+    {
+        canonicalizeCoordinatePlaneIndicatorItem(m_sceneEntries[sceneIndex]);
+        applyCoordinatePlaneIndicatorToModel(m_runtime, sceneIndex, m_sceneEntries[sceneIndex]);
+        return;
+    }
+    if (ViewportAssetLoader::loadModelIntoEngineSlot(m_runtime, sceneIndex, m_sceneEntries[sceneIndex]) &&
+        sceneIndex < static_cast<int>(m_runtime.engine()->models.size()) &&
+        m_runtime.engine()->models[static_cast<size_t>(sceneIndex)])
+    {
+        applyPrimitiveOverridesToModel(m_sceneEntries[sceneIndex], *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
+        applyAnimationSettingsToModel(m_sceneEntries[sceneIndex], *m_runtime.engine()->models[static_cast<size_t>(sceneIndex)]);
     }
 }
 

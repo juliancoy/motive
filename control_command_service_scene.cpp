@@ -2,6 +2,7 @@
 
 #include "host_widget.h"
 #include "shell.h"
+#include "viewport_internal_utils.h"
 
 #include <QJsonArray>
 #include <QVector3D>
@@ -671,59 +672,105 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
         light.brightness = static_cast<float>(body.value(QStringLiteral("brightness")).toDouble(light.brightness));
     }
 
-    QVector3D proxyPosition = light.editorProxyPosition;
-    if (body.contains(QStringLiteral("editorProxyPosition")) || body.contains(QStringLiteral("position")))
+    QVector3D translation = light.translation;
+    if (body.contains(QStringLiteral("translation")) ||
+        body.contains(QStringLiteral("editorTranslation")) ||
+        body.contains(QStringLiteral("editorProxyPosition")) ||
+        body.contains(QStringLiteral("position")))
     {
-        const QJsonArray value = body.contains(QStringLiteral("editorProxyPosition"))
-            ? body.value(QStringLiteral("editorProxyPosition")).toArray()
-            : body.value(QStringLiteral("position")).toArray();
+        const QJsonArray value = body.contains(QStringLiteral("translation"))
+            ? body.value(QStringLiteral("translation")).toArray()
+            : body.contains(QStringLiteral("editorTranslation"))
+                ? body.value(QStringLiteral("editorTranslation")).toArray()
+                : body.contains(QStringLiteral("editorProxyPosition"))
+                    ? body.value(QStringLiteral("editorProxyPosition")).toArray()
+                    : body.value(QStringLiteral("position")).toArray();
         if (value.size() != 3)
         {
-            result.insert(QStringLiteral("error"), QStringLiteral("editorProxyPosition must be an array of 3 numbers"));
+            result.insert(QStringLiteral("error"), QStringLiteral("translation must be an array of 3 numbers"));
             return false;
         }
-        proxyPosition = QVector3D(
-            static_cast<float>(value.at(0).toDouble(proxyPosition.x())),
-            static_cast<float>(value.at(1).toDouble(proxyPosition.y())),
-            static_cast<float>(value.at(2).toDouble(proxyPosition.z())));
+        translation = QVector3D(
+            static_cast<float>(value.at(0).toDouble(translation.x())),
+            static_cast<float>(value.at(1).toDouble(translation.y())),
+            static_cast<float>(value.at(2).toDouble(translation.z())));
     }
-    if (body.contains(QStringLiteral("editorProxyPositionX")) || body.contains(QStringLiteral("positionX")))
+    if (body.contains(QStringLiteral("translationX")) ||
+        body.contains(QStringLiteral("editorProxyPositionX")) ||
+        body.contains(QStringLiteral("positionX")))
     {
-        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionX"))
+        const QJsonValue value = body.contains(QStringLiteral("translationX"))
+            ? body.value(QStringLiteral("translationX"))
+            : body.contains(QStringLiteral("editorProxyPositionX"))
             ? body.value(QStringLiteral("editorProxyPositionX"))
             : body.value(QStringLiteral("positionX"));
-        proxyPosition.setX(static_cast<float>(value.toDouble(proxyPosition.x())));
+        translation.setX(static_cast<float>(value.toDouble(translation.x())));
     }
-    if (body.contains(QStringLiteral("editorProxyPositionY")) || body.contains(QStringLiteral("positionY")))
+    if (body.contains(QStringLiteral("translationY")) ||
+        body.contains(QStringLiteral("editorProxyPositionY")) ||
+        body.contains(QStringLiteral("positionY")))
     {
-        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionY"))
+        const QJsonValue value = body.contains(QStringLiteral("translationY"))
+            ? body.value(QStringLiteral("translationY"))
+            : body.contains(QStringLiteral("editorProxyPositionY"))
             ? body.value(QStringLiteral("editorProxyPositionY"))
             : body.value(QStringLiteral("positionY"));
-        proxyPosition.setY(static_cast<float>(value.toDouble(proxyPosition.y())));
+        translation.setY(static_cast<float>(value.toDouble(translation.y())));
     }
-    if (body.contains(QStringLiteral("editorProxyPositionZ")) || body.contains(QStringLiteral("positionZ")))
+    if (body.contains(QStringLiteral("translationZ")) ||
+        body.contains(QStringLiteral("editorProxyPositionZ")) ||
+        body.contains(QStringLiteral("positionZ")))
     {
-        const QJsonValue value = body.contains(QStringLiteral("editorProxyPositionZ"))
+        const QJsonValue value = body.contains(QStringLiteral("translationZ"))
+            ? body.value(QStringLiteral("translationZ"))
+            : body.contains(QStringLiteral("editorProxyPositionZ"))
             ? body.value(QStringLiteral("editorProxyPositionZ"))
             : body.value(QStringLiteral("positionZ"));
-        proxyPosition.setZ(static_cast<float>(value.toDouble(proxyPosition.z())));
+        translation.setZ(static_cast<float>(value.toDouble(translation.z())));
     }
-    if (body.contains(QStringLiteral("translation")) || body.contains(QStringLiteral("editorTranslation")))
+    light.translation = translation;
+    light.editorProxyPosition = translation;
+
+    QVector3D rotation = light.rotation;
+    if (body.contains(QStringLiteral("rotation")))
     {
-        const QJsonArray value = body.contains(QStringLiteral("editorTranslation"))
-            ? body.value(QStringLiteral("editorTranslation")).toArray()
-            : body.value(QStringLiteral("translation")).toArray();
+        const QJsonArray value = body.value(QStringLiteral("rotation")).toArray();
         if (value.size() != 3)
         {
-            result.insert(QStringLiteral("error"), QStringLiteral("editorTranslation must be an array of 3 numbers"));
+            result.insert(QStringLiteral("error"), QStringLiteral("rotation must be an array of 3 numbers"));
             return false;
         }
-        proxyPosition = QVector3D(
-            static_cast<float>(value.at(0).toDouble(proxyPosition.x())),
-            static_cast<float>(value.at(1).toDouble(proxyPosition.y())),
-            static_cast<float>(value.at(2).toDouble(proxyPosition.z())));
+        rotation = QVector3D(
+            static_cast<float>(value.at(0).toDouble(rotation.x())),
+            static_cast<float>(value.at(1).toDouble(rotation.y())),
+            static_cast<float>(value.at(2).toDouble(rotation.z())));
     }
-    light.editorProxyPosition = proxyPosition;
+    if (body.contains(QStringLiteral("rotationX")))
+    {
+        rotation.setX(static_cast<float>(body.value(QStringLiteral("rotationX")).toDouble(rotation.x())));
+    }
+    if (body.contains(QStringLiteral("rotationY")))
+    {
+        rotation.setY(static_cast<float>(body.value(QStringLiteral("rotationY")).toDouble(rotation.y())));
+    }
+    if (body.contains(QStringLiteral("rotationZ")))
+    {
+        rotation.setZ(static_cast<float>(body.value(QStringLiteral("rotationZ")).toDouble(rotation.z())));
+    }
+    if (body.contains(QStringLiteral("direction")))
+    {
+        const QJsonArray value = body.value(QStringLiteral("direction")).toArray();
+        if (value.size() != 3)
+        {
+            result.insert(QStringLiteral("error"), QStringLiteral("direction must be an array of 3 numbers"));
+            return false;
+        }
+        rotation = detail::lightRotationDegreesForDirection(QVector3D(
+            static_cast<float>(value.at(0).toDouble()),
+            static_cast<float>(value.at(1).toDouble()),
+            static_cast<float>(value.at(2).toDouble())));
+    }
+    light.rotation = rotation;
 
     QVector3D color = light.color;
     if (body.contains(QStringLiteral("color")))
@@ -754,10 +801,14 @@ bool ControlCommandService::handleLight(const QJsonObject& body, QJsonObject& re
     light.color = color;
 
     viewport->setSceneLight(light);
+    m_window.requestProjectStateSave();
 
     const auto applied = viewport->sceneLight();
     result.insert(QStringLiteral("exists"), applied.exists);
     result.insert(QStringLiteral("type"), applied.type);
+    result.insert(QStringLiteral("translation"), QJsonArray{applied.translation.x(), applied.translation.y(), applied.translation.z()});
+    result.insert(QStringLiteral("rotation"), QJsonArray{applied.rotation.x(), applied.rotation.y(), applied.rotation.z()});
+    result.insert(QStringLiteral("direction"), QJsonArray{applied.direction.x(), applied.direction.y(), applied.direction.z()});
     result.insert(QStringLiteral("editorProxyPosition"), QJsonArray{applied.editorProxyPosition.x(), applied.editorProxyPosition.y(), applied.editorProxyPosition.z()});
     result.insert(QStringLiteral("position"), QJsonArray{applied.editorProxyPosition.x(), applied.editorProxyPosition.y(), applied.editorProxyPosition.z()});
     result.insert(QStringLiteral("brightness"), applied.brightness);

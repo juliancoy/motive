@@ -33,6 +33,14 @@ bool ControlCommandService::tryHandle(const QString& command,
     {
         return false;
     }
+    if (tryHandleWindowDomain(command, body, result, handled))
+    {
+        return true;
+    }
+    if (handled)
+    {
+        return false;
+    }
     if (tryHandleMotionDomain(command, body, result, handled))
     {
         return true;
@@ -96,6 +104,19 @@ bool ControlCommandService::tryHandleCameraDomain(const QString& command,
             handled = true;
             return (this->*(entry.handler))(body, result);
         }
+    }
+    return false;
+}
+
+bool ControlCommandService::tryHandleWindowDomain(const QString& command,
+                                                  const QJsonObject& body,
+                                                  QJsonObject& result,
+                                                  bool& handled) const
+{
+    if (command == QLatin1String("window"))
+    {
+        handled = true;
+        return handleWindow(body, result);
     }
     return false;
 }
@@ -227,6 +248,38 @@ bool ControlCommandService::handleSelection(const QJsonObject& body, QJsonObject
     if (!selected)
     {
         result.insert(QStringLiteral("message"), QStringLiteral("selection target not available yet"));
+    }
+    return true;
+}
+
+bool ControlCommandService::handleWindow(const QJsonObject& body, QJsonObject& result) const
+{
+    auto* viewport = m_window.viewportHost();
+    if (!viewport)
+    {
+        result.insert(QStringLiteral("error"), QStringLiteral("viewport not available"));
+        return false;
+    }
+
+    bool actionTaken = false;
+    if (body.value(QStringLiteral("focusViewport")).toBool(false) ||
+        body.value(QStringLiteral("focusNativeViewport")).toBool(false))
+    {
+        result.insert(QStringLiteral("focusViewportApplied"), viewport->focusViewportNativeWindow());
+        actionTaken = true;
+    }
+
+    if (body.value(QStringLiteral("clearInput")).toBool(false))
+    {
+        viewport->clearRuntimeInputState();
+        result.insert(QStringLiteral("clearInputApplied"), true);
+        actionTaken = true;
+    }
+
+    result.insert(QStringLiteral("windowDebug"), viewport->windowDebugJson());
+    if (!actionTaken)
+    {
+        result.insert(QStringLiteral("message"), QStringLiteral("no window action requested; returned debug snapshot"));
     }
     return true;
 }

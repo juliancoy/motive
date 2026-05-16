@@ -2,10 +2,12 @@
 #define INPUT_ROUTER_H
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <array>
 #include <chrono>
+#include <string>
 
 #include "camera_mode.h"
 
@@ -23,6 +25,24 @@ struct InputState
 class InputRouter
 {
 public:
+    struct DebugState
+    {
+        std::array<bool, 6> effectiveKeys = {false, false, false, false, false, false};
+        std::string lastInputSource = "none";
+        std::string lastKeyName = "Unknown";
+        bool jumpRequested = false;
+        bool sprintRequested = false;
+        bool characterInputActive = false;
+        bool simulatedInputActive = false;
+        bool nativeWindowFocused = false;
+        bool characterTargetPresent = false;
+        bool characterTargetControllable = false;
+        std::int64_t lastKeyEventUnixMs = 0;
+        std::int64_t lastUpdateUnixMs = 0;
+        int lastKey = -1;
+        int lastAction = -1;
+    };
+
     InputRouter();
     ~InputRouter();
 
@@ -42,6 +62,7 @@ public:
 
     const InputState& getInputState() const { return m_inputState; }
     const bool* getKeysPressed() const { return m_inputState.keysPressed; }
+    const DebugState& getDebugState() const { return m_debugState; }
 
     bool isCharacterInputActive() const { return m_isCharacterInputActive; }
 
@@ -63,6 +84,7 @@ private:
     bool m_simulatedJumpRequested = false;
     bool m_simulatedSprintRequested = false;
     std::chrono::steady_clock::time_point m_simulatedInputExpiry = std::chrono::steady_clock::time_point::min();
+    DebugState m_debugState;
 };
 
 #endif // INPUT_ROUTER_H

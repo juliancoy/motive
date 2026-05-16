@@ -14,6 +14,89 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/component_wise.hpp>
 
+namespace
+{
+bool isLocomotionState(Model::CharacterController::AnimState state)
+{
+    using AnimState = Model::CharacterController::AnimState;
+    return state == AnimState::WalkForward ||
+           state == AnimState::WalkBackward ||
+           state == AnimState::WalkLeft ||
+           state == AnimState::WalkRight ||
+           state == AnimState::Run;
+}
+
+glm::vec2 safeNormalize2(const glm::vec2& value)
+{
+    const float len = glm::length(value);
+    if (len <= 1e-5f)
+    {
+        return glm::vec2(0.0f);
+    }
+    return value / len;
+}
+
+Model::CharacterController::AnimState locomotionStateFromIntent(const glm::vec2& localIntent,
+                                                                Model::CharacterController::AnimState previousState,
+                                                                float bias)
+{
+    using AnimState = Model::CharacterController::AnimState;
+
+    const float forwardScore = std::max(0.0f, localIntent.y);
+    const float backwardScore = std::max(0.0f, -localIntent.y);
+    const float leftScore = std::max(0.0f, -localIntent.x);
+    const float rightScore = std::max(0.0f, localIntent.x);
+
+    AnimState bestState = AnimState::WalkForward;
+    float bestScore = forwardScore;
+    if (backwardScore > bestScore)
+    {
+        bestScore = backwardScore;
+        bestState = AnimState::WalkBackward;
+    }
+    if (leftScore > bestScore)
+    {
+        bestScore = leftScore;
+        bestState = AnimState::WalkLeft;
+    }
+    if (rightScore > bestScore)
+    {
+        bestScore = rightScore;
+        bestState = AnimState::WalkRight;
+    }
+
+    if (isLocomotionState(previousState))
+    {
+        float previousScore = 0.0f;
+        switch (previousState)
+        {
+            case AnimState::WalkForward:
+            case AnimState::Run:
+                previousScore = forwardScore;
+                break;
+            case AnimState::WalkBackward:
+                previousScore = backwardScore;
+                break;
+            case AnimState::WalkLeft:
+                previousScore = leftScore;
+                break;
+            case AnimState::WalkRight:
+                previousScore = rightScore;
+                break;
+            default:
+                break;
+        }
+
+        if (previousScore + bias >= bestScore)
+        {
+            return previousState == AnimState::Run ? AnimState::WalkForward : previousState;
+        }
+    }
+
+    return bestState;
+}
+}
+
 void Model::scaleToUnitBox()
 {
     glm::vec3 minBounds(std::numeric_limits<float>::max());
@@ -160,7 +243,26 @@ void Model::setPaintOverride(bool enabled, const glm::vec3& color)
     }
 }
 
-void Model::setAnimationPlaybackState(const std::string& clipName, bool playing, bool loop, float speed)
+void Model::setInverseColorEnabled(bool enabled)
+{
+    for (auto& mesh : meshes)
+    {
+        for (auto& primitive : mesh.primitives)
+        {
+            if (!primitive)
+            {
+                continue;
+            }
+            primitive->invertColorEnabled = enabled;
+        }
+    }
+}
+
+void Model::setAnimationPlaybackState(const std::string& clipName,
+                                      bool playing,
+                                      bool loop,
+                                      float speed,
+                                      bool preserveNormalizedTime)
 {
     animationRuntimeState.source = AnimationRuntimeState::Source::Manual;
     animationRuntimeState.resolvedClipName = clipName;
@@ -172,7 +274,12 @@ void Model::setAnimationPlaybackState(const std::string& clipName, bool playing,
 
     if (fbxAnimationRuntime)
     {
-        motive::animation::setFbxPlaybackState(*fbxAnimationRuntime, clipName, playing, loop, speed);
+        motive::animation::setFbxPlaybackState(*fbxAnimationRuntime,
+                                               clipName,
+                                               playing,
+                                               loop,
+                                               speed,
+                                               preserveNormalizedTime);
     }
 }
 
@@ -213,6 +320,9 @@ void Model::updateCharacterAnimationSemanticState(float dt)
 {
     CharacterController::AnimState targetState;
     const float horizontalSpeedForAnim = glm::length(glm::vec2(character.velocity.x, character.velocity.z));
+    character.locomotionStateTimer = std::max(0.0f, character.locomotionStateTimer - dt);
+    constexpr float kAirborneAnimationGrace = 0.12f;
+    constexpr float kAirborneAnimationVelocityThreshold = 1.25f;
 
     const bool hasMoveKeyIntent =
         (character.keyW || character.keyA || character.keyS || character.keyD);
@@ -234,7 +344,40 @@ void Model::updateCharacterAnimationSemanticState(float dt)
     }
     const bool hasRecentMoveIntent = hasMoveKeyIntent || character.moveIntentGraceTimer > 0.0f;
 
-    if (!character.isGrounded)
+    const bool shouldUseAirborneAnimation =
+        character.jumpStartedFromInput ||
+        (!character.isGrounded &&
+         (character.airborneTimer >= kAirborneAnimationGrace ||
+          std::abs(character.velocity.y) >= kAirborneAnimationVelocityThreshold));
+
+    character.attackCooldownTimer = std::max(0.0f, character.attackCooldownTimer - dt);
+    if (character.attackActive)
+    {
+        character.attackActiveTimer = std::max(0.0f, character.attackActiveTimer - dt);
+        if (character.attackActiveTimer <= 0.0f)
+        {
+            character.attackActive = false;
+            character.attackCooldownTimer = std::max(character.attackCooldownTimer,
+                                                     character.attackCooldownDuration);
+        }
+    }
+
+    if (character.attackRequested &&
+        character.isAiDriven &&
+        character.isGrounded &&
+        !shouldUseAirborneAnimation &&
+        !character.attackActive &&
+        character.attackCooldownTimer <= 0.0f)
+    {
+        character.attackActive = true;
+        character.attackActiveTimer = std::max(0.1f, character.attackDuration);
+        character.attackCooldownTimer = std::max(character.attackCooldownTimer,
+                                                 character.attackDuration);
+        character.comeToRestTimer = 0.0f;
+        character.pendingRestPointLatch = false;
+    }
+
+    if (shouldUseAirborneAnimation && !character.isGrounded)
     {
         if (character.jumpPhase == CharacterController::JumpPhase::None ||
             character.jumpPhase == CharacterController::JumpPhase::Land)
@@ -275,7 +418,12 @@ void Model::updateCharacterAnimationSemanticState(float dt)
     }
     else
     {
-        if (!character.wasGroundedLastFrame &&
+        if (!shouldUseAirborneAnimation)
+        {
+            character.jumpPhase = CharacterController::JumpPhase::None;
+            character.jumpPhaseTimer = 0.0f;
+        }
+        else if (!character.wasGroundedLastFrame &&
             character.jumpPhase != CharacterController::JumpPhase::None)
         {
             character.jumpPhase = CharacterController::JumpPhase::Land;
@@ -306,56 +454,139 @@ void Model::updateCharacterAnimationSemanticState(float dt)
     }
     character.wasGroundedLastFrame = character.isGrounded;
 
-    const auto isLocomotionState = [](CharacterController::AnimState state) -> bool {
-        return state == CharacterController::AnimState::WalkForward ||
-               state == CharacterController::AnimState::WalkBackward ||
-               state == CharacterController::AnimState::WalkLeft ||
-               state == CharacterController::AnimState::WalkRight ||
-               state == CharacterController::AnimState::Run;
-    };
     const bool wasLocomotion = isLocomotionState(character.currentAnimState);
 
-    if (character.jumpPhase != CharacterController::JumpPhase::None)
+    glm::vec2 localIntent(0.0f);
+    if (hasMoveKeyIntent)
+    {
+        if (character.keyD) localIntent.x += 1.0f;
+        if (character.keyA) localIntent.x -= 1.0f;
+        if (character.keyW) localIntent.y += 1.0f;
+        if (character.keyS) localIntent.y -= 1.0f;
+        localIntent = safeNormalize2(localIntent);
+    }
+    else
+    {
+        const glm::vec3 planarInput(character.inputDir.x, 0.0f, character.inputDir.z);
+        if (glm::length(planarInput) > 1e-4f)
+        {
+            glm::vec3 currentForward(worldTransform[2].x, 0.0f, worldTransform[2].z);
+            if (glm::length(currentForward) < 1e-4f)
+            {
+                currentForward = glm::vec3(0.0f, 0.0f, 1.0f);
+            }
+            else
+            {
+                currentForward = glm::normalize(currentForward);
+            }
+            glm::vec3 currentRight = glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), currentForward);
+            if (glm::length(currentRight) > 1e-4f)
+            {
+                currentRight = glm::normalize(currentRight);
+                const glm::vec3 normalizedInput = glm::normalize(planarInput);
+                localIntent.x = glm::dot(normalizedInput, currentRight);
+                localIntent.y = glm::dot(normalizedInput, currentForward);
+            }
+        }
+        else if (horizontalSpeedForAnim > 1e-4f)
+        {
+            glm::vec3 currentForward(worldTransform[2].x, 0.0f, worldTransform[2].z);
+            if (glm::length(currentForward) < 1e-4f)
+            {
+                currentForward = glm::vec3(0.0f, 0.0f, 1.0f);
+            }
+            else
+            {
+                currentForward = glm::normalize(currentForward);
+            }
+            glm::vec3 currentRight = glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), currentForward);
+            if (glm::length(currentRight) > 1e-4f)
+            {
+                currentRight = glm::normalize(currentRight);
+                const glm::vec3 normalizedVelocity = glm::normalize(glm::vec3(character.velocity.x, 0.0f, character.velocity.z));
+                localIntent.x = glm::dot(normalizedVelocity, currentRight);
+                localIntent.y = glm::dot(normalizedVelocity, currentForward);
+            }
+        }
+    }
+
+    const float intentBlendT = std::clamp(
+        1.0f - std::exp(-character.locomotionIntentSmoothing * std::max(dt, 0.0f)),
+        0.0f,
+        1.0f);
+    character.smoothedLocalMoveIntent = glm::mix(character.smoothedLocalMoveIntent, localIntent, intentBlendT);
+    if (!hasRecentMoveIntent && horizontalSpeedForAnim <= character.locomotionStopSpeedThreshold)
+    {
+        character.smoothedLocalMoveIntent = glm::mix(character.smoothedLocalMoveIntent,
+                                                     glm::vec2(0.0f),
+                                                     std::min(1.0f, intentBlendT * 1.35f));
+    }
+
+    if (character.attackActive && character.isAiDriven)
+    {
+        character.comeToRestTimer = 0.0f;
+        character.pendingRestPointLatch = false;
+        targetState = CharacterController::AnimState::Attack;
+    }
+    else if (shouldUseAirborneAnimation &&
+        character.jumpPhase != CharacterController::JumpPhase::None)
     {
         character.comeToRestTimer = 0.0f;
         character.pendingRestPointLatch = false;
         targetState = CharacterController::AnimState::Jump;
     }
-    else if (!hasMoveKeyIntent)
-    {
-        if (character.comeToRestTimer <= 0.0f && (wasLocomotion || hasRecentMoveIntent))
-        {
-            character.comeToRestTimer = character.comeToRestDuration;
-        }
-
-        if (character.comeToRestTimer > 0.0f)
-        {
-            character.comeToRestTimer = std::max(0.0f, character.comeToRestTimer - dt);
-            targetState = CharacterController::AnimState::ComeToRest;
-        }
-        else
-        {
-            targetState = CharacterController::AnimState::Idle;
-        }
-    }
-    else if (character.keyShift || horizontalSpeedForAnim >= character.runSpeedThreshold)
-    {
-        character.comeToRestTimer = 0.0f;
-        targetState = CharacterController::AnimState::Run;
-    }
     else
     {
-        character.comeToRestTimer = 0.0f;
-        if (character.keyW && !character.keyS)
-            targetState = CharacterController::AnimState::WalkForward;
-        else if (character.keyS && !character.keyW)
-            targetState = CharacterController::AnimState::WalkBackward;
-        else if (character.keyA && !character.keyD)
-            targetState = CharacterController::AnimState::WalkLeft;
-        else if (character.keyD && !character.keyA)
-            targetState = CharacterController::AnimState::WalkRight;
+        const bool locomotionShouldContinue =
+            hasRecentMoveIntent ||
+            horizontalSpeedForAnim >= (wasLocomotion
+                ? character.locomotionStopSpeedThreshold
+                : character.locomotionStartSpeedThreshold);
+
+        if (!locomotionShouldContinue)
+        {
+            if (character.comeToRestTimer <= 0.0f && (wasLocomotion || hasRecentMoveIntent))
+            {
+                character.comeToRestTimer = character.comeToRestDuration;
+            }
+
+            if (character.comeToRestTimer > 0.0f)
+            {
+                character.comeToRestTimer = std::max(0.0f, character.comeToRestTimer - dt);
+                targetState = CharacterController::AnimState::ComeToRest;
+            }
+            else
+            {
+                targetState = CharacterController::AnimState::Idle;
+            }
+        }
         else
-            targetState = CharacterController::AnimState::WalkForward;
+        {
+            character.comeToRestTimer = 0.0f;
+            CharacterController::AnimState locomotionState = locomotionStateFromIntent(
+                safeNormalize2(character.smoothedLocalMoveIntent),
+                character.currentAnimState,
+                character.locomotionDirectionSwitchBias);
+
+            if ((character.keyShift || horizontalSpeedForAnim >= character.runSpeedThreshold) &&
+                locomotionState == CharacterController::AnimState::WalkForward)
+            {
+                locomotionState = CharacterController::AnimState::Run;
+            }
+
+            if (isLocomotionState(character.currentAnimState) &&
+                locomotionState != character.currentAnimState &&
+                character.locomotionStateTimer > 0.0f)
+            {
+                locomotionState = character.currentAnimState;
+            }
+
+            targetState = locomotionState;
+            if (targetState != character.currentAnimState)
+            {
+                character.locomotionStateTimer = character.locomotionStateMinDuration;
+            }
+        }
     }
 
     character.previousAnimState = character.currentAnimState;
@@ -372,7 +603,7 @@ void Model::updateAnimation(double deltaSeconds)
         return;
     }
 
-    if (character.isControllable)
+    if (isCharacterRuntimeDriven())
     {
         updateCharacterAnimationSemanticState(static_cast<float>(std::max(deltaSeconds, 0.0)));
         animationRuntimeState.source = AnimationRuntimeState::Source::CharacterController;
@@ -385,18 +616,26 @@ void Model::updateAnimation(double deltaSeconds)
     }
     
     // Handle procedural idle animation
-    if (character.isControllable && character.isUsingProceduralAnim && 
+    if (isCharacterRuntimeDriven() && character.isUsingProceduralAnim &&
         character.currentAnimState == CharacterController::AnimState::Idle)
     {
         applyProceduralIdleAnimation(deltaSeconds);
         return;
     }
 
-    if (character.isControllable &&
+    if (isCharacterRuntimeDriven() &&
         character.isUsingProceduralAnim &&
         character.currentAnimState == CharacterController::AnimState::Jump)
     {
         applyProceduralJumpAnimation(deltaSeconds);
+        return;
+    }
+
+    if (isCharacterRuntimeDriven() &&
+        character.isUsingProceduralAnim &&
+        character.currentAnimState == CharacterController::AnimState::Attack)
+    {
+        applyProceduralAttackAnimation(deltaSeconds);
         return;
     }
     
@@ -404,7 +643,7 @@ void Model::updateAnimation(double deltaSeconds)
     {
         bool preprocessedUpdated = false;
         // Apply mirroring if needed (by scaling root transform X by -1)
-        if (character.isControllable && character.isUsingMirroredAnim)
+        if (isCharacterRuntimeDriven() && character.isUsingMirroredAnim)
         {
             // Store current speed
             float originalSpeed = fbxAnimationRuntime->speed;
@@ -617,6 +856,97 @@ void Model::applyProceduralJumpAnimation(double deltaSeconds)
     ++animationPreprocessedFrameCounter;
 }
 
+void Model::applyProceduralAttackAnimation(double deltaSeconds)
+{
+    character.proceduralAttackTime += static_cast<float>(deltaSeconds) *
+                                      std::max(character.attackAnimationSpeed, 0.01f);
+
+    if (!proceduralAttackBaseVerticesValid)
+    {
+        proceduralAttackBaseVertices.clear();
+        proceduralAttackBaseVertices.reserve(meshes.size());
+        for (const auto& mesh : meshes)
+        {
+            const Primitive* primitive = !mesh.primitives.empty() ? mesh.primitives.front().get() : nullptr;
+            proceduralAttackBaseVertices.push_back(primitive ? primitive->cpuVertices : std::vector<Vertex>{});
+        }
+        proceduralAttackBaseVerticesValid = true;
+    }
+
+    glm::vec3 localMin(std::numeric_limits<float>::max());
+    glm::vec3 localMax(std::numeric_limits<float>::lowest());
+    bool found = false;
+    for (const auto& vertices : proceduralAttackBaseVertices)
+    {
+        for (const Vertex& vertex : vertices)
+        {
+            localMin = glm::min(localMin, vertex.pos);
+            localMax = glm::max(localMax, vertex.pos);
+            found = true;
+        }
+    }
+    if (!found)
+    {
+        return;
+    }
+
+    const glm::vec3 size = glm::max(localMax - localMin, glm::vec3(0.0001f));
+    const glm::vec3 center = (localMin + localMax) * 0.5f;
+    const float cycle = std::clamp(1.0f - (character.attackActiveTimer / std::max(character.attackDuration, 0.001f)),
+                                   0.0f,
+                                   1.0f);
+    const float windup = 1.0f - glm::smoothstep(0.22f, 0.46f, cycle);
+    const float strike = glm::smoothstep(0.24f, 0.55f, cycle) *
+                         (1.0f - glm::smoothstep(0.62f, 0.96f, cycle));
+    const float recover = glm::smoothstep(0.68f, 1.0f, cycle);
+    const float torsoLean = (-0.020f * windup + 0.070f * strike - 0.018f * recover) * size.z;
+    const float shoulderLift = (0.030f * windup + 0.075f * strike - 0.020f * recover) * size.y;
+    const float armReach = (-0.010f * windup + 0.085f * strike - 0.025f * recover) * size.z;
+    const float armSpread = (0.008f * windup + 0.022f * strike) * size.x;
+    const float bodyTwist = std::sin(cycle * static_cast<float>(M_PI)) * 0.020f * size.x;
+    const float headDip = (0.015f * windup + 0.030f * strike) * size.y;
+
+    for (size_t meshIndex = 0; meshIndex < meshes.size() && meshIndex < proceduralAttackBaseVertices.size(); ++meshIndex)
+    {
+        if (meshes[meshIndex].primitives.empty() || !meshes[meshIndex].primitives.front())
+        {
+            continue;
+        }
+
+        std::vector<Vertex> posed = proceduralAttackBaseVertices[meshIndex];
+        for (Vertex& vertex : posed)
+        {
+            const float y01 = std::clamp((vertex.pos.y - localMin.y) / size.y, 0.0f, 1.0f);
+            const float xCentered = size.x > 1e-6f ? (vertex.pos.x - center.x) / size.x : 0.0f;
+            const float side = vertex.pos.x >= center.x ? 1.0f : -1.0f;
+            const float torso = glm::smoothstep(0.36f, 0.82f, y01);
+            const float chest = glm::smoothstep(0.52f, 0.88f, y01);
+            const float head = glm::smoothstep(0.80f, 0.98f, y01);
+            const float armRegion = chest * glm::smoothstep(0.12f, 0.32f, std::abs(xCentered));
+            const float attackArm = armRegion * glm::smoothstep(0.02f, 0.22f, xCentered);
+            const float supportArm = armRegion * glm::smoothstep(0.02f, 0.22f, -xCentered);
+            const float lowerBody = 1.0f - glm::smoothstep(0.18f, 0.52f, y01);
+
+            vertex.pos.z += torso * torsoLean;
+            vertex.pos.x += torso * bodyTwist * side;
+            vertex.pos.y -= head * headDip;
+            vertex.pos.z += attackArm * armReach;
+            vertex.pos.y += attackArm * shoulderLift;
+            vertex.pos.x += attackArm * armSpread;
+            vertex.pos.z += supportArm * (armReach * 0.32f);
+            vertex.pos.y += supportArm * (shoulderLift * 0.35f);
+            vertex.pos.x -= supportArm * (armSpread * 0.65f);
+            vertex.pos.y -= lowerBody * strike * size.y * 0.012f;
+        }
+
+        meshes[meshIndex].primitives.front()->updateVertexData(posed);
+    }
+
+    recomputeBounds();
+    animationPreprocessedFrameValid = true;
+    ++animationPreprocessedFrameCounter;
+}
+
 void Model::applyTransformToPrimitives(const glm::mat4 &transform)
 {
     worldTransform = transform * worldTransform;
@@ -770,7 +1100,7 @@ glm::vec3 Model::getFollowAnchorPosition() const
     // Controllable characters: use stable world-space anchor derived from a
     // normalized local center (single-owner worldTransform). This avoids
     // per-frame animation AABB jitter and loop-end root snaps in follow camera.
-    if (character.isControllable && followAnchorLocalCenterInitialized)
+    if (isCharacterRuntimeDriven() && followAnchorLocalCenterInitialized)
     {
         return glm::vec3(worldTransform * glm::vec4(followAnchorLocalCenter, 1.0f));
     }
@@ -785,7 +1115,7 @@ glm::vec3 Model::getFollowAnchorPosition() const
 
 void Model::updateCharacterPhysics(float deltaSeconds)
 {
-    if (!character.isControllable)
+    if (!isCharacterRuntimeDriven())
     {
         return;
     }
@@ -937,6 +1267,9 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             break;
         case CharacterController::AnimState::Jump:
             targetWeight = 0.5f;
+            break;
+        case CharacterController::AnimState::Attack:
+            targetWeight = 0.85f;
             break;
     }
     
@@ -1172,6 +1505,14 @@ void Model::updateCharacterPhysics(float deltaSeconds)
                     targetLoop = true;
                 }
                 break;
+
+            case CharacterController::AnimState::Attack:
+                targetClip = findClip({
+                    character.animAttack,
+                    "attack", "swipe", "slash", "melee", "hit", "punch"
+                });
+                targetLoop = false;
+                break;
         }
         
         // Final fallback to first clip only for locomotion states.
@@ -1180,6 +1521,7 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             targetState != CharacterController::AnimState::Idle &&
             targetState != CharacterController::AnimState::ComeToRest &&
             targetState != CharacterController::AnimState::Jump &&
+            targetState != CharacterController::AnimState::Attack &&
             !animationClips.empty())
         {
             targetClip = animationClips[0].name;
@@ -1237,6 +1579,14 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             case CharacterController::AnimState::Jump:
                 targetSpeed = character.enableTimeWarp ? character.jumpAnimSpeed : 1.0f;
                 break;
+
+            case CharacterController::AnimState::Attack:
+                targetSpeed = std::max(0.01f, character.attackAnimationSpeed);
+                if (targetClip.empty())
+                {
+                    useProcedural = true;
+                }
+                break;
         }
 
         if (targetState == CharacterController::AnimState::Jump && targetClip.empty())
@@ -1288,6 +1638,11 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             proceduralJumpBaseVerticesValid = false;
             character.proceduralJumpTime = 0.0f;
         }
+        if (targetState != CharacterController::AnimState::Attack || !useProcedural)
+        {
+            proceduralAttackBaseVerticesValid = false;
+            character.proceduralAttackTime = 0.0f;
+        }
 
         if (character.pendingRestPointLatch &&
             (targetState != CharacterController::AnimState::ComeToRest || !supportsReleaseRestLatch))
@@ -1323,7 +1678,14 @@ void Model::updateCharacterPhysics(float deltaSeconds)
             
             if (needSwitch)
             {
-                setAnimationPlaybackState(targetClip, true, targetLoop, targetSpeed);
+                const bool preserveNormalizedTime =
+                    isLocomotionState(character.currentAnimState) &&
+                    isLocomotionState(character.previousAnimState);
+                setAnimationPlaybackState(targetClip,
+                                          true,
+                                          targetLoop,
+                                          targetSpeed,
+                                          preserveNormalizedTime);
             }
             else
             {

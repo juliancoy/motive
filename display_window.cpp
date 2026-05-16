@@ -6,6 +6,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <chrono>
+#include <iostream>
 
 #include "camera.h"
 #include "display.h"
@@ -28,6 +30,12 @@ void Display::createWindow(const char* title)
     {
         throw std::runtime_error("Failed to create GLFW window");
     }
+    windowTitle = title ? title : "";
+    windowDebugState.focused = (glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE);
+    windowDebugState.lastFocusChangeUnixMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
 
     glfwSetWindowUserPointer(window, this);
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* win, int fbWidth, int fbHeight) {
@@ -175,6 +183,15 @@ void Display::handleCursorPos(double xpos, double ypos)
 
 void Display::handleKey(int key, int scancode, int action, int mods)
 {
+    windowDebugState.lastKey = key;
+    windowDebugState.lastScancode = scancode;
+    windowDebugState.lastAction = action;
+    windowDebugState.lastMods = mods;
+    windowDebugState.lastKeyEventUnixMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
+
     if (window && key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
     {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -199,11 +216,20 @@ void Display::handleKey(int key, int scancode, int action, int mods)
 
 void Display::handleWindowFocusChanged(int focused)
 {
+    const bool hasFocus = (focused != 0);
+    windowDebugState.focused = hasFocus;
+    windowDebugState.lastFocusChangeUnixMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    std::cout << "[Display] Window focus changed title=\"" << windowTitle
+              << "\" focused=" << (hasFocus ? "true" : "false") << std::endl;
     if (focused)
     {
         return;
     }
 
+    windowDebugState.inputClearedOnFocusLoss = true;
     if (inputRouter)
     {
         inputRouter->clearInput();
@@ -214,4 +240,22 @@ void Display::handleWindowFocusChanged(int focused)
     {
         camera->clearInputState();
     }
+}
+
+void Display::setDebugWindowTitle(const std::string& title)
+{
+    windowTitle = title;
+    if (window)
+    {
+        glfwSetWindowTitle(window, windowTitle.c_str());
+    }
+}
+
+bool Display::isNativeWindowFocused() const
+{
+    if (!window)
+    {
+        return false;
+    }
+    return glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
 }

@@ -57,6 +57,7 @@ EngineUiControlServer::ProfileData ProfileDataService::captureProfileData() cons
         data.focusedViewportCameraId = viewport->focusedViewportCameraId();
         data.viewportCameraIds = viewport->viewportCameraIds();
         data.cameraTracking = viewport->cameraTrackingDebugJson();
+        data.windowDebug = viewport->windowDebugJson();
         data.motionDebugFrame = viewport->motionDebugFrameJson();
         data.motionDebugSummary = viewport->motionDebugSummaryJson();
         data.motionDebugOverlay = viewport->motionDebugOverlayOptionsJson();

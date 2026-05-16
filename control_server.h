@@ -38,6 +38,7 @@ public:
         QString focusedViewportCameraId;
         QStringList viewportCameraIds;
         QJsonObject cameraTracking;
+        QJsonObject windowDebug;
         QJsonObject inspector;
         QJsonObject motionDebugFrame;
         QJsonObject motionDebugSummary;

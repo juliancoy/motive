@@ -12,6 +12,7 @@
 #include <QStringList>
 #include "text_rendering.h"
 #include <cstdint>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -118,6 +119,11 @@ public:
         bool focusCameraOffsetValid = false;
         bool characterRestPointOnReleaseEnabled = true;
         float characterRestPointOnReleaseNormalized = 1.0f;
+        bool characterAiEnabled = false;
+        bool characterAiUseInverseColors = false;
+        int characterAiTargetSceneIndex = -1;
+        float characterAiMoveSpeed = 2.4f;
+        float characterAiAttackDistance = 1.2f;
         QString textContent = QStringLiteral("Text");
         QString textFontPath;
         int textPixelHeight = 56;
@@ -138,6 +144,10 @@ public:
     {
         QString type = QStringLiteral("directional");
         bool exists = false;
+        QVector3D translation = QVector3D(0.0f, 2.0f, 0.0f);
+        QVector3D rotation = QVector3D(0.0f, 0.0f, 0.0f);
+        QVector3D scale = QVector3D(1.0f, 1.0f, 1.0f);
+        // Legacy compatibility fields. Translation/rotation are the canonical source of truth.
         QVector3D editorProxyPosition = QVector3D(0.0f, 2.0f, 0.0f);
         QVector3D direction = QVector3D(0.0f, 0.0f, 1.0f);
         QVector3D color = QVector3D(1.0f, 1.0f, 1.0f);
@@ -192,6 +202,7 @@ public:
     QJsonArray hierarchyJson() const;
     QJsonArray sceneProfileJson() const;
     QJsonObject cameraTrackingDebugJson() const;
+    QJsonObject windowDebugJson() const;
     QJsonObject motionDebugFrameJson() const;
     QJsonArray motionDebugHistoryJson(int maxFrames = 300, int sceneIndex = -1) const;
     QJsonObject motionDebugSummaryJson() const;
@@ -256,6 +267,7 @@ public:
     void focusSceneItem(int index);
     void focusSceneLight();
     void setSceneChangedCallback(std::function<void(const QList<SceneItem>&)> callback);
+    void setRuntimePersistenceChangedCallback(std::function<void()> callback);
     void setCameraChangedCallback(std::function<void()> callback);
     void setViewportFocusChangedCallback(std::function<void(const QString& cameraId)> callback);
 
@@ -320,6 +332,8 @@ public:
     QString activeCameraId() const;
     void updateCameraConfig(int cameraIndex, const CameraConfig& config);
     bool normalizeSceneScaleForMeters(float targetCharacterRadius = 0.45f);
+    bool focusViewportNativeWindow();
+    void clearRuntimeInputState();
     void refresh();
     void setCustomOverlayBitmap(const glyph::OverlayBitmap& bitmap);
     void clearCustomOverlayBitmap();
@@ -358,9 +372,12 @@ private:
     void setCharacterControlState(int sceneIndex, bool enabled, bool repositionForCharacterMode);
     void ensureFollowCamerasForAllSceneItems();
     void syncControllableCharacterTransformState(int sceneIndex);
+    bool ensureNathanZombieHorde(int nathanIndex);
+    void updateNathanZombieAi(int nathanSceneIndex, float dt);
     void captureMotionDebugFrame(float dt);
     void updateMotionDebugOverlay();
     void updateCameraDirectionIndicator();
+    void updateWindowDebugBadge();
     void syncEditorRenderModels();
     void rebuildSceneLightProxyModel();
 
@@ -401,9 +418,12 @@ private:
     bool m_initScheduled = false;
     bool m_tpsBootstrapPending = true;
     bool m_tpsBootstrapApplied = false;
+    bool m_preserveScenePlacementOnBootstrap = false;
+    std::uint64_t m_lastRuntimeCharacterPersistenceSyncMs = 0;
     bool m_hasEmittedCameraState = false;
     QLabel* m_statusLabel = nullptr;
     QLabel* m_cameraDirectionLabel = nullptr;
+    QLabel* m_windowDebugBadgeLabel = nullptr;
     QWidget* m_renderSurface = nullptr;
     QWidget* m_viewportSelectorPanel = nullptr;
     QGridLayout* m_viewportSelectorGrid = nullptr;
@@ -415,6 +435,7 @@ private:
     static constexpr float kMinOrbitDistance = 1.5f;
     static constexpr float kMaxOrbitDistance = 10.0f;
     std::function<void(const QList<SceneItem>&)> m_sceneChangedCallback;
+    std::function<void()> m_runtimePersistenceChangedCallback;
     std::function<void()> m_cameraChangedCallback;
     std::function<void(const QString&)> m_viewportFocusChangedCallback;
     QList<CameraConfig> m_pendingCameraConfigs;

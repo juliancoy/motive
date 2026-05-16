@@ -121,7 +121,7 @@ std::vector<Vertex> buildAnimatedVerticesFromFbxMesh(const ufbx_mesh* mesh, cons
 
 glm::vec3 normalizeControllableCharacterRootOffset(Model& model, std::vector<Vertex>& vertices)
 {
-    if (!model.character.isControllable || vertices.empty() || !model.followAnchorLocalCenterInitialized)
+    if (!model.isCharacterRuntimeDriven() || vertices.empty() || !model.followAnchorLocalCenterInitialized)
     {
         return glm::vec3(0.0f);
     }
@@ -534,7 +534,12 @@ void loadFbxSidecarClips(FbxRuntime& runtime, const std::string& fbxPath)
               << std::endl;
 }
 
-void setFbxPlaybackState(FbxRuntime& runtime, const std::string& clipName, bool playing, bool loop, float speed)
+void setFbxPlaybackState(FbxRuntime& runtime,
+                         const std::string& clipName,
+                         bool playing,
+                         bool loop,
+                         float speed,
+                         bool preserveNormalizedTime)
 {
     runtime.playing = playing;
     runtime.loop = loop;
@@ -565,8 +570,33 @@ void setFbxPlaybackState(FbxRuntime& runtime, const std::string& clipName, bool 
     }
     if (nextClipIndex != runtime.activeClipIndex)
     {
+        double normalizedTime = 0.0;
+        bool haveNormalizedTime = false;
+        if (preserveNormalizedTime &&
+            runtime.activeClipIndex >= 0 &&
+            runtime.activeClipIndex < static_cast<int>(runtime.clips.size()))
+        {
+            const ClipPlaybackWindow previousWindow =
+                clipPlaybackWindow(runtime.clips[runtime.activeClipIndex], runtime);
+            if (previousWindow.duration > 1e-6)
+            {
+                normalizedTime = (runtime.timeSeconds - previousWindow.start) / previousWindow.duration;
+                normalizedTime = std::clamp(normalizedTime, 0.0, 1.0);
+                haveNormalizedTime = true;
+            }
+        }
+
         runtime.activeClipIndex = nextClipIndex;
-        runtime.timeSeconds = initialPlaybackTime(runtime.clips[nextClipIndex], runtime.playing);
+        if (haveNormalizedTime)
+        {
+            const ClipPlaybackWindow nextWindow =
+                clipPlaybackWindow(runtime.clips[nextClipIndex], runtime);
+            runtime.timeSeconds = nextWindow.start + (nextWindow.duration * normalizedTime);
+        }
+        else
+        {
+            runtime.timeSeconds = initialPlaybackTime(runtime.clips[nextClipIndex], runtime.playing);
+        }
     }
     const ClipPlaybackWindow window = clipPlaybackWindow(runtime.clips[runtime.activeClipIndex], runtime);
     runtime.timeSeconds = clampToPlaybackWindow(runtime.timeSeconds, window);
@@ -693,7 +723,7 @@ bool applyCustomAnimation(Model& model, FbxRuntime& runtime, const FbxClipRuntim
 
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
     const bool forceCpuNormalizedPose =
-        model.character.isControllable && runtime.centroidNormalizationEnabled;
+        model.isCharacterRuntimeDriven() && runtime.centroidNormalizationEnabled;
     bool updated = false;
     for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {
@@ -840,7 +870,7 @@ bool updateFbxAnimation(Model& model, FbxRuntime& runtime, double deltaSeconds)
 
     const size_t meshCount = std::min(model.meshes.size(), runtime.meshBindings.size());
     const bool forceCpuNormalizedPose =
-        model.character.isControllable && runtime.centroidNormalizationEnabled;
+        model.isCharacterRuntimeDriven() && runtime.centroidNormalizationEnabled;
     bool allMeshesUseGpuSkinning = meshCount > 0 && !forceCpuNormalizedPose;
     for (size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {

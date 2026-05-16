@@ -12,6 +12,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QDebug>
+#include <QThread>
 
 namespace motive::ui {
 namespace {
@@ -109,7 +110,6 @@ void MainWindowShell::restoreSessionState()
         m_viewportHost->setCameraSpeed(m_projectSession.currentCameraSpeed());
         m_viewportHost->setCameraPosition(m_projectSession.currentCameraPosition());
         m_viewportHost->setCameraRotation(m_projectSession.currentCameraRotation());
-        m_viewportHost->normalizeSceneScaleForMeters();
         updateCameraSettingsPanel();
     }
     applyUiState(m_projectSession.currentUiState());
@@ -296,7 +296,6 @@ void MainWindowShell::createProject()
         }
         m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
-        m_viewportHost->normalizeSceneScaleForMeters();
     }
     applyUiState(m_projectSession.currentUiState());
     refreshWindowTitle();
@@ -367,7 +366,6 @@ void MainWindowShell::switchProject()
         }
         m_viewportHost->setViewportLayout(savedLayout);
         m_viewportHost->setSceneLight(MainWindowShell::sceneLightFromJson(m_projectSession.currentSceneLight()));
-        m_viewportHost->normalizeSceneScaleForMeters();
     }
     applyUiState(m_projectSession.currentUiState());
     refreshWindowTitle();
@@ -386,12 +384,68 @@ void MainWindowShell::saveUiState()
     m_savingUiState = false;
 }
 
+void MainWindowShell::requestProjectStateSave()
+{
+    const auto flushSave = [this]()
+    {
+        performProjectStateSave();
+    };
+
+    if (QThread::currentThread() == thread())
+    {
+        flushSave();
+        return;
+    }
+
+    QMetaObject::invokeMethod(
+        this,
+        flushSave,
+        Qt::BlockingQueuedConnection);
+}
+
 void MainWindowShell::saveProjectState()
 {
     if (m_restoringSessionState)
     {
         return;
     }
+
+    if (!m_projectSaveTimer)
+    {
+        m_projectSaveTimer = new QTimer(this);
+        m_projectSaveTimer->setSingleShot(true);
+        connect(m_projectSaveTimer, &QTimer::timeout, this, [this]()
+        {
+            performProjectStateSave();
+        });
+    }
+
+    m_projectSaveQueued = true;
+    m_projectSaveTimer->start(900);
+}
+
+void MainWindowShell::flushPendingProjectStateSave()
+{
+    if (!m_projectSaveQueued)
+    {
+        return;
+    }
+
+    if (m_projectSaveTimer)
+    {
+        m_projectSaveTimer->stop();
+    }
+    performProjectStateSave();
+}
+
+void MainWindowShell::performProjectStateSave()
+{
+    if (m_restoringSessionState)
+    {
+        return;
+    }
+
+    m_projectSaveQueued = false;
 
     m_projectSession.setCurrentProjectRoot(m_assetBrowser ? m_assetBrowser->rootPath() : QDir::currentPath());
     m_projectSession.setCurrentGalleryPath(m_assetBrowser ? m_assetBrowser->galleryPath() : QString());

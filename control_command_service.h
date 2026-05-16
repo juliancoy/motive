@@ -25,12 +25,14 @@ private:
 
     bool tryHandleSelectionDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
     bool tryHandleCameraDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
+    bool tryHandleWindowDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
     bool tryHandleMotionDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
     bool tryHandleSceneDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
     bool tryHandlePhysicsDomain(const QString& command, const QJsonObject& body, QJsonObject& result, bool& handled) const;
 
     bool handleSelection(const QJsonObject& body, QJsonObject& result) const;
     bool handleCamera(const QJsonObject& body, QJsonObject& result) const;
+    bool handleWindow(const QJsonObject& body, QJsonObject& result) const;
     bool handleDebugMotion(const QJsonObject& body, QJsonObject& result) const;
     bool handleMotionDebugHistory(const QJsonObject& body, QJsonObject& result) const;
     bool handleMotionDebugSummary(QJsonObject& result) const;
